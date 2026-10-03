@@ -496,6 +496,12 @@ class JsonDB:
 
 db = JsonDB(DB_PATH)
 log.info(f"Baza fayli: {DB_PATH}")
+# Eski bazadan qolib ketgan o'chirilgan holatni tuzatish:
+# agar settings.bot_active old botda False qilib qoldirilgan bo'lsa, True qilamiz
+if not db.data.get("settings", {}).get("bot_active", True):
+    log.warning("Eski bazada bot_active False edi — True qilindi")
+    db.data["settings"]["bot_active"] = True
+    db.save()
 
 bot: Optional[Bot] = None
 userbot: Optional[UserbotClient] = None
