@@ -1870,6 +1870,53 @@ async def on_humo_message(client: UserbotClient, message) -> None:
         await notify_admins(f"❌ Avto-to'lov tekshiruvi xatosi: {exc}")
 
 
+async def process_gift_orders() -> None:
+    """Gift buyurtmalariga userbot orqali sovg'ani avto-yuborish."""
+    log.info("🎁 Gift buyurtmalari avto-yetkazuv xizmati ishga tushdi...")
+    while True:
+        try:
+            await asyncio.sleep(15)
+            if userbot is None:
+                continue
+            for order in list(db.data.get("orders", {}).values()):
+                if order.get("kind") != "gift":
+                    continue
+                if order.get("gift_sent"):
+                    continue
+                if order.get("status") not in ("completed", "pending_admin"):
+                    continue
+                gift_key = order.get("gift") or order.get("gift_key") or ""
+                stars = next((g[2] for g in GIFTS if g[0] == gift_key), None)
+                recipient = (order.get("recipient") or "").lstrip("@")
+                if not recipient:
+                    continue
+                try:
+                    gifts = await userbot.get_available_gifts()
+                    match = next((g for g in gifts if stars and g.price == stars), None)
+                    if match is None:
+                        log.warning("Gift (%s) uchun mos sovg'a topilmadi", gift_key)
+                        order["gift_sent"] = True
+                        order["gift_error"] = "Mos sovg'a topilmadi"
+                        db.save()
+                        await notify_admins(f"⚠️ Gift #{order['id']} ({gift_key}) uchun mos sovg'a topilmadi.")
+                        continue
+                    await userbot.send_gift(chat_id=recipient, gift_id=match.id)
+                    order["gift_sent"] = True
+                    order["gift_sent_at"] = now_iso()
+                    db.save()
+                    log.info("🎁 Gift %s @%s ga userbot orqali yuborildi", gift_key, recipient)
+                    await notify_admins(f"🎁 Gift #{order['id']} ({gift_key}) @{recipient} ga yuborildi.")
+                except Exception as exc:  # noqa: BLE001
+                    order["gift_sent"] = True
+                    order["gift_error"] = str(exc)
+                    db.save()
+                    log.error("Gift yuborishda xato: %s", exc)
+                    await notify_admins(f"❌ Gift #{order['id']} yuborishda xato: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            log.error("process_gift_orders xato: %s", exc)
+            await asyncio.sleep(5)
+
+
 def maybe_start_userbot() -> None:
     global userbot
     if not (SESSION_STRING and API_ID and API_HASH):
@@ -2070,6 +2117,7 @@ async def main() -> None:
         log.info("🤖 Bot muvaffaqiyatli ishga tushdi: @%s (WebApp: %s)", me.username, WEBAPP_URL)
         await bot.delete_webhook(drop_pending_updates=False)
         maybe_start_userbot()
+        asyncio.create_task(process_gift_orders())
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         db.save()

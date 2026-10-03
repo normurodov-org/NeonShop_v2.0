@@ -458,6 +458,7 @@ app.post('/api/order', async (req: Request, res: Response) => {
     recipient,
     price,
     amount: amount || months || 1,
+    gift: kind === 'gift' ? gift : undefined,
     status: orderStatus,
     payment_method: 'usdt',
     failure_reason: failureReason,
@@ -478,10 +479,19 @@ app.post('/api/order', async (req: Request, res: Response) => {
 // Dynamic Real Ranking from actual database users & completed orders
 app.get('/api/ranking', (req: Request, res: Response) => {
   const currentUser = getUser(req);
+  const period = (req.query.period as string) || 'all';
+  const now = Date.now();
+  const cutoffMs =
+    period === 'today' ? 86400000 :
+    period === '3days' ? 3 * 86400000 :
+    period === '7days' ? 7 * 86400000 : 0;
 
-  // Map real users who actually made purchases
   const allUsers = Array.from(store.users.values());
-  const allOrders = Array.from(store.orders.values());
+  const allOrders = Array.from(store.orders.values()).filter((ord) => {
+    if (!cutoffMs) return true;
+    const t = ord.created_at ? new Date(ord.created_at).getTime() : 0;
+    return now - t <= cutoffMs;
+  });
 
   const userStats = new Map<number, { user: any; ordersCount: number; totalSpent: number }>();
 
@@ -489,7 +499,7 @@ app.get('/api/ranking', (req: Request, res: Response) => {
     userStats.set(u.id, {
       user: u,
       ordersCount: 0,
-      totalSpent: u.total_spent || 0,
+      totalSpent: cutoffMs ? 0 : (u.total_spent || 0),
     });
   }
 
@@ -498,7 +508,7 @@ app.get('/api/ranking', (req: Request, res: Response) => {
       const existing = userStats.get(ord.user_id);
       if (existing) {
         existing.ordersCount += 1;
-        if (!existing.totalSpent) {
+        if (cutoffMs || !existing.totalSpent) {
           existing.totalSpent += ord.price;
         }
       }
@@ -523,7 +533,7 @@ app.get('/api/ranking', (req: Request, res: Response) => {
 
   const myIndex = leaders.findIndex((l) => l.isMe);
   const myRank = myIndex !== -1 ? myIndex + 1 : (currentUser.total_spent > 0 ? leaders.length + 1 : null);
-  const mySpent = currentUser.total_spent || 0;
+  const mySpent = cutoffMs ? allOrders.filter((o) => o.user_id === currentUser.id).reduce((s, o) => s + o.price, 0) : (currentUser.total_spent || 0);
   const myOrders = allOrders.filter((o) => o.user_id === currentUser.id).length;
 
   res.json({

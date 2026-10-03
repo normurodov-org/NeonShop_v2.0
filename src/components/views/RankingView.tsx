@@ -46,7 +46,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
     let isMounted = true;
     async function loadRanking() {
       try {
-        const res = await fetch('/api/ranking', {
+        const res = await fetch(`/api/ranking?period=${timeFilter}`, {
           headers: {
             'x-telegram-user-id': user?.id ? user.id.toString() : '',
           },
@@ -69,7 +69,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
     return () => {
       isMounted = false;
     };
-  }, [user]);
+  }, [user, timeFilter]);
 
   return (
     <div className="space-y-4 max-w-md mx-auto pb-28 apple-view-animate">

@@ -509,7 +509,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
         ) : (
           <Star className="w-4 h-4 fill-current" />
         )}
-        <span>{t.buyStars}</span>
+        <span>{subTab === 'stars' ? t.buyStars : subTab === 'premium' ? (t.premium + ' sotib olish') : ('Gift yuborish')}</span>
       </button>
     </div>
   );

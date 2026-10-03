@@ -102,6 +102,10 @@ export const TopupModal: React.FC<TopupModalProps> = ({
       if (!data.ok) {
         throw new Error(data.error || "Tasdiqlashda xatolik");
       }
+      if (data.pending) {
+        setError(data.message || "⏳ To'lov tekshirilmoqda, iltimos kuting...");
+        return;
+      }
       onTopupSuccess(data.balance, data.message);
       onClose();
     } catch (err: any) {

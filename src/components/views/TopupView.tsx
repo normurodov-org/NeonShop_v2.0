@@ -88,6 +88,10 @@ export const TopupView: React.FC<TopupViewProps> = ({
       if (!data.ok) {
         throw new Error(data.error || "Tasdiqlashda xatolik");
       }
+      if (data.pending) {
+        setError(data.message || "⏳ To'lov tekshirilmoqda, iltimos kuting...");
+        return;
+      }
       onTopupSuccess(data.balance, data.message);
     } catch (err: any) {
       setError(err.message);
