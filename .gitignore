@@ -1,0 +1,7 @@
+users_db.json
+users_db.json.bak
+users_db.json.tmp
+*.session
+*.session-journal
+.env
+__pycache__/
