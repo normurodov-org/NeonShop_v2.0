@@ -17,7 +17,6 @@ RUN python3 -m venv /app/.venv && /app/.venv/bin/pip install --no-cache-dir -r r
 COPY . .
 RUN npm run build
 
-ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 

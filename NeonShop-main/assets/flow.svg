@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="290" viewBox="0 0 1200 290" role="img" aria-label="Buyurtma jarayoni: foydalanuvchi, balans to'ldirish, buyurtma, avtomatik yetkazish, kanal e'loni">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0820"/>
+      <stop offset="1" stop-color="#07141f"/>
+    </linearGradient>
+    <linearGradient id="line" gradientUnits="userSpaceOnUse" x1="110" y1="0" x2="1090" y2="0">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="0.5" stop-color="#22e4ff"/>
+      <stop offset="1" stop-color="#2fe39b"/>
+    </linearGradient>
+    <style>
+      .t { font: 800 19px 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; fill: #f4f5ff; }
+      .d { font: 500 14px 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; fill: #9aa0c7; }
+      .ic { font: 34px 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif; }
+      .h { font: 800 15px 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; fill: #8d91b3; letter-spacing: 3px; }
+      .node { animation: pulse 5s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+      .n2 { animation-delay: 1s } .n3 { animation-delay: 2s } .n4 { animation-delay: 3s } .n5 { animation-delay: 4s }
+      @keyframes pulse { 0%,70%,100% { stroke-opacity: .25 } 10%,25% { stroke-opacity: 1 } }
+      .dash { stroke-dasharray: 6 10; animation: flow 1.2s linear infinite; }
+      @keyframes flow { to { stroke-dashoffset: -16 } }
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important } }
+    </style>
+  </defs>
+
+  <rect width="1200" height="290" rx="24" fill="url(#bg)"/>
+  <text x="600" y="44" class="h" text-anchor="middle">BUYURTMA QANDAY BAJARILADI</text>
+
+  <!-- connecting line -->
+  <path d="M110 236 H1090" stroke="#ffffff" stroke-opacity="0.07" stroke-width="4"/>
+  <path class="dash" d="M110 236 H1090" stroke="url(#line)" stroke-width="3" fill="none"/>
+
+  <!-- nodes -->
+  <g>
+    <rect class="node" x="30" y="72" width="160" height="136" rx="20" fill="#141633" stroke="#8b5cf6" stroke-width="2"/>
+    <text x="110" y="120" class="ic" text-anchor="middle">👤</text>
+    <text x="110" y="160" class="t" text-anchor="middle">Mijoz</text>
+    <text x="110" y="184" class="d" text-anchor="middle">bot yoki Web App</text>
+  </g>
+  <g>
+    <rect class="node n2" x="265" y="72" width="160" height="136" rx="20" fill="#141633" stroke="#22e4ff" stroke-width="2"/>
+    <text x="345" y="120" class="ic" text-anchor="middle">💳</text>
+    <text x="345" y="160" class="t" text-anchor="middle">To'ldirish</text>
+    <text x="345" y="184" class="d" text-anchor="middle">karta → avto-tekshiruv</text>
+  </g>
+  <g>
+    <rect class="node n3" x="520" y="72" width="160" height="136" rx="20" fill="#141633" stroke="#ffc53d" stroke-width="2"/>
+    <text x="600" y="120" class="ic" text-anchor="middle">🛒</text>
+    <text x="600" y="160" class="t" text-anchor="middle">Buyurtma</text>
+    <text x="600" y="184" class="d" text-anchor="middle">⭐ · 💎 · 🎁 tasdiqlash</text>
+  </g>
+  <g>
+    <rect class="node n4" x="775" y="72" width="160" height="136" rx="20" fill="#141633" stroke="#ff4fd8" stroke-width="2"/>
+    <text x="855" y="120" class="ic" text-anchor="middle">⚡</text>
+    <text x="855" y="160" class="t" text-anchor="middle">Yetkazish</text>
+    <text x="855" y="184" class="d" text-anchor="middle">Fragment · userbot</text>
+  </g>
+  <g>
+    <rect class="node n5" x="1010" y="72" width="160" height="136" rx="20" fill="#141633" stroke="#2fe39b" stroke-width="2"/>
+    <text x="1090" y="120" class="ic" text-anchor="middle">📣</text>
+    <text x="1090" y="160" class="t" text-anchor="middle">Kanal</text>
+    <text x="1090" y="184" class="d" text-anchor="middle">e'lon + keshbek</text>
+  </g>
+  <!-- travelling packet -->
+  <circle r="9" fill="#ffc53d">
+    <animateMotion dur="5s" repeatCount="indefinite" path="M110 236 H1090"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.05;0.95;1" dur="5s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="16" fill="#ffc53d" opacity="0.18">
+    <animateMotion dur="5s" repeatCount="indefinite" path="M110 236 H1090"/>
+  </circle>
+
+</svg>
