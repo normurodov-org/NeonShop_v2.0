@@ -1,0 +1,10 @@
+{
+  "users": {},
+  "topups": {},
+  "sales": {},
+  "orders": {},
+  "processed_bank_msgs": [],
+  "settings": {
+    "bot_active": true
+  }
+}
