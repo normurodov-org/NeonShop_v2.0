@@ -5,3 +5,8 @@ users_db.json.tmp
 *.session-journal
 .env
 __pycache__/
+
+# Baza fayllari
+NeonShop-main/
+__pycache__/
+data/
