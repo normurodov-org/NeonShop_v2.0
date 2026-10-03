@@ -1,8 +1,0 @@
-{
-  "name": "NEON STORE — Telegram Stars, Premium & Gifts Bot & Web App",
-  "description": "Telegram Stars, Telegram Premium subscriptions, Gifts store and automated top-up bot with interactive Mini App and admin dashboard.",
-  "permissions": [],
-  "capabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}

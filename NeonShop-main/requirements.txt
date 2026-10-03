@@ -1,7 +1,0 @@
-aiogram>=3.13,<4
-aiohttp>=3.9.0
-cloudscraper>=1.2.71
-pytoniq>=0.1.39
-pytoniq-core>=0.1.34
-pyrofork>=2.3.43
-tgcrypto>=1.2.5
