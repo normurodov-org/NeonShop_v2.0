@@ -270,8 +270,10 @@ app.post('/api/topup/cancel', (req: Request, res: Response) => {
   res.json({ ok: true, topup });
 });
 
-// Simulate automatic bank confirmation (e.g. Humo / Uzcard webhook simulation)
-app.post('/api/topup/simulate-pay', (req: Request, res: Response) => {
+// Bank xabarlari (humocardbot userbot orqali) avtomatik tasdiqlaydi.
+// Bu endpoint endi to'lovni darhol qo'shmaydi — faqat statusni tekshiradi
+// va admini xabardor qiladi.
+app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
   const id = req.body.id;
   const user = getUser(req);
   const topup = store.topups.get(id);
@@ -280,21 +282,52 @@ app.post('/api/topup/simulate-pay', (req: Request, res: Response) => {
     return res.status(404).json({ ok: false, error: "To'lov so'rovi topilmadi" });
   }
 
+  if (topup.status === 'completed') {
+    return res.json({
+      ok: true,
+      message: `✅ ${topup.amount.toLocaleString()} UZS balansga muvaffaqiyatli qo'shildi!`,
+      topup,
+      balance: user.balance,
+    });
+  }
+
   if (topup.status !== 'pending') {
     return res.status(400).json({ ok: false, error: "Bu to'lov allaqachon yakunlangan yoki bekor qilingan." });
   }
 
-  topup.status = 'completed';
-  topup.completed_at = new Date().toISOString();
-  user.balance += topup.amount;
-  store.settings.total_volume_uzs += topup.amount;
-  syncAndSaveDb();
+  // Avto-to'lov hali qayd etilmagan — admini so'rov bilan xabardor qilamiz
+  const adminId = store.settings.admin_id || 8307046273;
+  const token = process.env.BOT_TOKEN;
+  if (token) {
+    try {
+      const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: adminId,
+          text: `🧾 <b>To'lovni tasdiqlash so'rovi</b>\n\n👤 User ID: <code>${topup.user_id}</code>\n💰 Summa: <b>${topup.amount.toLocaleString()} UZS</b>\n🆔 <code>${topup.id}</code>\n\n@humocardbot da mos xabar topilmadi. Tasdiqlaysizmi?`,
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Tasdiqlash', callback_data: `adm_topup_ok:${topup.id}` },
+                { text: '❌ Rad etish', callback_data: `adm_topup_no:${topup.id}` },
+              ],
+            ],
+          },
+        }),
+      });
+      if (!tgRes.ok) console.error('Admin xabarini yuborishda xato:', await tgRes.text());
+    } catch (e) {
+      console.error('Admin xabarini yuborishda xato:', e);
+    }
+  }
 
   res.json({
     ok: true,
-    message: `✅ ${topup.amount.toLocaleString()} UZS balansga muvaffaqiyatli qo'shildi!`,
+    pending: true,
+    message: "⏳ To'lov tekshirilmoqda. Admin tasdiqlashi kerak, iltimos kuting...",
     topup,
-    balance: user.balance,
   });
 });
 

@@ -1413,6 +1413,58 @@ async def cb_cancel(call: CallbackQuery, state: FSMContext):
         pass
 
 
+@common_router.callback_query(F.data.startswith("adm_topup_ok:"))
+async def adm_topup_ok(call: CallbackQuery) -> None:
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Ruxsat yo'q", show_alert=True)
+        return
+    tid = call.data.split(":", 1)[1]
+    t = db.data["topups"].get(tid)
+    if not t or t["status"] != "pending":
+        await call.answer("Bu so'rov allaqachon ko'rilgan", show_alert=True)
+        return
+    t["status"] = "completed"
+    t["completed_at"] = now_iso()
+    u = db.data["users"].get(str(t["user_id"]))
+    if u:
+        u["balance"] = int(u.get("balance", 0)) + t["amount"]
+        u["total_topup"] = int(u.get("total_topup", 0)) + t["amount"]
+        try:
+            await bot.send_message(u["id"], f"✅ <b>{fmt(t['amount'])} UZS</b> balansingizga qo'shildi.")
+        except Exception:  # noqa: BLE001
+            pass
+    db.data["settings"]["total_volume_uzs"] = int(db.data["settings"].get("total_volume_uzs", 0)) + t["amount"]
+    db.save()
+    await call.answer("Tasdiqlandi")
+    try:
+        await call.message.edit_text(f"✅ To'lov <code>{tid}</code> tasdiqlandi — {fmt(t['amount'])} UZS qo'shildi.")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@common_router.callback_query(F.data.startswith("adm_topup_no:"))
+async def adm_topup_no(call: CallbackQuery) -> None:
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Ruxsat yo'q", show_alert=True)
+        return
+    tid = call.data.split(":", 1)[1]
+    t = db.data["topups"].get(tid)
+    if not t or t["status"] != "pending":
+        await call.answer("Bu so'rov allaqachon ko'rilgan", show_alert=True)
+        return
+    t["status"] = "cancelled"
+    db.save()
+    try:
+        await bot.send_message(t["user_id"], f"❌ To'lov so'rovi ({fmt(t['amount'])} UZS) bekor qilindi.")
+    except Exception:  # noqa: BLE001
+        pass
+    await call.answer("Rad etildi")
+    try:
+        await call.message.edit_text(f"❌ To'lov <code>{tid}</code> rad etildi.")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # --------------------------- Profil / Referal / Tarix ------------------------
 @router.message(F.text == BTN_PROFILE)
 async def show_profile(message: Message, state: FSMContext, db_user: dict):
@@ -1736,6 +1788,115 @@ async def on_successful_payment(message: Message, db_user: dict):
 # =============================================================================
 # 15. BALANS TO'LDIRISH
 # =============================================================================
+HUMO_AMOUNT_RX = re.compile(r"➕\s*([\d\s.,]+)\s*UZS")
+HUMO_CARD_RX = re.compile(r"HUMOCARD\s*\*(\d+)")
+
+
+def parse_humo_payment(text: str) -> Optional[tuple[int, Optional[str]]]:
+    """@humocardbot xabaridan summa va karta oxirgi raqamlarini ajratadi."""
+    m = HUMO_AMOUNT_RX.search(text or "")
+    if not m:
+        return None
+    raw = m.group(1).replace(" ", "").replace(".", "").replace(",", ".")
+    try:
+        amount = int(Decimal(raw))
+    except (InvalidOperation, ValueError):
+        return None
+    cm = HUMO_CARD_RX.search(text or "")
+    card = cm.group(1) if cm else None
+    return amount, card
+
+
+async def notify_admins(text: str) -> None:
+    if bot is None:
+        return
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def on_humo_message(client: UserbotClient, message) -> None:
+    try:
+        text = message.text or ""
+        if "➕" not in text:
+            return
+        parsed = parse_humo_payment(text)
+        if parsed is None:
+            await notify_admins(
+                f"⚠️ @humocardbot xabari noto'g'ri formatda keldi, avtomatik tanib bo'lmadi:\n\n{text}"
+            )
+            return
+        amount, card = parsed
+        msg_id = f"{message.chat.id}_{message.id}"
+        if msg_id in db.data["processed_bank_msgs"]:
+            return
+        db.data["processed_bank_msgs"].append(msg_id)
+        now = time.time()
+        matches = [
+            t for t in db.data["topups"].values()
+            if t["status"] == "pending" and t["expires_at"] > now and int(t["amount"]) == amount
+        ]
+        if matches:
+            t = matches[0]
+            t["status"] = "completed"
+            t["completed_at"] = now_iso()
+            u = db.data["users"].get(str(t["user_id"]))
+            if u:
+                u["balance"] = int(u.get("balance", 0)) + t["amount"]
+                u["total_topup"] = int(u.get("total_topup", 0)) + t["amount"]
+                try:
+                    await bot.send_message(
+                        u["id"],
+                        f"✅ <b>{fmt(t['amount'])} UZS</b> balansingizga muvaffaqiyatli qo'shildi.",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            db.data["settings"]["total_volume_uzs"] = int(db.data["settings"].get("total_volume_uzs", 0)) + t["amount"]
+            db.save()
+            await notify_admins(
+                f"💰 To'lov avtomatik tasdiqlandi!\n👤 User: {t['user_id']}\n💵 Summa: {fmt(t['amount'])} UZS\n💳 Karta: *{card or '???'}"
+            )
+        else:
+            db.save()
+            await notify_admins(
+                f"🔀 Kelgan to'lov avtomatik bog'lanmadi: {fmt(amount)} UZS (karta *{card or '???'}). "
+                f"Faol so'rovlar orasida mosi topilmadi."
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Humo xabarini qayta ishlashda xato")
+        await notify_admins(f"❌ Avto-to'lov tekshiruvi xatosi: {exc}")
+
+
+def maybe_start_userbot() -> None:
+    global userbot
+    if not (SESSION_STRING and API_ID and API_HASH):
+        log.warning("Userbot uchun SESSION_STRING/API_ID/API_HASH yo'q — bank xabarlari kuzatilmaydi.")
+        return
+
+    async def _start() -> None:
+        try:
+            ub = UserbotClient(
+                "humo_userbot",
+                api_id=API_ID,
+                api_hash=API_HASH,
+                session_string=SESSION_STRING,
+            )
+            await ub.start()
+            ub.add_handler(
+                UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
+            )
+            userbot = ub
+            log.info("👤 Userbot ishga tushdi, bank xabarlari kuzatilmoqda...")
+            asyncio.create_task(ub.idle())
+        except Exception as exc:  # noqa: BLE001
+            log.error("Userbot ishga tushmadi: %s", exc)
+            await notify_admins(f"⚠️ Userbot ishga tushmadi: {exc}")
+
+    asyncio.create_task(_start())
+
+
 def pending_topups() -> list[dict]:
     return [t for t in db.data["topups"].values() if t["status"] == "pending"]
 
@@ -1907,6 +2068,7 @@ async def main() -> None:
 
         log.info("🤖 Bot muvaffaqiyatli ishga tushdi: @%s (WebApp: %s)", me.username, WEBAPP_URL)
         await bot.delete_webhook(drop_pending_updates=False)
+        maybe_start_userbot()
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         db.save()
