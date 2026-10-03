@@ -124,6 +124,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 from pyrogram import Client as UserbotClient
+from pyrogram import idle as ub_idle
 from pyrogram import filters as ub_filters
 from pyrogram import raw as ub_raw
 from pyrogram.errors import BadRequest as UbBadRequest
@@ -1889,7 +1890,7 @@ def maybe_start_userbot() -> None:
             )
             userbot = ub
             log.info("👤 Userbot ishga tushdi, bank xabarlari kuzatilmoqda...")
-            asyncio.create_task(ub.idle())
+            asyncio.create_task(ub_idle())
         except Exception as exc:  # noqa: BLE001
             log.error("Userbot ishga tushmadi: %s", exc)
             await notify_admins(f"⚠️ Userbot ishga tushmadi: {exc}")
