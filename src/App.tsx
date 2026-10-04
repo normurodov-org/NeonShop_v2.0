@@ -211,6 +211,17 @@ export default function App() {
     showToast(msg);
   };
 
+  // Admin botni to'xtatgan bo'lsa — WebApp ham javob bermaydi
+  if (settings && settings.bot_active === false) {
+    return (
+      <div className={`${theme} min-h-screen flex flex-col items-center justify-center text-center p-8 ${isDark ? 'bg-[#000000] text-white' : 'bg-[#f2f2f7] text-neutral-900'}`}>
+        <div className="text-5xl mb-4">⏸</div>
+        <h1 className="text-xl font-bold mb-2">Bot vaqtincha to'xtatilgan</h1>
+        <p className="text-sm opacity-70 max-w-xs">Iltimos, birozdan so'ng qayta urinib ko'ring."</p>
+      </div>
+    );
+  }
+
   return (
     <div className={`${theme} min-h-screen ${isDark ? 'bg-[#000000] text-neutral-100' : 'bg-[#f2f2f7] text-neutral-900'} relative overflow-x-hidden transition-colors duration-300 font-sans`}>
       {/* Ambient Fluid Background Elements */}
