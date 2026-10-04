@@ -1395,6 +1395,17 @@ async def cmd_start(
             db.save()
 
     await reward_referrer_if_needed(bot, db_user)
+
+    # Eski ReplyKeyboard (doimiy klaviatura)ni olib tashlash
+    try:
+        rm = await message.answer("🚀", reply_markup=ReplyKeyboardRemove())
+        try:
+            await rm.delete()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     await send_main_menu(message, db_user)
 
 
