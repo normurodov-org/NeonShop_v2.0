@@ -25,6 +25,11 @@ export const BuyView: React.FC<BuyViewProps> = ({
   const t = translations[lang];
   const [subTab, setSubTab] = useState<'stars' | 'premium' | 'gifts'>(initialTab);
 
+  // Chuqur menyu (masalan Premium/Gifts) tanlangan katoriya bilan sinxron bolsin
+  React.useEffect(() => {
+    setSubTab(initialTab);
+  }, [initialTab]);
+
   // Form states
   const [recipient, setRecipient] = useState<string>(user?.username || '');
   const [resolvedProfile, setResolvedProfile] = useState<{

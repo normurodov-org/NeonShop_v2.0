@@ -504,12 +504,14 @@ app.get('/api/ranking', (req: Request, res: Response) => {
   }
 
   for (const ord of allOrders) {
-    if (ord.status === 'completed' || ord.status === 'pending_admin') {
+    const allowedStatuses = ['completed', 'done', 'sent_unconfirmed', 'pending_admin'];
+    if (allowedStatuses.includes(ord.status)) {
       const existing = userStats.get(ord.user_id);
       if (existing) {
         existing.ordersCount += 1;
+        const ordPrice = ord.price ?? ord.price_uzs ?? 0;
         if (cutoffMs || !existing.totalSpent) {
-          existing.totalSpent += ord.price;
+          existing.totalSpent += ordPrice;
         }
       }
     }
