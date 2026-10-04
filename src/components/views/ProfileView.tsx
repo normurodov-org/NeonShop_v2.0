@@ -31,6 +31,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const t = translations[lang];
   const [copiedRef, setCopiedRef] = useState<boolean>(false);
   const [showReferralModal, setShowReferralModal] = useState<boolean>(false);
+  const [showRefScreen, setShowRefScreen] = useState<boolean>(false);
 
   const initial = user?.username ? user.username.charAt(0).toUpperCase() : 'O';
   const displayName = user?.username ? `@${user.username}` : (user?.first_name || 'odilbek');
@@ -47,6 +48,62 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   return (
     <div className="space-y-4 max-w-md mx-auto pb-28 apple-view-animate">
+      {showRefScreen ? (
+        <div className="space-y-4">
+          <button
+            onClick={() => setShowRefScreen(false)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full liquid-glass-pill text-xs font-semibold apple-spring cursor-pointer ${
+              isDark ? 'bg-white text-black' : 'bg-black text-white'
+            }`}
+          >
+            ← Orqaga
+          </button>
+
+          <div className="rounded-[26px] liquid-glass-card p-5 space-y-4">
+            <h2 className={`text-base font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+              <Users className="w-5 h-5" />
+              <span>Referral Dasturi</span>
+            </h2>
+
+            <p className={`text-xs leading-relaxed ${isDark ? 'text-neutral-300' : 'text-neutral-600'}`}>
+              Do'stlaringizni taklif qiling va har bir do'stingiz uchun <b>1 ⭐ Stars</b> oling!
+            </p>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
+                <span className="text-[10px] text-neutral-400">Referallar</span>
+                <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+                  {user?.referrals_count ?? 0}
+                </div>
+              </div>
+              <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
+                <span className="text-[10px] text-neutral-400">⭐ Stars</span>
+                <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+                  {user?.ref_stars ?? 0}
+                </div>
+              </div>
+            </div>
+
+            <div className={`p-3 rounded-[16px] space-y-1 ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
+              <span className="text-[10px] text-neutral-400">Sizning taklif havolangiz:</span>
+              <div className="text-[11px] font-mono font-semibold break-all opacity-90">
+                {refLink}
+              </div>
+            </div>
+
+            <button
+              onClick={copyRefLink}
+              className={`w-full py-3.5 rounded-[18px] font-semibold text-xs flex items-center justify-center gap-2 apple-spring cursor-pointer ${
+                isDark ? 'bg-white text-black hover:bg-neutral-100' : 'bg-black text-white hover:bg-neutral-800'
+              }`}
+            >
+              {copiedRef ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+              <span>{copiedRef ? t.copied : 'Havolani nusxalash'}</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
       {/* 1. Header Profile Banner */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -115,7 +172,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </button>
 
           <button
-            onClick={() => setShowReferralModal(true)}
+            onClick={() => setShowRefScreen(true)}
             className={`flex-1 py-3 rounded-[16px] font-semibold text-xs flex items-center justify-center gap-1.5 apple-spring cursor-pointer liquid-glass-pill ${
               isDark ? 'text-white' : 'text-neutral-900'
             }`}
@@ -304,46 +361,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </button>
         )}
       </div>
-
-      {/* Referral Modal */}
-      {showReferralModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xl animate-in fade-in duration-200">
-          <div className="w-full max-w-sm rounded-[30px] liquid-glass-card p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                <Users className="w-4 h-4" />
-                <span>Referral Dasturi</span>
-              </h3>
-              <button
-                onClick={() => setShowReferralModal(false)}
-                className="w-7 h-7 rounded-full liquid-glass-pill flex items-center justify-center cursor-pointer apple-spring text-xs"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className={`text-xs leading-relaxed ${isDark ? 'text-neutral-300' : 'text-neutral-600'}`}>
-              Do'stlaringizni taklif qiling va har bir do'stingiz uchun <b>1 ⭐ Stars</b> oling!
-            </p>
-
-            <div className={`p-3 rounded-[16px] space-y-1 ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
-              <span className="text-[10px] text-neutral-400">Sizning taklif havolangiz:</span>
-              <div className="text-[11px] font-mono font-semibold break-all opacity-90">
-                {refLink}
-              </div>
-            </div>
-
-            <button
-              onClick={copyRefLink}
-              className={`w-full py-3.5 rounded-[18px] font-semibold text-xs flex items-center justify-center gap-2 apple-spring cursor-pointer ${
-                isDark ? 'bg-white text-black hover:bg-neutral-100' : 'bg-black text-white hover:bg-neutral-800'
-              }`}
-            >
-              {copiedRef ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-              <span>{copiedRef ? t.copied : 'Havolani nusxalash'}</span>
-            </button>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );

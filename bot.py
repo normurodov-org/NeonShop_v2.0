@@ -163,19 +163,8 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "8307046273"))
 ADMIN_IDS = {ADMIN_ID}
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "neon2025")
 
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@Shop_NeonChannel")
-if CHANNEL_ID.startswith("@"):
-    CHANNEL_ID = "@" + CHANNEL_ID.lstrip("@")
-CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/Shop_NeonChannel")
-
-EXTRA_CHANNELS = [
-    c.strip() for c in os.getenv("EXTRA_CHANNELS", "@Channel_Neon,@Shop_NeonOrders").split(",") if c.strip()
-]
 ORDERS_CHANNEL = os.getenv("ORDERS_CHANNEL", "@Shop_NeonOrders").strip()
 CASHBACK_RATE = 0.001
-REQUIRED_CHANNELS = [(CHANNEL_ID, CHANNEL_URL)] + [
-    ("@" + c.lstrip("@"), f"https://t.me/{c.lstrip('@')}") for c in EXTRA_CHANNELS
-]
 CARD_NUMBER = os.getenv("CARD_NUMBER", "9860 1701 1569 3682")
 CARD_HOLDER = os.getenv("CARD_HOLDER", "O. N (HUMO)")
 
@@ -454,7 +443,7 @@ class JsonDB:
                 "total_topup": 0,
                 "total_spent": 0,
                 "pending_sale_card": None,
-                "captcha_ok": True,
+                "captcha_ok": False,
             }
             self.users[str(user_id)] = user
             created = True
@@ -992,19 +981,6 @@ class RefStates(StatesGroup):
 
 class AdminStates(StatesGroup):
     password = State()
-    broadcast = State()
-    balance_target = State()
-    balance_amount = State()
-    ban_target = State()
-    receipt = State()
-    ub_password = State()
-    ub_phone = State()
-    ub_code = State()
-    ct_text = State()
-    ct_color = State()
-    ct_winners = State()
-    ct_start = State()
-    ct_end = State()
     ct_confirm = State()
 
 
@@ -1092,7 +1068,7 @@ MENU_STYLES = {
     "m:webapp": "primary",   # Web App — KO'K
     "m:support": "danger",   # Support — QIZIL
 }
-SUCCESS_CALLBACKS = {"check_sub", "buy_confirm", "svc_ok", "ref_wd", "buy_self", "svc_self", "refw_self"}
+SUCCESS_CALLBACKS = {"buy_confirm", "svc_ok", "ref_wd", "buy_self", "svc_self", "refw_self"}
 SUCCESS_PREFIXES = ("ord_done:", "sale_pay:")
 DANGER_CALLBACKS = {"cancel", "adm:logout", "adm:ban:ban"}
 DANGER_PREFIXES = ("ord_refund:", "sale_refund:", "topup_cancel:")
@@ -1155,23 +1131,6 @@ def webapp_inline_kb(user: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[webapp_button(user)]])
 
 
-def webapp_reply_kb(user: dict) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_WEBAPP, web_app=WebAppInfo(url=build_webapp_url(user)))]],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
-def sub_kb() -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=f"📢 {i}-kanalga obuna bo'lish", url=url)]
-        for i, (_chat_id, url) in enumerate(REQUIRED_CHANNELS, 1)
-    ]
-    rows.append([InlineKeyboardButton(text="✅ Tekshirish", callback_data="check_sub", style="success")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 def cancel_inline_kb(cb: str = "cancel") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Bekor qilish", callback_data=cb, style="danger")]])
 
@@ -1190,26 +1149,6 @@ def admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=toggle, callback_data="adm:toggle", style="danger" if bot_active() else "success")],
-            [InlineKeyboardButton(text="📊 Statistika", callback_data="adm:stats")],
-            [InlineKeyboardButton(text="📣 Xabar yuborish", callback_data="adm:broadcast")],
-            [InlineKeyboardButton(text="🏆 Top 20", callback_data="adm:top:0"),
-             InlineKeyboardButton(text="🎉 Konkurs", callback_data="adm:ct")],
-            [
-                InlineKeyboardButton(text="➕ Balans qo'shish", callback_data="adm:bal:add"),
-                InlineKeyboardButton(text="➖ Balans ayirish", callback_data="adm:bal:take"),
-            ],
-            [
-                InlineKeyboardButton(text="🚫 Ban", callback_data="adm:ban:ban"),
-                InlineKeyboardButton(text="✅ Unban", callback_data="adm:ban:unban"),
-            ],
-            [
-                InlineKeyboardButton(text="💎 TON balans", callback_data="adm:ton"),
-                InlineKeyboardButton(text="🔎 Fragment test", callback_data="adm:frag"),
-            ],
-            [
-                InlineKeyboardButton(text="🔑 Userbot ulash (QR)", callback_data="adm:ub_login"),
-                InlineKeyboardButton(text="📱 Raqam bilan ulash", callback_data="adm:ub_phone"),
-            ],
             [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
         ]
@@ -1223,26 +1162,6 @@ def admin_back_kb() -> InlineKeyboardMarkup:
 # =============================================================================
 # 10. OBUNA, REFERAL, ADMIN YORDAMCHILARI
 # =============================================================================
-async def _is_member(b: Bot, channel: str, user_id: int) -> bool:
-    try:
-        member = await b.get_chat_member(channel, user_id)
-        return member.status in (
-            ChatMemberStatus.MEMBER,
-            ChatMemberStatus.ADMINISTRATOR,
-            ChatMemberStatus.CREATOR,
-        ) or (member.status == ChatMemberStatus.RESTRICTED and getattr(member, "is_member", False))
-    except Exception as exc:  # noqa: BLE001
-        log.error("Obunani tekshirib bo'lmadi (%s): %s", channel, exc)
-        return False
-
-
-async def is_subscribed(b: Bot, user_id: int) -> bool:
-    for channel, _url in REQUIRED_CHANNELS:
-        if not await _is_member(b, channel, user_id):
-            return False
-    return True
-
-
 async def reward_referrer_if_needed(b: Bot, user: dict) -> None:
     ref_id = user.get("invited_by")
     if not ref_id or user.get("ref_rewarded"):
@@ -1396,6 +1315,11 @@ async def cmd_start(
 
     await reward_referrer_if_needed(bot, db_user)
 
+    # Robot emasligi tekshiruvi (captcha) — faqat yangi foydalanuvchilar uchun
+    if not db_user.get("captcha_ok") and db_user["id"] not in ADMIN_IDS:
+        await send_captcha(message, db_user)
+        return
+
     # Eski ReplyKeyboard (doimiy klaviatura)ni olib tashlash
     try:
         rm = await message.answer("🚀", reply_markup=ReplyKeyboardRemove())
@@ -1423,6 +1347,37 @@ async def cb_cancel(call: CallbackQuery, state: FSMContext):
         await call.message.edit_text("❌ Amal bekor qilindi.")
     except Exception:  # noqa: BLE001
         pass
+
+
+@common_router.callback_query(F.data.startswith("captcha:"))
+async def cb_captcha(call: CallbackQuery, state: FSMContext) -> None:
+    uid = call.from_user.id
+    user = db.get_user(uid)
+    if user is None:
+        await call.answer("Xatolik, /start bosing")
+        return
+    try:
+        chosen = int(call.data.split(":", 1)[1])
+    except Exception:  # noqa: BLE001
+        await call.answer("Noto'g'ri")
+        return
+    if chosen == user.get("captcha_answer"):
+        user["captcha_ok"] = True
+        user.pop("captcha_answer", None)
+        db.save()
+        await call.answer("✅ To'g'ri!")
+        try:
+            await call.message.edit_text("✅ Robot emasligi tasdiqlandi.")
+        except Exception:  # noqa: BLE001
+            pass
+        await send_main_menu(call.message, user)
+    else:
+        await call.answer("❌ Noto'g'ri, qayta urinib ko'ring.", show_alert=True)
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:  # noqa: BLE001
+            pass
+        await send_captcha(call.message, user)
 
 
 @common_router.callback_query(F.data.startswith("adm_topup_ok:"))
@@ -1797,6 +1752,30 @@ async def on_successful_payment(message: Message, db_user: dict):
     )
 
 
+def build_captcha(user: dict) -> InlineKeyboardMarkup:
+    a = random.randint(1, 9)
+    b = random.randint(1, 9)
+    answer = a * b
+    user["captcha_answer"] = answer
+    options = {answer, answer + random.choice([1, 2, 3, 4, 5]), max(0, answer - random.choice([1, 2, 3])), answer + random.choice([6, 7, 8])}
+    opts = list(options)
+    random.shuffle(opts)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=str(o), callback_data=f"captcha:{o}", style="primary") for o in opts[:2]],
+        [InlineKeyboardButton(text=str(o), callback_data=f"captcha:{o}", style="primary") for o in opts[2:]],
+    ])
+    return kb, a, b, answer
+
+
+async def send_captcha(message: Message, db_user: dict) -> None:
+    kb, a, b, ans = build_captcha(db_user)
+    db.save()
+    await message.answer(
+        f"🔒 <b>Robot emasligi tekshiruvi</b>\n\nQuyidagi misolning javobini toping:\n\n🔢 <b>{a} × {b} = ?</b>",
+        reply_markup=kb,
+    )
+
+
 # =============================================================================
 # 15. BALANS TO'LDIRISH
 # =============================================================================
@@ -2059,6 +2038,15 @@ async def adm_toggle(call: CallbackQuery):
     db.save()
     await call.answer("🟢 Ishga tushirildi" if settings["bot_active"] else "🔴 To'xtatildi", show_alert=True)
     await call.message.edit_text(admin_panel_text(), reply_markup=admin_kb())
+
+
+@admin_router.callback_query(F.data == "adm:ub_status")
+async def adm_ub_status(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    status = "✅ Ishlayapti" if userbot is not None else "⚠️ Ishlamayapti"
+    await call.message.answer(f"🩺 Userbot holati: <b>{status}</b>")
 
 
 @admin_router.callback_query(F.data == "adm:logout")
