@@ -211,7 +211,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     <Star className="w-3.5 h-3.5 fill-current" />
                   </div>
                   <div>
-                    <h4 className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-neutral-900'}`}>{ord.title}</h4>
+                    <h4 className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-neutral-900'}`}>{ord.title || `⭐ ${ord.stars || 0} Stars`}</h4>
                     <span className="text-[10px] text-neutral-400">
                       @{ord.recipient} • {ord.created_at?.slice(0, 10)}
                     </span>
@@ -220,7 +220,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
                 <div className="text-right">
                   <div className={`text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                    {ord.price.toLocaleString()} UZS
+                    {(ord.price ?? ord.price_uzs ?? 0).toLocaleString()} UZS
                   </div>
                   <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
                     ord.status === 'completed'

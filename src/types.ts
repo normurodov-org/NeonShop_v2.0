@@ -29,6 +29,8 @@ export interface Order {
   title: string;
   recipient: string;
   price: number;
+  price_uzs?: number;
+  stars?: number;
   amount?: number;
   status: 'completed' | 'pending' | 'manual' | 'failed';
   created_at: string;
