@@ -1140,13 +1140,13 @@ def main_menu_kb(user: dict) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [b("🟢 Stars sotib olish", "buy", "success")],
-            [b("🔵 Stars sotish", "sell", "primary"), b("🔵 Premium", "premium", "primary")],
-            [b("🔴 Giftlar", "gifts", "danger")],
-            [b("🟢 Balans to'ldirish", "topup", "success"), b("🔵 Referal", "ref", "primary")],
-            [InlineKeyboardButton(text="🔵 Web App ❐", web_app=WebAppInfo(url=build_webapp_url(user)), style="primary")],
-            [b("⚫ Profil", "profile"), b("⚫ Tarix", "history")],
-            [InlineKeyboardButton(text="🔴 Support", url=f"https://t.me/{SUPPORT_USERNAME}", style="danger")],
+            [b("⭐ Stars sotib olish", "buy", "success")],
+            [b("💸 Stars sotish", "sell", "primary"), b("💎 Premium", "premium", "primary")],
+            [b("🎁 Giftlar", "gifts", "danger")],
+            [b("💳 Balans to'ldirish", "topup", "success"), b("👥 Referal", "ref", "primary")],
+            [InlineKeyboardButton(text="📱 Web App ❐", web_app=WebAppInfo(url=build_webapp_url(user)), style="primary")],
+            [b("👤 Profil", "profile"), b("📜 Tarix", "history")],
+            [InlineKeyboardButton(text="💬 Support", url=f"https://t.me/{SUPPORT_USERNAME}", style="danger")],
         ]
     )
 

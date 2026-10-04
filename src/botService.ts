@@ -97,14 +97,6 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
       return user;
     };
 
-    // Standard Reply Keyboard
-    const mainReplyKeyboard = new Keyboard()
-      .text('Stars sotib olish').text('Premium').row()
-      .text('Giftlar').text("Balans to'ldirish").row()
-      .text('Profil').text('Tarix').row()
-      .webApp('Web App ❐', currentWebappUrl).text('Support')
-      .resized();
-
     // 1. /start command — exactly matching Image 1
     bot.command('start', async (ctx) => {
       const user = getOrCreateUser(ctx);
@@ -135,25 +127,20 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
 
       // 7-row inline keyboard matching Image 1 with vibrant colors
       const inlineKb = new InlineKeyboard()
-        .text('🟢 Stars sotib olish', 'buy_stars').row()
-        .text('🔵 Stars sotish', 'sell_stars')
-        .text('🔵 Premium', 'buy_prem').row()
-        .text('🔴 Giftlar', 'buy_gifts').row()
-        .text("🟢 Balans to'ldirish", 'topup')
-        .text('🔵 Referal', 'referral').row()
-        .webApp('🔵 Web App ❐', currentWebappUrl).row()
-        .text('⚫ Profil', 'profile')
-        .text('⚫ Tarix', 'history').row()
-        .url('🔴 Support', `https://t.me/${store.settings.support_username}`);
+        .text('⭐ Stars sotib olish', 'buy_stars').row()
+        .text('💸 Stars sotish', 'sell_stars')
+        .text('💎 Premium', 'buy_prem').row()
+        .text('🎁 Giftlar', 'buy_gifts').row()
+        .text("💳 Balans to'ldirish", 'topup')
+        .text('👥 Referal', 'referral').row()
+        .webApp('📱 Web App ❐', currentWebappUrl).row()
+        .text('👤 Profil', 'profile')
+        .text('📜 Tarix', 'history').row()
+        .url('💬 Support', `https://t.me/${store.settings.support_username}`);
 
       await ctx.reply(welcomeText, {
         parse_mode: 'HTML',
         reply_markup: inlineKb,
-      });
-
-      // Bottom persistent reply menu
-      await ctx.reply('Asosiy menyu:', {
-        reply_markup: mainReplyKeyboard,
       });
     });
 
