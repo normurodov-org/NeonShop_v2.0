@@ -92,7 +92,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 Telegram Stars
               </h3>
               <p className={`text-[11px] mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
-                To any user, from 50 stars
+                {t.starsDesc}
               </p>
             </div>
           </div>
@@ -124,7 +124,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 Telegram Premium
               </h3>
               <p className={`text-[11px] mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
-                3, 6 or 12 months subscription
+                {t.premiumDesc}
               </p>
             </div>
           </div>
@@ -132,7 +132,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
-              From 40 000 UZS
+              {t.fromWord} 40 000 UZS
             </span>
             <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
@@ -156,7 +156,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 Telegram Gifts
               </h3>
               <p className={`text-[11px] mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
-                🧸 Ayiqcha, 🌹 Atirgul, 🚀 Raketa...
+                {t.giftsDesc}
               </p>
             </div>
           </div>
@@ -164,7 +164,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
-              From 3 000 UZS
+              {t.fromWord} 3 000 UZS
             </span>
             <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
