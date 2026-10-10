@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { User, StoreSettings, Order } from '../../types';
+import { User, StoreSettings, Order, UsdtRate } from '../../types';
 import { Lang, translations } from '../../i18n';
-import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check } from 'lucide-react';
+import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check, Wallet } from 'lucide-react';
 
 interface BuyViewProps {
   user: User | null;
@@ -60,8 +60,34 @@ export const BuyView: React.FC<BuyViewProps> = ({
   // Gifts state
   const [selectedGift, setSelectedGift] = useState<string>('bear');
 
+  // USDT (TON) kursi — live API dan, settings orqali zaxira
+  const [rate, setRate] = useState<UsdtRate | null>(null);
+
   const starPrice = settings?.star_buy_price || 200;
   const starsPresets = [50, 100, 250, 500, 1000];
+
+  const usdtRate = rate?.usdt_uzs || settings?.usdt_rate_uzs || 0;
+  const usdtForStars = +(amount * (settings?.star_usdt_rate || 0.015)).toFixed(3);
+
+  // USDT kursini yangilab turamiz (har daqiqada)
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/rate');
+        const data = await res.json();
+        if (alive && data.ok) setRate(data);
+      } catch (e) {
+        /* offline — settings'dagi zaxira ishlatiladi */
+      }
+    };
+    load();
+    const timer = setInterval(load, 60000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   // Resolve recipient profile when username is changed
   useEffect(() => {
@@ -189,6 +215,37 @@ export const BuyView: React.FC<BuyViewProps> = ({
           1 ★ = {starPrice} UZS
         </span>
       </div>
+
+      {/* USDT (TON) to'lov nishoni — Stars FAQAT USDT bilan Fragment'dan xarid qilinadi */}
+      {subTab === 'stars' && (
+        <div className="flex items-center justify-between gap-2 px-4 py-3 rounded-[22px] liquid-glass apple-view-animate">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div
+              className={`w-8 h-8 rounded-[12px] flex items-center justify-center shrink-0 ${
+                isDark ? 'bg-emerald-400/15 text-emerald-300' : 'bg-emerald-500/10 text-emerald-600'
+              }`}
+            >
+              <Wallet className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className={`text-[11px] font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+                {t.paidWithUsdtTon}
+              </div>
+              <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
+                {t.fragmentDelivery}
+              </div>
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className={`text-[11px] font-bold font-mono ${isDark ? 'text-emerald-300' : 'text-emerald-600'}`}>
+              ≈ {usdtForStars.toFixed(3)} USDT
+            </div>
+            <div className="text-[9px] text-neutral-400 font-mono">
+              1 USDT ≈ {rate.usdt_uzs.toLocaleString()} UZS
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Apple Segmented Control Bar */}
       <div className="flex items-center gap-1 p-1 rounded-full liquid-glass">

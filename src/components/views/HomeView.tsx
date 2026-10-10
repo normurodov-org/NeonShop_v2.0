@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { User, StoreSettings } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { ShoppingBag, Star, Sparkles, Gift, ChevronRight, Zap } from 'lucide-react';
@@ -21,11 +21,34 @@ export const HomeView: React.FC<HomeViewProps> = ({
 }) => {
   const t = translations[lang];
   const starPrice = settings?.star_buy_price || 200;
+  const heroRef = useRef<HTMLDivElement>(null);
+
+  /* Apple VisionOS uslubida 3D tilt — pointerga qarab egiladi */
+  const onHeroMove = (e: React.PointerEvent) => {
+    const el = heroRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5;
+    const py = (e.clientY - r.top) / r.height - 0.5;
+    el.style.setProperty('--ry', `${(px * 7).toFixed(2)}deg`);
+    el.style.setProperty('--rx', `${(-py * 7).toFixed(2)}deg`);
+  };
+  const onHeroLeave = () => {
+    const el = heroRef.current;
+    if (!el) return;
+    el.style.setProperty('--rx', '0deg');
+    el.style.setProperty('--ry', '0deg');
+  };
 
   return (
-    <div className="space-y-4 max-w-md mx-auto pb-28 apple-view-animate">
+    <div className="space-y-4 max-w-md mx-auto pb-28">
       {/* 1. Ultra-Minimalist Apple VisionOS Liquid Glass Hero Banner */}
-      <div className="relative overflow-hidden rounded-[32px] liquid-glass-card p-6 text-center">
+      <div
+        ref={heroRef}
+        onPointerMove={onHeroMove}
+        onPointerLeave={onHeroLeave}
+        className="relative overflow-hidden rounded-[32px] liquid-glass-card p-6 text-center apple-view-animate stagger-1 tilt-card"
+      >
         {/* Specular Liquid Sheen Animation */}
         <div className="sheen-overlay" />
 
@@ -77,9 +100,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         {/* Telegram Stars Card */}
         <div
           onClick={() => onGoToBuy('stars')}
-          className={`group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring cursor-pointer ${
-            isDark ? 'hover:border-white/25' : 'hover:border-black/20'
-          }`}
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-2 cursor-pointer"
         >
           <div className="flex items-center gap-3.5">
             <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${
@@ -109,9 +130,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         {/* Telegram Premium Card */}
         <div
           onClick={() => onGoToBuy('premium')}
-          className={`group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring cursor-pointer ${
-            isDark ? 'hover:border-white/25' : 'hover:border-black/20'
-          }`}
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-3 cursor-pointer"
         >
           <div className="flex items-center gap-3.5">
             <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${
@@ -141,9 +160,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         {/* Gifts Card */}
         <div
           onClick={() => onGoToBuy('gifts')}
-          className={`group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring cursor-pointer ${
-            isDark ? 'hover:border-white/25' : 'hover:border-black/20'
-          }`}
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-4 cursor-pointer"
         >
           <div className="flex items-center gap-3.5">
             <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${

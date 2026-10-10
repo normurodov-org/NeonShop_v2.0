@@ -9,7 +9,8 @@ import { BuyView } from './components/views/BuyView';
 import { RankingView } from './components/views/RankingView';
 import { ProfileView } from './components/views/ProfileView';
 import { AdminPanel } from './components/AdminPanel';
-import { CheckCircle2, ArrowLeft } from 'lucide-react';
+import { LiquidPointer } from './components/LiquidPointer';
+import { CheckCircle2, ArrowLeft, PauseCircle } from 'lucide-react';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('home');
@@ -211,34 +212,50 @@ export default function App() {
     showToast(msg);
   };
 
-  // Admin botni to'xtatgan bo'lsa — WebApp ham javob bermaydi
+  // Admin botni to'xtatgan bo'lsa — WebApp ham javov bermaydi (Liquid Glass ekran)
   if (settings && settings.bot_active === false) {
     return (
-      <div className={`${theme} min-h-screen flex flex-col items-center justify-center text-center p-8 ${isDark ? 'bg-[#000000] text-white' : 'bg-[#f2f2f7] text-neutral-900'}`}>
-        <div className="text-5xl mb-4">⏸</div>
-        <h1 className="text-xl font-bold mb-2">Bot vaqtincha to'xtatilgan</h1>
-        <p className="text-sm opacity-70 max-w-xs">Iltimos, birozdan so'ng qayta urinib ko'ring."</p>
+      <div className={`${theme} min-h-screen flex flex-col items-center justify-center text-center p-8 relative overflow-hidden ${isDark ? 'bg-[#000000] text-white' : 'bg-[#f2f2f7] text-neutral-900'}`}>
+        <div className="aurora-blob aurora-1 -top-24 -left-20 w-96 h-96" />
+        <div className="aurora-blob aurora-2 -bottom-24 -right-20 w-96 h-96" />
+        <div className="noise-overlay" />
+        <div className="relative z-10 liquid-glass-card rounded-[36px] p-8 max-w-xs w-full sheet-in">
+          <div className={`w-16 h-16 mx-auto rounded-[22px] liquid-glass-pill flex items-center justify-center mb-5 ${isDark ? 'text-amber-300' : 'text-amber-600'}`}>
+            <PauseCircle className="w-8 h-8" />
+          </div>
+          <h1 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+            Bot vaqtincha to'xtatilgan
+          </h1>
+          <p className={`text-sm leading-relaxed ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
+            Iltimos, birozdan so'ng qayta urinib ko'ring.
+          </p>
+          <div className={`mt-5 inline-flex items-center gap-2 px-4 py-2 rounded-full liquid-glass-pill text-xs font-semibold ${isDark ? 'text-neutral-300' : 'text-neutral-700'}`}>
+            <span className="w-2 h-2 rounded-full bg-amber-400 live-dot" />
+            Tez orada qayta ishlaydi
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className={`${theme} min-h-screen ${isDark ? 'bg-[#000000] text-neutral-100' : 'bg-[#f2f2f7] text-neutral-900'} relative overflow-x-hidden transition-colors duration-300 font-sans`}>
-      {/* Ambient Fluid Background Elements */}
-      <div className={`fixed -top-28 -left-20 w-88 h-88 rounded-full blur-[110px] pointer-events-none ambient-fluid-1 ${
-        isDark ? 'bg-white/[0.04]' : 'bg-black/[0.03]'
-      }`} />
-      <div className={`fixed top-1/3 -right-24 w-96 h-96 rounded-full blur-[130px] pointer-events-none ambient-fluid-2 ${
-        isDark ? 'bg-white/[0.03]' : 'bg-black/[0.02]'
-      }`} />
-      <div className={`fixed -bottom-24 left-1/4 w-80 h-80 rounded-full blur-[100px] pointer-events-none ${
-        isDark ? 'bg-white/[0.02]' : 'bg-black/[0.02]'
-      }`} />
+      {/* LiquidPointer — glass specular yorug'i + aurora parallaks */}
+      <LiquidPointer />
+
+      {/* Neon Aurora backdrop — glass uchun rangli refraksiya */}
+      <div className="fixed inset-0 pointer-events-none z-0" aria-hidden style={{ transform: 'translate(var(--ax), var(--ay))' }}>
+        <div className="aurora-blob aurora-1 -top-32 -left-24 w-[420px] h-[420px]" />
+        <div className="aurora-blob aurora-2 top-1/4 -right-28 w-[380px] h-[380px]" />
+        <div className="aurora-blob aurora-3 -bottom-28 left-1/3 w-[360px] h-[360px]" />
+        <div className="aurora-blob aurora-4 top-2/3 -left-1/4 w-[300px] h-[300px]" />
+      </div>
+      <div className="noise-overlay" />
 
       {/* Apple Minimalist Toast */}
       {toastMsg && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 max-w-xs w-full px-4 animate-in fade-in slide-in-from-top-3 duration-300 pointer-events-none">
-          <div className="liquid-glass rounded-full px-4 py-2.5 shadow-2xl flex items-center justify-center gap-2 border">
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 max-w-xs w-full px-4 pointer-events-none">
+          <div className="toast-in liquid-glass rounded-full px-4 py-2.5 shadow-2xl flex items-center justify-center gap-2 border">
             <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
             <span className="text-xs font-semibold text-center">{toastMsg}</span>
           </div>
@@ -259,7 +276,7 @@ export default function App() {
       />
 
       {/* Main View Area */}
-      <main className="flex-1 max-w-md w-full mx-auto px-4 pt-3.5">
+      <main className="flex-1 max-w-md w-full mx-auto px-4 pt-3.5 relative z-10">
         {/* 1. HOME VIEW */}
         {currentTab === 'home' && (
           <HomeView

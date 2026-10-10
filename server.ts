@@ -5,7 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { startTelegramBot, stopTelegramBot, getBotStatus, sendTelegramMessage } from './src/botService';
 import { loadDatabase, saveDatabase, DB_FILE } from './src/db';
-import { processFragmentStarsPurchase } from './src/fragmentService';
+import { getUsdtUzsRate, usdtToUzs, starsToUsdt } from './src/rateService';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,28 +34,93 @@ export const store = {
 };
 
 // Atomically save data to /data/users_db.json
-export function syncAndSaveDb() {
-  const usersObj: Record<string, any> = {};
-  for (const [id, u] of store.users.entries()) {
-    usersObj[id.toString()] = u;
-  }
-  const ordersObj: Record<string, any> = {};
-  for (const [id, o] of store.orders.entries()) {
-    ordersObj[id] = o;
-  }
-  const topupsObj: Record<string, any> = {};
-  for (const [id, t] of store.topups.entries()) {
-    topupsObj[id] = t;
-  }
+//
+// DIQQAT: bot.py va server.ts bitta faylda ishlaydi. Agar oddiycha "xotiramni yoz"
+// desak, botning o'zgarishlari (masalan to'lovni completed qilishi) yo'qolib ketadi.
+// Shuning uchun 3 tomonlama merge qilamiz:
+//   • diskdagi yangi ma'lumot (bot yozganlar) — asos
+//   • lokal o'zgarishlar (biz yozganlar) — ustiga qo'yiladi
+//   • lokal o'zgarishni `lastSynced` bilan solishtirib aniqlaymiz
+let lastSynced: any = null;
 
-  saveDatabase({
+const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v ?? null));
+
+function currentSnapshot() {
+  const usersObj: Record<string, any> = {};
+  for (const [id, u] of store.users.entries()) usersObj[String(id)] = u;
+  const ordersObj: Record<string, any> = {};
+  for (const [id, o] of store.orders.entries()) ordersObj[id] = o;
+  const topupsObj: Record<string, any> = {};
+  for (const [id, t] of store.topups.entries()) topupsObj[id] = t;
+  return {
     settings: store.settings,
     users: usersObj,
     orders: ordersObj,
     topups: topupsObj,
     contest: store.contest,
-  });
+  };
 }
+
+export function syncAndSaveDb() {
+  let fresh: any;
+  try {
+    fresh = loadDatabase();
+  } catch (e) {
+    console.error('syncAndSaveDb: bazani o‘qib bo‘lmadi:', e);
+    fresh = lastSynced ?? currentSnapshot();
+  }
+
+  const merged: any = {
+    settings: { ...(fresh.settings || {}) },
+    users: { ...(fresh.users || {}) },
+    orders: { ...(fresh.orders || {}) },
+    topups: { ...(fresh.topups || {}) },
+    contest: { ...(fresh.contest || {}) },
+  };
+
+  // settings: faqat lokalda o'zgargan kalitlarni ustiga qo'yamiz
+  for (const [k, v] of Object.entries(store.settings)) {
+    const prev = lastSynced?.settings?.[k];
+    if (!lastSynced || JSON.stringify(prev) !== JSON.stringify(v)) {
+      merged.settings[k] = v;
+    }
+  }
+
+  // users / orders / topups
+  const sections: [string, Map<any, any>][] = [
+    ['users', store.users],
+    ['orders', store.orders],
+    ['topups', store.topups],
+  ];
+  for (const [key, map] of sections) {
+    for (const [k, v] of map.entries()) {
+      const sk = String(k);
+      const prev = lastSynced?.[key]?.[sk];
+      const localChanged = !lastSynced || JSON.stringify(prev) !== JSON.stringify(v);
+      if (localChanged) {
+        merged[key][sk] = v;
+      }
+    }
+  }
+
+  // contest
+  if (!lastSynced || JSON.stringify(lastSynced.contest) !== JSON.stringify(store.contest)) {
+    merged.contest = store.contest;
+  }
+
+  saveDatabase(merged);
+  lastSynced = clone(merged);
+
+  // Xotiramizni ham yangilangan holatga moslashtiramiz
+  store.settings = merged.settings;
+  store.contest = merged.contest;
+  for (const [k, u] of Object.entries(merged.users)) store.users.set(Number(k), u);
+  for (const [k, o] of Object.entries(merged.orders)) store.orders.set(k, o);
+  for (const [k, t] of Object.entries(merged.topups)) store.topups.set(k, t);
+}
+
+// Boshlang'ich holatni "o'zgartirilmagan" deb belgilaymiz
+lastSynced = clone(currentSnapshot());
 
 const DEFAULT_USER_ID = 8307046273;
 
@@ -69,6 +134,11 @@ function getUser(req?: Request, defaultId = DEFAULT_USER_ID) {
       }
       for (const [k, o] of Object.entries(freshDb.orders || {})) {
         store.orders.set(k, o);
+      }
+      // Topups ham har safar yangilanadi: bot.py (userbot) to'lovni tasdiqlaganda
+      // "completed" qiladi — server eski "pending" holatini ustiga yozib yubormasin.
+      for (const [k, t] of Object.entries(freshDb.topups || {})) {
+        store.topups.set(k, t);
       }
       store.settings = { ...store.settings, ...(freshDb.settings || {}) };
       store.contest = { ...store.contest, ...(freshDb.contest || {}) };
@@ -235,6 +305,9 @@ app.post('/api/topup', (req: Request, res: Response) => {
   };
 
   store.topups.set(id, newTopup);
+  // MUHIM: so'rov darhol faylga yoziladi — bot.py dagi userbot shu topupni
+  // ko'rib, bank xabarini kelganda avtomatik balansga qo'shadi.
+  syncAndSaveDb();
   res.json({ ok: true, topup: newTopup });
 });
 
@@ -249,6 +322,7 @@ app.get('/api/topup/status', (req: Request, res: Response) => {
 
   if (topup.status === 'pending' && Date.now() > topup.expires_at) {
     topup.status = 'expired';
+    syncAndSaveDb();
   }
 
   res.json({
@@ -266,6 +340,7 @@ app.post('/api/topup/cancel', (req: Request, res: Response) => {
   const topup = store.topups.get(id);
   if (topup && topup.status === 'pending') {
     topup.status = 'cancelled';
+    syncAndSaveDb();
   }
   res.json({ ok: true, topup });
 });
@@ -404,38 +479,37 @@ app.post('/api/order', async (req: Request, res: Response) => {
   }
 
   const orderId = 'ord_' + Math.random().toString(36).slice(2, 9);
-  let orderStatus: 'completed' | 'pending_admin' = 'completed';
+  let orderStatus: 'completed' | 'processing' | 'pending_admin' = 'completed';
   let orderMessage = `✅ Buyurtma qabul qilindi va muvaffaqiyatli yetkazildi! ${cashback > 0 ? `+${cashback} so'm keshbek berildi!` : ''}`;
   let failureReason: string | undefined = undefined;
 
-  // Process Stars order via Fragment (USDT on TON)
+  // Stars FAQAT USDT (TON) orqali Fragment'dan xarid qilinadi.
+  // WebApp stub emas — buyurtma bazaga yoziladi, bot.py dagi star_order_worker()
+  // uni olib, haqiqiy Fragment USDT to'lovini amalga oshiradi.
   if (kind === 'stars') {
     const starCount = Number(amount);
-    const fragResult = await processFragmentStarsPurchase({
-      orderId,
-      userId: user.id,
-      username: user.username,
-      recipient,
-      quantity: starCount,
-      priceUzs: price,
-      currentWalletUsdt: store.settings.wallet_usdt_balance || 50,
-      starUsdtRate: store.settings.star_usdt_rate || 0.015,
-    });
+    orderStatus = 'processing';
+    const usdtNeeded = await starsToUsdt(starCount, store.settings.star_usdt_rate || 0.015);
+    orderMessage =
+      `⏳ <b>Buyurtmangiz qabul qilindi!</b>\n\n` +
+      `⭐ Miqdor: <b>${starCount.toLocaleString()} Stars</b>\n` +
+      `👤 Qabul qiluvchi: <b>@${recipient}</b>\n` +
+      `💳 Yechildi: <b>${price.toLocaleString()} UZS</b>\n` +
+      `💎 To'lov: <b>USDT (TON)</b> — Fragment orqali avtomatik\n` +
+      `📌 Holat: <b>yuborilmoqda (10–60 soniya)</b>\n\n` +
+      `<i>Stars do'kon USDT (TON) hamyoni orqali Fragment'dan xarid qilinadi va avtomatik yetkaziladi.</i>`;
 
-    if (fragResult.status === 'completed') {
-      orderStatus = 'completed';
-      store.settings.wallet_usdt_balance = fragResult.walletUsdtBalance;
-      orderMessage = fragResult.message;
-    } else {
-      orderStatus = 'pending_admin';
-      failureReason = 'Hamyonda USDT balansi yetarli emas';
-      orderMessage = fragResult.message;
-
-      // Send immediate alert to Admin
-      if (fragResult.adminAlertMessage) {
-        sendTelegramMessage(store.settings.admin_id || 8307046273, fragResult.adminAlertMessage);
-      }
-    }
+    sendTelegramMessage(
+      store.settings.admin_id || 8307046273,
+      `⭐ <b>Yangi Stars buyurtmasi (WebApp)</b>\n\n` +
+        `📦 Buyurtma: <code>#${orderId}</code>\n` +
+        `👤 Mijoz: @${user.username} (ID: <code>${user.id}</code>)\n` +
+        `🎯 Qabul qiluvchi: <b>@${recipient}</b>\n` +
+        `⭐ Miqdor: <b>${starCount.toLocaleString()} Stars</b>\n` +
+        `💳 Yechilgan: <b>${price.toLocaleString()} UZS</b>\n` +
+        `💎 Taxminiy sarf: <b>${usdtNeeded} USDT (TON)</b>\n\n` +
+        `🤖 <i>bot.py worker orqali USDT bilan Fragment'da avtomatik xarid qilinadi.</i>`
+    );
   } else if (kind === 'gift') {
     // Notify admin / userbot for automated gift dispatch
     sendTelegramMessage(
@@ -457,10 +531,13 @@ app.post('/api/order', async (req: Request, res: Response) => {
     title,
     recipient,
     price,
+    price_uzs: price,
     amount: amount || months || 1,
+    stars: kind === 'stars' ? Number(amount) : undefined,
     gift: kind === 'gift' ? gift : undefined,
     status: orderStatus,
-    payment_method: 'usdt',
+    source: 'webapp',
+    payment_method: 'usdt_ton',
     failure_reason: failureReason,
     created_at: new Date().toISOString(),
   };
@@ -476,9 +553,27 @@ app.post('/api/order', async (req: Request, res: Response) => {
   });
 });
 
+// USDT (TON) kursi — live API + ENV zaxira
+app.get('/api/rate', async (_req: Request, res: Response) => {
+  try {
+    const snapshot = await getUsdtUzsRate();
+    const walletUsdt = Number(store.settings.wallet_usdt_balance || 0);
+    const walletUzs = await usdtToUzs(walletUsdt);
+    res.json({
+      ok: true,
+      usdt_uzs: snapshot.rate,
+      source: snapshot.source,
+      updated_at: snapshot.updatedAt,
+      wallet_usdt: walletUsdt,
+      wallet_uzs: walletUzs,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: (e as Error)?.message || 'Kursni olib bo‘lmadi' });
+  }
+});
+
 // Dynamic Real Ranking from actual database users & completed orders
-app.get('/api/ranking', (req: Request, res: Response) => {
-  const currentUser = getUser(req);
+app.get('/api/ranking', (req: Request, res: Response) => {  const currentUser = getUser(req);
   const period = (req.query.period as string) || 'all';
   const now = Date.now();
   const cutoffMs =
@@ -642,7 +737,7 @@ app.post('/api/admin/wallet-balance', (req: Request, res: Response) => {
 });
 
 app.post('/api/contest/join', (req: Request, res: Response) => {
-  const user = getUser();
+  const user = getUser(req);
   if (store.contest.participants.includes(user.id)) {
     return res.json({ ok: true, message: "Siz allaqachon konkursda qatnashyapsiz!", joined: true });
   }
@@ -653,6 +748,7 @@ app.post('/api/contest/join', (req: Request, res: Response) => {
     });
   }
   store.contest.participants.push(user.id);
+  syncAndSaveDb();
   res.json({
     ok: true,
     message: "🎉 Tabriklaymiz! Siz konkurs ishtirokchisiga aylandingiz.",
@@ -662,7 +758,7 @@ app.post('/api/contest/join', (req: Request, res: Response) => {
 });
 
 app.post('/api/referral/withdraw', (req: Request, res: Response) => {
-  const user = getUser();
+  const user = getUser(req);
   if (user.ref_stars < 50) {
     return res.status(400).json({
       ok: false,
@@ -673,6 +769,7 @@ app.post('/api/referral/withdraw', (req: Request, res: Response) => {
   const uzsAmount = starsToWithdraw * store.settings.star_buy_price;
   user.ref_stars = 0;
   user.balance += uzsAmount;
+  syncAndSaveDb();
   res.json({
     ok: true,
     message: `✅ ${starsToWithdraw} ⭐ Stars (${uzsAmount.toLocaleString()} UZS) asosiy balansingizga o'tkazildi!`,
@@ -716,24 +813,28 @@ app.get('/api/admin/data', (req: Request, res: Response) => {
 });
 
 app.post('/api/admin/toggle-bot', (req: Request, res: Response) => {
+  getUser(req); // bazani diskdan yangilash
   store.settings.bot_active = !store.settings.bot_active;
+  syncAndSaveDb();
   res.json({ ok: true, bot_active: store.settings.bot_active });
 });
 
 app.post('/api/admin/adjust-balance', (req: Request, res: Response) => {
+  getUser(req); // MUHIM: foydalanuvchini diskdan yangilaymiz, eskirgan ma'lumot bilan
   const { userId, amount } = req.body;
   const user = store.users.get(Number(userId));
   if (!user) {
     return res.status(404).json({ ok: false, error: 'Foydalanuvchi topilmadi.' });
   }
   user.balance = Math.max(0, user.balance + Number(amount));
+  syncAndSaveDb();
   res.json({ ok: true, user });
 });
 
 // Interactive Telegram Bot chat simulator handler
 app.post('/api/bot/chat', (req: Request, res: Response) => {
   const { message, action } = req.body;
-  const user = getUser();
+  const user = getUser(req);
   const text = (message || action || '').trim();
 
   let botReply = '';

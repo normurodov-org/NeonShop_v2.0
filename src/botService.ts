@@ -1,6 +1,5 @@
 import { Bot, InlineKeyboard, Keyboard } from 'grammy';
 import { store, syncAndSaveDb } from '../server';
-import { processFragmentStarsPurchase } from './fragmentService';
 
 let currentBot: Bot | null = null;
 let isBotRunning = false;
@@ -428,34 +427,11 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
         store.settings.total_orders += 1;
 
         const orderId = 'ord_' + Math.random().toString(36).slice(2, 9);
+        const usdtNeeded = +(starCount * (store.settings.star_usdt_rate || 0.015)).toFixed(3);
 
-        // Process Fragment USDT purchase
-        const fragResult = await processFragmentStarsPurchase({
-          orderId,
-          userId: user.id,
-          username: user.username,
-          recipient: user.username,
-          quantity: starCount,
-          priceUzs: price,
-          currentWalletUsdt: store.settings.wallet_usdt_balance || 0,
-        });
-
-        let finalStatus: 'completed' | 'pending_admin' = 'completed';
-        let failureReason: string | undefined = undefined;
-
-        if (fragResult.status === 'completed') {
-          finalStatus = 'completed';
-          store.settings.wallet_usdt_balance = fragResult.walletUsdtBalance;
-        } else {
-          finalStatus = 'pending_admin';
-          failureReason = 'Hamyonda USDT balansi yetarli emas';
-
-          // Alert admin immediately
-          if (fragResult.adminAlertMessage) {
-            sendTelegramMessage(store.settings.admin_id || 8307046273, fragResult.adminAlertMessage);
-          }
-        }
-
+        // Stars FAQAT USDT (TON) orqali Fragment'dan xarid qilinadi.
+        // Bu Node-stub emas — buyurtma bazaga yoziladi va bot.py dagi
+        // star_order_worker() uni haqiqiy Fragment USDT to'lovini yuborish uchun oladi.
         store.orders.set(orderId, {
           id: orderId,
           user_id: user.id,
@@ -463,16 +439,37 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
           title: `⭐ ${starCount} Telegram Stars`,
           recipient: user.username,
           price,
-          status: finalStatus,
-          payment_method: 'usdt',
-          failure_reason: failureReason,
+          price_uzs: price,
+          amount: starCount,
+          stars: starCount,
+          status: 'processing',
+          source: 'grammy',
+          payment_method: 'usdt_ton',
           created_at: new Date().toISOString(),
         });
 
         syncAndSaveDb();
 
-        await ctx.answerCallbackQuery({ text: finalStatus === 'completed' ? '✅ Stars yetkazildi!' : '⏳ Adminga yuborildi' });
-        await ctx.reply(fragResult.message, { parse_mode: 'HTML' });
+        // Adminga xabar
+        sendTelegramMessage(
+          store.settings.admin_id || 8307046273,
+          `⭐ <b>Yangi Stars buyurtmasi (grammy)</b>\n\n` +
+            `📦 <code>#${orderId}</code>\n` +
+            `👤 @${user.username} (<code>${user.id}</code>) → @${user.username}: <b>${starCount} ⭐</b>\n` +
+            `💳 Yechilgan: <b>${price.toLocaleString()} UZS</b>\n` +
+            `💎 Taxminiy sarf: <b>${usdtNeeded} USDT (TON)</b>\n\n` +
+            `🤖 <i>bot.py worker orqali USDT bilan Fragment'da avtomatik xarid qilinadi.</i>`
+        );
+
+        await ctx.answerCallbackQuery({ text: '⏳ Buyurtma yuborilmoqda...' });
+        await ctx.reply(
+          `⏳ <b>Buyurtmangiz qabul qilindi!</b>\n\n` +
+            `⭐ Miqdor: <b>${starCount.toLocaleString()} Stars</b>\n` +
+            `💳 Yechildi: <b>${price.toLocaleString()} UZS</b>\n` +
+            `💎 To'lov: <b>USDT (TON)</b> — Fragment orqali avtomatik\n` +
+            `📌 Holat: <b>yuborilmoqda (10–60 soniya)</b>`,
+          { parse_mode: 'HTML' }
+        );
         return;
       }
 

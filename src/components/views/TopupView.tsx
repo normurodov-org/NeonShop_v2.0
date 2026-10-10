@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, StoreSettings, Topup } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { CreditCard, Copy, Check, Clock, Plus, History, AlertCircle, RefreshCw } from 'lucide-react';
@@ -33,6 +33,47 @@ export const TopupView: React.FC<TopupViewProps> = ({
   const [simulating, setSimulating] = useState<boolean>(false);
 
   const presets = [10000, 25000, 50000, 100000, 250000, 500000];
+
+  /**
+   * AVTO TO'LDIRISH (WebApp tomoni)
+   * ---------------------------------
+   * Foydalanuvchi so'mni kartaga o'tkazadi, userbot bank xabarini aniqlab bazada
+   * `completed` qiladi. Bu yerda har 4 soniyada holat tekshiriladi va balans
+   * darhol yangilanadi — mijozning "Tasdiqlash" tugmasini bosishi shart emas.
+   */
+  useEffect(() => {
+    if (!activeTopup || activeTopup.status !== 'pending') return;
+    let alive = true;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/topup/status?id=${encodeURIComponent(activeTopup.id)}`, {
+          headers: { 'x-telegram-user-id': user?.id?.toString() || '' },
+        });
+        const data = await res.json();
+        if (!alive || !data.ok) return;
+
+        if (data.topup?.status === 'completed') {
+          onTopupSuccess(
+            Number(data.balance ?? user?.balance ?? 0),
+            `✅ ${activeTopup.amount.toLocaleString()} UZS avtomatik to'ldirildi!`
+          );
+        }
+        if (data.topup?.status === 'expired' || data.topup?.status === 'cancelled') {
+          setError("To'lov so'rovi muddati tugadi. Qayta urinib ko'ring.");
+        }
+      } catch (e) {
+        /* tarmoq uzilishi — keyingi urinishda tekshiramiz */
+      }
+    };
+
+    poll();
+    const timer = setInterval(poll, 4000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [activeTopup?.id, activeTopup?.status, user?.id]);
 
   const handleCopyCard = () => {
     const card = activeTopup?.card || settings?.card_number || '9860 1701 1569 3682';

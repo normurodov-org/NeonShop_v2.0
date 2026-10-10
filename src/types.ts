@@ -32,8 +32,28 @@ export interface Order {
   price_uzs?: number;
   stars?: number;
   amount?: number;
-  status: 'completed' | 'pending' | 'manual' | 'failed';
+  status:
+    | 'completed'
+    | 'processing'
+    | 'pending'
+    | 'manual'
+    | 'failed'
+    | 'done'
+    | 'sent_unconfirmed'
+    | 'manual_pending'
+    | 'unknown';
+  source?: 'webapp' | 'grammy' | 'bot';
+  payment_method?: 'usdt' | 'usdt_ton' | 'balance' | 'humocard';
+  usdt_spent?: number | null;
   created_at: string;
+}
+
+export interface UsdtRate {
+  usdt_uzs: number;
+  source: 'live' | 'env';
+  updated_at: number;
+  wallet_usdt: number;
+  wallet_uzs: number;
 }
 
 export interface Contest {
@@ -81,6 +101,9 @@ export interface StoreSettings {
   total_volume_uzs: number;
   wallet_usdt_balance?: number;
   wallet_address?: string;
+  wallet_usdt_updated_at?: string;
+  usdt_rate_uzs?: number;
+  usdt_rate_updated_at?: string;
 }
 
 export interface BotChatMessage {

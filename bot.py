@@ -3,17 +3,24 @@
 NEON STORE BOT — Telegram Stars savdo boti (Fragment.com + TON)
 =================================================================
 
+TO'LOV QOIDASI:
+  * Balans SO'M (UZS) da to'ldiriladi — userbot bank xabarini avtomatik aniqlaydi.
+  * Stars esa FAQAT USDT (TON zanjiri) orqali Fragment.com dan xarid qilinadi.
+    Gram / TON / boshqa to'lov usullari yo'q (FRAGMENT_PAYMENT_METHOD majburiy "usdt").
+  * WebApp buyurtmalari ham shu yagona USDT kodini ishlatadi
+    (star_order_worker -> buy_stars_via_fragment).
+
 Imkoniyatlar:
   * aiogram 3.x  — asosiy bot (menyu, FSM, to'lovlar, admin panel)
   * pyrofork     — userbot: bank botidan (humocardbot) kelgan xabarlarni kuzatib,
                    balansni avtomatik to'ldiradi va Telegram Gift'larni avtomatik yuboradi
   * pytoniq      — TON blokcheyn (LiteBalancer, WalletV4R2, Cell)
   * cloudscraper — Fragment.com Cloudflare himoyasidan o'tish
+  * httpx        — USDT/UZS live kursi
   * JSON baza    — /data/users_db.json (atomik yozish + .bak zaxira)
-  * Rangli tugmalar (style: success, primary, danger) va Premium Emoji
 
 O'rnatish:
-  pip install aiogram pyrofork tgcrypto pytoniq cloudscraper
+  pip install aiogram pyrofork tgcrypto pytoniq cloudscraper httpx
 
 Ishga tushirish:
   python bot.py
@@ -87,11 +94,12 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urlencode, urlsplit
 
 import cloudscraper
+import httpx
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.middlewares.base import BaseRequestMiddleware
@@ -287,12 +295,24 @@ TOPUP_TIMEOUT_SEC = 5 * 60
 TOPUP_GRACE_SEC = 60
 TON_FEE_RESERVE_NANO = 50_000_000
 
-# Standart Fragment to'lov usuli: USDT on TON (Gram emas)
-FRAGMENT_PAYMENT_METHOD = os.getenv("FRAGMENT_PAYMENT_METHOD", "usdt").strip().lower()
+# =============================================================================
+# TO'LOV USULI: FAQAT USDT (TON zanjiri)
+# =============================================================================
+# Bot Stars'ni Fragment'dan FAQAT USDT (TON jetton) orqali oladi.
+# Gram / TON / boshqa turlar butunlay yo'q — ataylab shunday qilingan.
+FRAGMENT_PAYMENT_METHOD = "usdt"
+_env_method = os.getenv("FRAGMENT_PAYMENT_METHOD", "usdt").strip().lower()
+
+# USDT jetton master (TON zanjiri) — O'Zgartiring (ixtiyoriy)
 USDT_MASTER = os.getenv("USDT_MASTER", "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs")
 USDT_DECIMALS = 6
 USDT_MAX_PER_STAR = Decimal(os.getenv("USDT_MAX_PER_STAR", "0.03"))
 JETTON_TRANSFER_OP = 0x0F8A7EA5
+
+# USDT -> UZS kursi. Asosiy manba: live API, zaxira: ENV (offline holat uchun)
+USDT_RATE_FALLBACK = Decimal(os.getenv("USDT_RATE_UZS", "13000"))
+USDT_RATE_TTL = int(os.getenv("USDT_RATE_TTL", "300"))  # 5 daqiqa kesh
+_history_LIMIT = None  # (ixtiyoriy marker)
 HISTORY_LIMIT = 100
 TZ = timezone(timedelta(hours=5))
 
@@ -306,6 +326,13 @@ logging.basicConfig(
 log = logging.getLogger("neon_store")
 for _noisy in ("LiteClient", "LiteBalancer", "pytoniq", "BlockStore"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+if _env_method and _env_method != "usdt":
+    log.warning(
+        "FRAGMENT_PAYMENT_METHOD=%s bekor qilindi — bot faqat USDT (TON) orqali to'laydi.",
+        _env_method,
+    )
+log.info("💎 To'lov usuli: FAQAT USDT (TON) — Fragment")
 
 
 # =============================================================================
@@ -386,6 +413,35 @@ class JsonDB:
             self.data.setdefault(key, {})
         self.data.setdefault("processed_bank_msgs", [])
         self.data.setdefault("settings", {"bot_active": True})
+        self._last_mtime = self._file_mtime()
+
+    def _file_mtime(self) -> float:
+        try:
+            return os.path.getmtime(self.path)
+        except OSError:
+            return 0.0
+
+    def reload_if_changed(self) -> bool:
+        """Fayl tashqaridan (WebApp/server.ts) o'zgargan bo'lsa, xotirani yangilaydi.
+
+        Bot va WebApp bitta JSON faylda ishlaydi. WebApp buyurtma yaratganda bot
+        shu o'zgarishni ko'rishi kerak, aks holda buyurtma "yo'q" bo'lib qoladi.
+        """
+        mtime = self._file_mtime()
+        if mtime <= self._last_mtime:
+            return False
+        fresh = self._load()
+        if not fresh:
+            return False
+        with self._file_lock:
+            self.data = fresh
+            for key in ("users", "topups", "sales", "orders"):
+                self.data.setdefault(key, {})
+            self.data.setdefault("processed_bank_msgs", [])
+            self.data.setdefault("settings", {"bot_active": True})
+            self._last_mtime = mtime
+        log.info("Baza tashqaridan yangilandi (WebApp yozuvi)")
+        return True
 
     def _load(self) -> dict:
         for candidate in (self.path, self.path + ".bak"):
@@ -415,6 +471,7 @@ class JsonDB:
                 if os.path.exists(self.path):
                     shutil.copy2(self.path, self.path + ".bak")
                 os.replace(tmp, self.path)
+                self._last_mtime = self._file_mtime()
             except OSError as exc:
                 log.exception("Bazani saqlashda xato: %s", exc)
 
@@ -791,6 +848,66 @@ def build_tonconnect_account(wallet: WalletV4R2) -> dict:
     }
 
 
+# =============================================================================
+# 7.1 USDT -> UZS KURSI (live API + ENV zaxira)
+# =============================================================================
+# Asosiy manba: CoinGecko (USDT/USD) x frankfurter.app (USD/UZS)
+# Kechilgan bo'lsa yoki internet yo'q bo'lsa — USDT_RATE_UZS (ENV) ishlatiladi.
+_rate_cache: dict[str, Any] = {"rate": None, "ts": 0.0}
+RATE_SOURCES = (
+    ("https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=usd", ("tether", "usd")),
+    ("https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=usdt", ("usd", "usdt")),
+)
+FX_URL = "https://api.frankfurter.app/latest?from=USD&to=UZS"
+
+
+async def get_usdt_uzs_rate(force: bool = False) -> Decimal:
+    """1 USDT = necha UZS. Kesh 5 daqiqa, xato bo'lsa ENV qiymatiga qaytadi."""
+    now = time.time()
+    if not force and _rate_cache["rate"] and now - float(_rate_cache["ts"]) < USDT_RATE_TTL:
+        return Decimal(str(_rate_cache["rate"]))
+
+    rate: Optional[Decimal] = None
+    for url, path in RATE_SOURCES:
+        try:
+            async with httpx.AsyncClient(timeout=12) as client:
+                resp = await client.get(url, headers={"User-Agent": "NeonStore/1.0"})
+                data = resp.json()
+            value = data
+            for key in path:
+                value = value[key]
+            usd_per_usdt = Decimal(str(value))
+            if usd_per_usdt <= 0:
+                continue
+
+            async with httpx.AsyncClient(timeout=12) as client:
+                resp = await client.get(FX_URL, headers={"User-Agent": "NeonStore/1.0"})
+                uzs = Decimal(str(resp.json()["rates"]["UZS"]))
+            rate = (usd_per_usdt * uzs).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            break
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Kurs manbasi %s ishlamadi: %s", url, exc)
+
+    if rate and rate > 0:
+        _rate_cache["rate"] = float(rate)
+        _rate_cache["ts"] = now
+        db.data.setdefault("settings", {})["usdt_rate_uzs"] = float(rate)
+        db.data["settings"]["usdt_rate_updated_at"] = now_iso()
+        db.save()
+        log.info("💱 USDT/UZS kursi yangilandi: %s so'm", fmt(rate))
+        return rate
+
+    log.warning("Kurs API'sidan olib bo'lmadi — USDT_RATE_UZS zaxirasi ishlatilmoqda")
+    _rate_cache["rate"] = float(USDT_RATE_FALLBACK)
+    _rate_cache["ts"] = now
+    return USDT_RATE_FALLBACK
+
+
+async def usdt_to_uzd(usdt: Decimal) -> Decimal:
+    """USDT summasini so'mga o'giradi (live/keshli kurs bilan)."""
+    return (usdt * await get_usdt_uzs_rate()).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+
 async def _safe_seqno(wallet: WalletV4R2) -> Optional[int]:
     try:
         return int(await wallet.get_seqno())
@@ -910,15 +1027,12 @@ async def buy_stars_via_fragment(username: str, amount: int) -> PurchaseResult:
                 raise PurchaseError(f"Payload yaratishda xato: {exc}") from exc
 
             usdt_amount: Optional[int] = None
-            if FRAGMENT_PAYMENT_METHOD == "usdt":
-                usdt_amount = await verify_usdt_payment(provider, wallet, tx, body, amount, balance)
-                log.info("USDT to'lov: %s USDT (+gaz %s TON)", fmt_usdt(usdt_amount), from_nano(tx.amount_nano))
-            else:
-                if balance < tx.amount_nano + TON_FEE_RESERVE_NANO:
-                    raise PurchaseError(
-                        f"Hamyonda TON yetarli emas: {from_nano(balance)} TON, "
-                        f"kerak: {from_nano(tx.amount_nano + TON_FEE_RESERVE_NANO)} TON"
-                    )
+            # FAQAT USDT (TON) — boshqa to'lov usuli yo'q
+            usdt_amount = await verify_usdt_payment(provider, wallet, tx, body, amount, balance)
+            log.info(
+                "USDT to'lov: %s USDT (gaz %s TON) -> Fragment",
+                fmt_usdt(usdt_amount), from_nano(tx.amount_nano),
+            )
 
             old_seqno = await _safe_seqno(wallet)
             if old_seqno is None:
@@ -1141,7 +1255,24 @@ def bot_active() -> bool:
 
 def admin_panel_text() -> str:
     state = "🟢 ishlayapti" if bot_active() else "🔴 to'xtatilgan"
-    return f"🛠 <b>Admin panel</b>\n\nBot holati: <b>{state}</b>"
+    settings = db.data.get("settings", {})
+    try:
+        usdt = float(settings.get("wallet_usdt_balance", 0) or 0)
+    except (TypeError, ValueError):
+        usdt = 0.0
+    try:
+        rate = float(settings.get("usdt_rate_uzs", 0) or 0) or float(USDT_RATE_FALLBACK)
+    except (TypeError, ValueError):
+        rate = float(USDT_RATE_FALLBACK)
+    wallet = settings.get("wallet_address") or "—"
+    return (
+        f"🛠 <b>Admin panel</b>\n\n"
+        f"Bot holati: <b>{state}</b>\n"
+        f"💎 To'lov usuli: <b>USDT (TON)</b>\n"
+        f"👛 USDT balansi: <b>{usdt:.2f} USDT</b> (≈ {fmt(int(usdt * rate))} UZS)\n"
+        f"💱 Kurs: <b>1 USDT = {fmt(int(rate))} UZS</b>\n"
+        f"🏦 Hamyon: <code>{esc(wallet)}</code>"
+    )
 
 
 def admin_kb() -> InlineKeyboardMarkup:
@@ -1149,6 +1280,7 @@ def admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=toggle, callback_data="adm:toggle", style="danger" if bot_active() else "success")],
+            [InlineKeyboardButton(text="👛 USDT balansi", callback_data="adm:wallet")],
             [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
         ]
@@ -1619,27 +1751,44 @@ def place_star_order(user: dict, username: str, amount: int, chat_id: int) -> di
 
 
 async def process_star_order(order_id: str, chat_id: int) -> None:
-    order = db.data["orders"][order_id]
-    user_id, username, amount, price = order["user_id"], order["recipient"], order["stars"], order["price_uzs"]
+    order = db.data["orders"].get(order_id)
+    if order is None:
+        log.warning("Buyurtma %s bazada topilmadi", order_id)
+        return
+
+    # WebApp buyurtmalari boshqa maydonga yozadi — moslashtiramiz
+    if not order.get("stars") and order.get("amount"):
+        order["stars"] = int(order["amount"])
+    if not order.get("price_uzs") and order.get("price"):
+        order["price_uzs"] = int(order["price"])
+
+    user_id = int(order["user_id"])
+    username = order["recipient"]
+    amount = int(order.get("stars") or 0)
+    price = int(order.get("price_uzs") or order.get("price") or 0)
+    if amount <= 0:
+        order.update(status="failed", error="Stars miqdori noto'g'ri")
+        db.save()
+        return
+
     try:
         result = await buy_stars_via_fragment(username, amount)
     except PurchaseError as exc:
         log.warning("Buyurtma %s muvaffaqiyatsiz: %s", order_id, exc)
-        order.update(status="manual_pending", error=str(exc), chat_id=chat_id)
+        order.update(status="manual_pending", error=str(exc), chat_id=chat_id, finished_at=now_iso())
         db.save()
 
-        # Agar USDT yetarli bo'lmasa yoki hamyon muammosi bo'lsa adminga xabar va ogohlantirish:
-        # 100 stars = 1.5 USDT (0.015 USDT per star)
-        usdt_needed = round(amount * 0.015, 3)
+        # USDT yetarli emas yoki hamyon muammosi — adminga ogohlantirish
+        usdt_needed = (Decimal(amount) * USDT_MAX_PER_STAR).quantize(Decimal("0.001"))
         await notify_admins(
-            f"⚠️ <b>DIQQAT: Stars buyurtmasi adminga o'tdi!</b>\n\n"
+            f"⚠️ <b>Stars buyurtmasi adminga o'tdi (USDT yetarli emas)</b>\n\n"
             f"📦 <b>Buyurtma ID:</b> <code>#{order_id}</code>\n"
             f"👤 <b>Mijoz ID:</b> <code>{user_id}</code> (@{esc(username)})\n"
             f"⭐ <b>Stars miqdori:</b> {amount} ⭐\n"
-            f"💵 <b>Talab qilinadigan USDT:</b> ~{usdt_needed} USDT (on TON)\n"
+            f"💵 <b>Kerakli USDT:</b> ~{usdt_needed} USDT (on TON)\n"
             f"💳 <b>Yechilgan so'm:</b> {fmt(price)} UZS\n"
             f"🔍 <b>Sabab:</b> <code>{esc(exc)}</code>\n\n"
-            f"👉 <i>Iltimos, TON hamyonga USDT tashlang yoki Stars'ni Fragment orqali qo'lda yuboring!</i>"
+            f"👉 <i>Iltimos, TON hamyonga USDT tashlang (Telegram -&gt; USDT -&gt; TON).</i>"
         )
         await _safe_send(
             chat_id,
@@ -1648,7 +1797,7 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
             f"👤 Qabul qiluvchi: <b>@{esc(username)}</b>\n"
             f"💳 To'langan summa: <b>{fmt(price)} UZS</b>\n"
             f"📌 Holat: <b>Qayta ishlanmoqda (Adminga yuborildi)</b>\n\n"
-            f"<i>Tizim navbati tufayli buyurtmangiz navbatdan tashqari adminga yuborildi va tez orada Stars hisobingizga tushiriladi.</i>",
+            f"<i>Do'kon USDT (TON) zaxirasi vaqtincha yetarli emas. Admin to'ldirgach Stars avtomatik yuboriladi.</i>",
         )
         return
     except Exception as exc:  # noqa: BLE001
@@ -1661,14 +1810,104 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
         )
         return
 
-    order.update(status="done" if result.confirmed else "sent_unconfirmed", finished_at=now_iso())
+    order.update(
+        status="done" if result.confirmed else "sent_unconfirmed",
+        finished_at=now_iso(),
+        payment_method="usdt_ton",
+        usdt_spent=round(result.usdt_amount / 10 ** USDT_DECIMALS, 3) if result.usdt_amount else None,
+    )
+    if result.usdt_amount:
+        _decrease_wallet_usdt(result.usdt_amount)
     db.save()
 
+    usdt_spent = order.get("usdt_spent")
     await _safe_send(
         chat_id,
-        f"✅ <b>Muvaffaqiyatli xarid!</b>\n\n⭐ {fmt(amount)} Stars @{esc(username)} ga Fragment (USDT on TON) orqali yuborildi.\n"
-        f"Buyurtma: <code>{order_id}</code>",
+        f"✅ <b>Muvaffaqiyatli xarid!</b>\n\n⭐ {fmt(amount)} Stars @{esc(username)} ga Fragment orqali "
+        f"USDT (TON) to'lov bilan avtomatik yuborildi.\n"
+        + (f"💎 Sarflangan: <b>{usdt_spent} USDT</b>\n" if usdt_spent else "")
+        + f"🆔 Buyurtma: <code>{order_id}</code>",
     )
+
+
+def _decrease_wallet_usdt(micro: int) -> None:
+    settings = db.data.setdefault("settings", {})
+    try:
+        current = Decimal(str(settings.get("wallet_usdt_balance", 0) or 0))
+    except InvalidOperation:
+        current = Decimal(0)
+    settings["wallet_usdt_balance"] = max(
+        Decimal(0), current - (Decimal(micro) / (10 ** USDT_DECIMALS))
+    ).quantize(Decimal("0.001"))
+
+
+async def refresh_wallet_usdt() -> None:
+    """TON hamyondagi haqiqiy USDT balansini olib, settings'ga yozadi (admin panel uchun)."""
+    if WALLET_SEED_ERROR:
+        return
+    provider = None
+    try:
+        provider = LiteBalancer.from_mainnet_config(trust_level=1)
+        await provider.start_up()
+        wallet = await WalletV4R2.from_mnemonic(provider, WALLET_WORDS)
+        jetton_wallet = await usdt_wallet_address(provider, wallet.address)
+        balance = await usdt_balance(provider, jetton_wallet)
+        settings = db.data.setdefault("settings", {})
+        settings["wallet_usdt_balance"] = round(balance / 10 ** USDT_DECIMALS, 3)
+        settings["wallet_address"] = wallet.address.to_str(is_user_friendly=True)
+        settings["wallet_usdt_updated_at"] = now_iso()
+        db.save()
+        log.info("👛 USDT balansi yangilandi: %s USDT", settings["wallet_usdt_balance"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("USDT balansini yangilab bo'lmadi: %s", exc)
+    finally:
+        if provider is not None:
+            try:
+                await provider.close_all()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+async def star_order_worker() -> None:
+    """WebApp'dan kelgan Stars buyurtmalarini USDT (TON) orqali Fragment'da xarid qiladi.
+
+    Bot ichidagi buyurtmalar darhol `process_star_order` chaqiradi, WebApp buyurtmalari esa
+    baza orqali (status=processing) shu worker tomonidan olinadi. Shu tariqa IKKALA yo'l
+    ham yagona — haqiqiy Fragment USDT kodi orqali ishlaydi.
+    """
+    log.info("⭐ Stars worker (USDT on TON) ishga tushdi — WebApp buyurtmalari kutilmoqda")
+    await asyncio.sleep(4)
+    cycle = 0
+    while True:
+        try:
+            await asyncio.sleep(4)
+            db.reload_if_changed()
+            cycle += 1
+
+            for order_id, order in list(db.data["orders"].items()):
+                if order.get("kind") != "stars":
+                    continue
+                if order.get("auto_processed"):
+                    continue
+                if order.get("status") not in ("processing", "queued", "pending"):
+                    continue
+                if order.get("payment_method") not in (None, "", "usdt", "usdt_ton"):
+                    continue
+
+                order["auto_processed"] = True
+                order["payment_method"] = "usdt_ton"
+                db.save()
+                target = int(order.get("chat_id") or order["user_id"])
+                log.info("⭐ WebApp buyurtmasi %s qayta ishlanmoqda (%s ⭐)", order_id, order.get("amount"))
+                asyncio.create_task(process_star_order(order_id, target))
+
+            # Har 5 daqiqada USDT balansini yangilab turamiz
+            if cycle % 75 == 0:
+                asyncio.create_task(refresh_wallet_usdt())
+                asyncio.create_task(get_usdt_uzs_rate(force=True))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Stars worker xatosi: %s", exc)
+            await asyncio.sleep(5)
 
 
 async def _safe_send(chat_id: int, text: str, **kwargs: Any) -> None:
@@ -1825,29 +2064,38 @@ async def on_humo_message(client: UserbotClient, message) -> None:
             return
         db.data["processed_bank_msgs"].append(msg_id)
         now = time.time()
+        # WebApp'dan yaratilgan to'lovlar ham ko'rinishi uchun bazani yangilaymiz
+        db.reload_if_changed()
         matches = [
             t for t in db.data["topups"].values()
             if t["status"] == "pending" and t["expires_at"] > now and int(t["amount"]) == amount
         ]
         if matches:
-            t = matches[0]
+            # Eng eski so'rovni birinchi yopamiz
+            t = min(matches, key=lambda x: x.get("created_at", ""))
             t["status"] = "completed"
             t["completed_at"] = now_iso()
+            t["auto_verified"] = True
+            t["payment_method"] = "humocard"
             u = db.data["users"].get(str(t["user_id"]))
             if u:
                 u["balance"] = int(u.get("balance", 0)) + t["amount"]
                 u["total_topup"] = int(u.get("total_topup", 0)) + t["amount"]
+                db.add_history(u, "topup", int(t["amount"]), f"Auto: HUMOCARD *{card or '????'}")
                 try:
                     await bot.send_message(
                         u["id"],
-                        f"✅ <b>{fmt(t['amount'])} UZS</b> balansingizga muvaffaqiyatli qo'shildi.",
+                        f"✅ <b>{fmt(t['amount'])} UZS</b> balansingizga muvaffaqiyatli qo'shildi.\n\n"
+                        f"💳 To'lov avtomatik aniqlanildi (HUMO karta).",
                     )
                 except Exception:  # noqa: BLE001
                     pass
             db.data["settings"]["total_volume_uzs"] = int(db.data["settings"].get("total_volume_uzs", 0)) + t["amount"]
             db.save()
             await notify_admins(
-                f"💰 To'lov avtomatik tasdiqlandi!\n👤 User: {t['user_id']}\n💵 Summa: {fmt(t['amount'])} UZS\n💳 Karta: *{card or '???'}"
+                f"💰 To'lov avtomatik tasdiqlandi!\n👤 User: {t['user_id']}\n"
+                f"💵 Summa: {fmt(t['amount'])} UZS\n💳 Karta: *{card or '???'}\n"
+                f"🆔 Topup: <code>{t['id']}</code>"
             )
         else:
             db.save()
@@ -1868,6 +2116,7 @@ async def process_gift_orders() -> None:
             await asyncio.sleep(15)
             if userbot is None:
                 continue
+            db.reload_if_changed()
             for order in list(db.data.get("orders", {}).values()):
                 if order.get("kind") != "gift":
                     continue
@@ -2040,6 +2289,19 @@ async def adm_toggle(call: CallbackQuery):
     await call.message.edit_text(admin_panel_text(), reply_markup=admin_kb())
 
 
+@admin_router.callback_query(F.data == "adm:wallet")
+async def adm_wallet(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer("🔄 USDT balansi yangilanmoqda...")
+    if WALLET_SEED_ERROR:
+        await call.message.answer(f"⚠️ {esc(WALLET_SEED_ERROR)}")
+        return
+    await call.message.answer("🔄 TON tarmog'idan USDT balansi olinmoqda...")
+    await refresh_wallet_usdt()
+    await call.message.answer(admin_panel_text(), reply_markup=admin_kb())
+
+
 @admin_router.callback_query(F.data == "adm:ub_status")
 async def adm_ub_status(call: CallbackQuery):
     if not await _admin_guard(call):
@@ -2117,6 +2379,8 @@ async def main() -> None:
         await bot.delete_webhook(drop_pending_updates=False)
         maybe_start_userbot()
         asyncio.create_task(process_gift_orders())
+        asyncio.create_task(star_order_worker())
+        asyncio.create_task(get_usdt_uzs_rate())
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         db.save()
