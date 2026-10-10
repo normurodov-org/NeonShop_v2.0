@@ -101,6 +101,9 @@ export interface StoreSettings {
   total_volume_uzs: number;
   wallet_usdt_balance?: number;
   wallet_address?: string;
+  /** USDT alohida jetton manzilida saqlanadi (TON hamyondan boshqa) */
+  wallet_usdt_address?: string;
+  wallet_ton_balance?: number;
   wallet_usdt_updated_at?: string;
   usdt_rate_uzs?: number;
   usdt_rate_updated_at?: string;

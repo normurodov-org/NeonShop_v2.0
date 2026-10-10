@@ -624,6 +624,25 @@ def _wallet_balance_nano() -> int:
     return asyncio.run(_get())
 
 
+def _wallet_addresses() -> dict[str, str]:
+    """TON hamyon va uning USDT jetton manzilini qaytaradi (sinxron)."""
+    async def _get() -> dict[str, str]:
+        provider, wallet = await connect_wallet(retries=2)
+        try:
+            jetton = await usdt_wallet_address(provider, wallet.address)
+            return {
+                "wallet": wallet.address.to_str(is_user_friendly=True),
+                "usdt": jetton.to_str(is_user_friendly=True),
+            }
+        finally:
+            try:
+                await provider.close_all()
+            except Exception:  # noqa: BLE001
+                pass
+
+    return asyncio.run(_get())
+
+
 def parse_fragment_transaction(resp: dict) -> FragmentTx:
     if not isinstance(resp, dict):
         raise FragmentError("Fragment javobi noto'g'ri formatda")
@@ -891,9 +910,19 @@ class FragmentClient:
             lines.append("⏭️ initBuyStarsRequest: tekshirilmadi (qabul qiluvchi topilmadi)")
             return lines
         if not WALLET_WORDS:
-            lines.append("⚠️ WALLET_SEED yo'q — init tekshiruvi o'tkazilmaydi "
-                         "(Fragment 'balance' parametrini talab qiladi)")
+            lines.append("⚠️ WALLET_SEED yo'q — init tekshiruvi o'tkazilmaydi")
             return lines
+
+        # Hamyon manzillari: USDT alohida jetton manzilida saqlanadi
+        try:
+            balance = await asyncio.to_thread(_wallet_balance_nano)
+            addresses = await asyncio.to_thread(_wallet_addresses)
+            lines.append(f"💰 TON manzil:  <code>{addresses['wallet']}</code>")
+            lines.append(f"💵 USDT manzil: <code>{addresses['usdt']}</code>")
+            lines.append(f"   (USDT shu jetton manzilida saqlanadi — aynan shu yerga yuboring)")
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"⚠️ Hamyon manzillarini olib bo'lmadi: {str(exc)[:80]}")
+
         try:
             balance = await asyncio.to_thread(_wallet_balance_nano)
             req_id, method = await asyncio.to_thread(
@@ -1591,17 +1620,29 @@ def admin_panel_text() -> str:
     except (TypeError, ValueError):
         usdt = 0.0
     try:
+        ton = float(settings.get("wallet_ton_balance", 0) or 0)
+    except (TypeError, ValueError):
+        ton = 0.0
+    try:
         rate = float(settings.get("usdt_rate_uzs", 0) or 0) or float(USDT_RATE_FALLBACK)
     except (TypeError, ValueError):
         rate = float(USDT_RATE_FALLBACK)
+
     wallet = settings.get("wallet_address") or "—"
+    usdt_wallet = settings.get("wallet_usdt_address") or "—"
+
     return (
         f"🛠 <b>Admin panel</b>\n\n"
         f"Bot holati: <b>{state}</b>\n"
-        f"💎 To'lov usuli: <b>USDT (TON)</b>\n"
-        f"👛 USDT balansi: <b>{usdt:.2f} USDT</b> (≈ {fmt(int(usdt * rate))} UZS)\n"
-        f"💱 Kurs: <b>1 USDT = {fmt(int(rate))} UZS</b>\n"
-        f"🏦 Hamyon: <code>{esc(wallet)}</code>"
+        f"💎 To'lov usuli: <b>USDT (TON)</b> — <code>usdt_ton</code>\n"
+        f"\n<b>💰 Hamyonlar:</b>\n"
+        f"├ TON: <b>{ton:.4f} TON</b> (gaz uchun)\n"
+        f"├ USDT: <b>{usdt:.2f} USDT</b> (≈ {fmt(int(usdt * rate))} UZS)\n"
+        f"├ TON manzil: <code>{esc(wallet)}</code>\n"
+        f"└ USDT manzil: <code>{esc(usdt_wallet)}</code>\n"
+        f"\n💱 Kurs: <b>1 USDT = {fmt(int(rate))} UZS</b>\n"
+        f"\nℹ️ <i>USDT oddiy TON hamyonida emas, alohida <b>jetton</b> manzilida "
+        f"saqlanadi. USDT yuborash uchun yuoridagi <b>USDT manzil</b>ga yuboring.</i>"
     )
 
 
@@ -2202,7 +2243,12 @@ def _decrease_wallet_usdt(micro: int) -> None:
 
 
 async def refresh_wallet_usdt() -> None:
-    """TON hamyondagi haqiqiy USDT balansini olib, settings'ga yozadi (admin panel uchun)."""
+    """TON hamyondagi haqiqiy USDT balansini olib, settings'ga yozadi (admin panel uchun).
+
+    MUHIM: USDT oddiy TON hamyon manzilida emas, alohida JETTON (keltron)
+    manzilida saqlanadi. Bu manzil `USDT_MASTER.get_wallet_address(hamyon)`
+    orqali hisoblanadi — ya'ni sizga tegishli, lekin boshqa manzil.
+    """
     if WALLET_SEED_ERROR:
         return
     provider = None
@@ -2210,12 +2256,23 @@ async def refresh_wallet_usdt() -> None:
         provider, wallet = await connect_wallet(retries=2)
         jetton_wallet = await usdt_wallet_address(provider, wallet.address)
         balance = await usdt_balance(provider, jetton_wallet)
+        try:
+            ton_balance = await wallet.get_balance()
+        except Exception:  # noqa: BLE001
+            ton_balance = 0
+
         settings = db.data.setdefault("settings", {})
-        settings["wallet_usdt_balance"] = round(balance / 10 ** USDT_DECIMALS, 3)
         settings["wallet_address"] = wallet.address.to_str(is_user_friendly=True)
+        settings["wallet_usdt_address"] = jetton_wallet.to_str(is_user_friendly=True)
+        settings["wallet_usdt_balance"] = round(balance / 10 ** USDT_DECIMALS, 3)
+        settings["wallet_ton_balance"] = round(ton_balance / 10 ** 9, 4)
         settings["wallet_usdt_updated_at"] = now_iso()
         db.save()
-        log.info("👛 USDT balansi yangilandi: %s USDT", settings["wallet_usdt_balance"])
+        log.info(
+            "👛 USDT balansi: %s USDT (jetton %s) | TON: %s",
+            settings["wallet_usdt_balance"], settings["wallet_usdt_address"],
+            settings["wallet_ton_balance"],
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("USDT balansini yangilab bo'lmadi: %s", exc)
     finally:
