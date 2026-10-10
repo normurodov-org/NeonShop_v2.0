@@ -100,6 +100,8 @@ from urllib.parse import urlencode, urlsplit
 
 import cloudscraper
 import httpx
+
+from premium_emoji import PREMIUM_EMOJI, render_text
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.middlewares.base import BaseRequestMiddleware
@@ -1454,7 +1456,19 @@ class RefStates(StatesGroup):
 
 class AdminStates(StatesGroup):
     password = State()
-    ct_confirm = State()
+    broadcast = State()
+    balance_user = State()
+    balance_amount = State()
+    balance_confirm = State()
+    ban_user = State()
+    unban_user = State()
+    contest_text = State()
+    contest_prize = State()
+    contest_winners = State()
+    contest_min = State()
+    contest_days = State()
+    ub_phone = State()
+    ub_code = State()
 
 
 # =============================================================================
@@ -1647,12 +1661,25 @@ def admin_panel_text() -> str:
 
 
 def admin_kb() -> InlineKeyboardMarkup:
-    toggle = "⏸ Botni to'xtatish" if bot_active() else "▶️ Botni ishga tushirish"
+    active = bot_active()
+    toggle = "⏸ Botni to'xtatish" if active else "▶️ Botni ishga tushirish"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=toggle, callback_data="adm:toggle", style="danger" if bot_active() else "success")],
-            [InlineKeyboardButton(text="👛 USDT balansi", callback_data="adm:wallet")],
-            [InlineKeyboardButton(text="🩺 Fragment diagnostika", callback_data="adm:diag")],
+            [InlineKeyboardButton(
+                text=toggle, callback_data="adm:toggle",
+                style="danger" if active else "success")],
+            [InlineKeyboardButton(text="📊 Statistika", callback_data="adm:stats"),
+             InlineKeyboardButton(text="📣 Xabar yuborish", callback_data="adm:bc")],
+            [InlineKeyboardButton(text="🏆 Top 20", callback_data="adm:top20"),
+             InlineKeyboardButton(text="🎉 Konkurs", callback_data="adm:contest")],
+            [InlineKeyboardButton(text="➕ Balans qo'shish", callback_data="adm:bal_add"),
+             InlineKeyboardButton(text="➖ Balans ayirish", callback_data="adm:bal_take")],
+            [InlineKeyboardButton(text="🚫 Ban", callback_data="adm:ban"),
+             InlineKeyboardButton(text="✅ Unban", callback_data="adm:unban")],
+            [InlineKeyboardButton(text="💎 TON balans", callback_data="adm:wallet"),
+             InlineKeyboardButton(text="🔎 Fragment test", callback_data="adm:diag")],
+            [InlineKeyboardButton(text="🔑 Userbot ulash (QR)", callback_data="adm:ub_qr"),
+             InlineKeyboardButton(text="📱 Raqam bilan ulash", callback_data="adm:ub_phone")],
             [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
         ]
@@ -1754,6 +1781,43 @@ class StyledButtonsMiddleware(BaseRequestMiddleware):
         if not isinstance(method, self._methods):
             return await make_request(bot_, method)
         return await make_request(bot_, self._transform(method))
+
+
+# =============================================================================
+# 10.1 PREMIUM EMOJI MIDDLEWARE
+# =============================================================================
+class PremiumEmojiMiddleware(BaseRequestMiddleware):
+    """Barcha xabarlardagi emojilarni Telegram premium (custom) emojiga aylantiradi.
+
+    Telegram `parse_mode` va `entities` ni birga qabul qilmaydi, shuning uchun
+    HTML matn oldindan yalang'och matn + entities ga aylantiriladi.
+    Konvertatsiya xato bo'lsa — xabar oddiy HTML holida yuboriladi (xavfsiz).
+    """
+
+    _methods = (SendMessage, EditMessageText)
+
+    @staticmethod
+    def _transform(method: Any) -> Any:
+        source = getattr(method, "text", None)
+        if not source:
+            return method
+        rendered = render_text(source)
+        if rendered is None:
+            return method
+        text, entities = rendered
+        if not entities:
+            return method.model_copy(update={"text": text, "parse_mode": None, "entities": []})
+        return method.model_copy(update={"text": text, "parse_mode": None, "entities": entities})
+
+    async def __call__(self, make_request, bot_: Bot, method):  # type: ignore[override]
+        if not isinstance(method, self._methods):
+            return await make_request(bot_, method)
+        try:
+            return await make_request(bot_, self._transform(method))
+        except Exception as exc:  # noqa: BLE001
+            # Entities bilan yuborilmasa — oddiy HTML bilan qayta urinamiz
+            log.warning("Premium emoji yuborilmadi (%s), oddiy rejimga qaytildi", exc)
+            return await make_request(bot_, method)
 
 
 # =============================================================================
@@ -2187,17 +2251,16 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
         )
         await _safe_send(
             chat_id,
-            f"⏳ <b>Buyurtmangiz qabul qilindi va adminga yo'naltirildi!</b>\n\n"
+            f"⏳ <b>Buyurtmangiz qabul qilindi!</b>\n\n"
             f"⭐ Miqdor: <b>{amount} ta Stars</b>\n"
             f"👤 Qabul qiluvchi: <b>@{esc(username)}</b>\n"
-            f"💳 To'langan summa: <b>{fmt(price)} UZS</b>\n"
-            f"📌 Holat: <b>Qayta ishlanmoqda (Adminga yuborildi)</b>\n\n"
+            f"💳 Yechilgan summa: <b>{fmt(price)} UZS</b>\n"
+            f"📌 Holat: <b>Yuborilmoqda</b>\n\n"
             + (
-                "<i>Do'kon tomonida texnik xatolik bor. Administrator tuzatadi va "
+                "<i>Do'kon tomonida vaqtincha muammo bor. Administrator tuzatadi va "
                 "Stars'ni avtomatik yuboradi.</i>"
                 if technical
-                else "<i>Do'kon USDT (TON) zaxirasi vaqtincha yetarli emas. "
-                "Admin to'ldirgach Stars avtomatik yuboriladi.</i>"
+                else "<i>Stars avtomatik tarzda yuboriladi. Biroz kutib turing.</i>"
             ),
         )
         return
@@ -2224,10 +2287,10 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
     usdt_spent = order.get("usdt_spent")
     await _safe_send(
         chat_id,
-        f"✅ <b>Muvaffaqiyatli xarid!</b>\n\n⭐ {fmt(amount)} Stars @{esc(username)} ga Fragment orqali "
-        f"USDT (TON) to'lov bilan avtomatik yuborildi.\n"
-        + (f"💎 Sarflangan: <b>{usdt_spent} USDT</b>\n" if usdt_spent else "")
-        + f"🆔 Buyurtma: <code>{order_id}</code>",
+        f"✅ <b>Stars avtomatik yuborildi!</b>\n\n"
+        f"⭐ {fmt(amount)} Stars @${esc(username)} ga yetkazildi.\n"
+        f"💳 Yechilgan summa: <b>{fmt(price)} UZS</b>\n"
+        f"🆔 Buyurtma: <code>{order_id}</code>",
     )
 
 
@@ -2481,10 +2544,30 @@ async def on_humo_message(client: UserbotClient, message) -> None:
         now = time.time()
         # WebApp'dan yaratilgan to'lovlar ham ko'rinishi uchun bazani yangilaymiz
         db.reload_if_changed()
-        matches = [
+
+        # Muddati o'tgan so'rovlarni tozalaymiz
+        for t in db.data["topups"].values():
+            if t.get("status") == "pending" and float(t.get("expires_at", 0)) < now:
+                t["status"] = "expired"
+
+        # Faol so'rovlar: mijoz aynan shu summani to'lashini kutamiz
+        pending = [
             t for t in db.data["topups"].values()
-            if t["status"] == "pending" and t["expires_at"] > now and int(t["amount"]) == amount
+            if t.get("status") == "pending" and float(t.get("expires_at", 0)) > now
         ]
+
+        # Karta tekshiruvi: o'z kartamizdan tushgan to'lovni tasdiqlaymiz
+        our_digits = "".join(ch for ch in str(CARD_NUMBER) if ch.isdigit())
+        card_ok = True
+        if card and our_digits:
+            card_ok = card in our_digits or our_digits.endswith(card)
+
+        matches = [
+            t for t in pending
+            if int(t.get("amount", 0)) == amount
+            and (card_ok or not card)
+        ]
+
         if matches:
             # Eng eski so'rovni birinchi yopamiz
             t = min(matches, key=lambda x: x.get("created_at", ""))
@@ -2500,23 +2583,42 @@ async def on_humo_message(client: UserbotClient, message) -> None:
                 try:
                     await bot.send_message(
                         u["id"],
-                        f"✅ <b>{fmt(t['amount'])} UZS</b> balansingizga muvaffaqiyatli qo'shildi.\n\n"
-                        f"💳 To'lov avtomatik aniqlanildi (HUMO karta).",
+                        f"✅ <b>{fmt(t['amount'])} UZS</b> balansingizga qo'shildi!\n\n"
+                        f"💳 To'lov avtomatik aniqlanildi.\n"
+                        f"💰 Balans: <b>{fmt(u['balance'])} so'm</b>",
                     )
                 except Exception:  # noqa: BLE001
                     pass
             db.data["settings"]["total_volume_uzs"] = int(db.data["settings"].get("total_volume_uzs", 0)) + t["amount"]
             db.save()
             await notify_admins(
-                f"💰 To'lov avtomatik tasdiqlandi!\n👤 User: {t['user_id']}\n"
-                f"💵 Summa: {fmt(t['amount'])} UZS\n💳 Karta: *{card or '???'}\n"
+                f"💰 <b>To'lov avtomatik tasdiqlandi!</b>\n\n"
+                f"👤 User: <code>{t['user_id']}</code>\n"
+                f"💵 Summa: <b>{fmt(t['amount'])} UZS</b>\n"
+                f"💳 Karta: <code>*{card or '????'}</code>\n"
                 f"🆔 Topup: <code>{t['id']}</code>"
             )
-        else:
+        elif card and not card_ok:
+            # Boshqa kartadan kelgan — tasdiqlamaymiz
             db.save()
             await notify_admins(
-                f"🔀 Kelgan to'lov avtomatik bog'lanmadi: {fmt(amount)} UZS (karta *{card or '???'}). "
-                f"Faol so'rovlar orasida mosi topilmadi."
+                f"🚫 <b>Boshqa kartadan to'lov keldi — tasdiqlanmadi</b>\n\n"
+                f"💵 Summa: <b>{fmt(amount)} UZS</b>\n"
+                f"💳 Karta: <code>*{card}</code> (bizniki: <code>*{our_digits[-4:]}</code>)\n"
+                f"🔍 Ko'rib chiqing — kerak bo'lsa qo'lda tasdiqlang."
+            )
+        else:
+            waiting = ", ".join(
+                f"<code>{t['id']}</code> ({fmt(t['amount'])} UZS)" for t in pending[:5]
+            )
+            db.save()
+            await notify_admins(
+                f"🔀 <b>To'lov avtomatik bog'lanmadi</b>\n\n"
+                f"💵 Kelgan summa: <b>{fmt(amount)} UZS</b>\n"
+                f"💳 Karta: <code>*{card or '????'}</code>\n"
+                f"📋 Kutayotgan so'rovlar: {waiting or 'yo‘q'}\n\n"
+                f"<i>Mijoz boshqa summa to'lagan bo'lishi mumkin. Zarur bo'lsa qo'lda "
+                f"tasdiqlang: /api/admin/adjust-balance</i>"
             )
     except Exception as exc:  # noqa: BLE001
         log.exception("Humo xabarini qayta ishlashda xato")
@@ -2524,8 +2626,14 @@ async def on_humo_message(client: UserbotClient, message) -> None:
 
 
 async def process_gift_orders() -> None:
-    """Gift buyurtmalariga userbot orqali sovg'ani avto-yuborish."""
-    log.info("🎁 Gift buyurtmalari avto-yetkazuv xizmati ishga tushdi...")
+    """Gift buyurtmalarini userbot orqali avto-yuboradi.
+
+    Ikkala manbadan oladi:
+      • bot ichidagi buyurtmalar (kind=gift)
+      • WebApp'dan kelgan buyurtmalar (bazaga yozilgan, source=webapp)
+    Xato bo'lsa 3 marta qayta urinadi, keyin adminga yuboriladi.
+    """
+    log.info("🎁 Gift avto-yetkazuv xizmati ishga tushdi...")
     while True:
         try:
             await asyncio.sleep(15)
@@ -2535,37 +2643,72 @@ async def process_gift_orders() -> None:
             for order in list(db.data.get("orders", {}).values()):
                 if order.get("kind") != "gift":
                     continue
-                if order.get("gift_sent"):
+                if order.get("gift_sent") or order.get("gift_processing"):
                     continue
-                if order.get("status") not in ("completed", "pending_admin"):
+                if order.get("status") not in ("completed", "pending_admin", "processing"):
                     continue
                 gift_key = order.get("gift") or order.get("gift_key") or ""
-                stars = next((g[2] for g in GIFTS if g[0] == gift_key), None)
+                gift_def = next((g for g in GIFTS if g[0] == gift_key), None)
+                # `gift` maydoni yo'q bo'lsa (eski/webapp yozuvlari) — Stars bo'yicha
+                # aniqlaymiz, aks holda hech narsa topilmaydi va gift yuborilmaydi
+                stars = gift_def[2] if gift_def else (order.get("stars") or order.get("amount"))
                 recipient = (order.get("recipient") or "").lstrip("@")
-                if not recipient:
+                if not recipient or not stars:
                     continue
+
+                order["gift_processing"] = True
+                db.save()
                 try:
                     gifts = await userbot.get_available_gifts()
                     match = next((g for g in gifts if stars and g.price == stars), None)
                     if match is None:
                         log.warning("Gift (%s) uchun mos sovg'a topilmadi", gift_key)
                         order["gift_sent"] = True
+                        order["gift_processing"] = False
                         order["gift_error"] = "Mos sovg'a topilmadi"
                         db.save()
-                        await notify_admins(f"⚠️ Gift #{order['id']} ({gift_key}) uchun mos sovg'a topilmadi.")
+                        await notify_admins(
+                            f"⚠️ Gift <code>#{order['id']}</code> ({gift_key}) uchun mos sovg'a topilmadi. "
+                            f"Sovg'aning narxi o'zgargan bo'lishi mumkin."
+                        )
                         continue
-                    await userbot.send_gift(chat_id=recipient, gift_id=match.id)
+
+                    sent = False
+                    last_err: Optional[Exception] = None
+                    for attempt in range(3):
+                        try:
+                            await userbot.send_gift(chat_id=recipient, gift_id=match.id)
+                            sent = True
+                            break
+                        except Exception as exc:  # noqa: BLE001
+                            last_err = exc
+                            log.warning("Gift yuborishda xato (%d/3): %s", attempt + 1, exc)
+                            await asyncio.sleep(3 + attempt * 3)
+
+                    if not sent:
+                        raise last_err or RuntimeError("noma'lum xato")
+
                     order["gift_sent"] = True
+                    order["gift_processing"] = False
                     order["gift_sent_at"] = now_iso()
                     db.save()
                     log.info("🎁 Gift %s @%s ga userbot orqali yuborildi", gift_key, recipient)
-                    await notify_admins(f"🎁 Gift #{order['id']} ({gift_key}) @{recipient} ga yuborildi.")
+                    await _safe_send(
+                        order["user_id"],
+                        f"🎁 <b>Sovg'a yuborildi!</b>\n\n"
+                        f"🎉 {esc(str(order.get('title', gift_key)))}\n"
+                        f"👤 Qabul qiluvchi: <b>@{esc(recipient)}</b>\n"
+                        f"🆔 Buyurtma: <code>{order['id']}</code>",
+                    )
+                    await notify_admins(
+                        f"🎁 Gift <code>#{order['id']}</code> ({gift_key}) @{esc(recipient)} ga yuborildi."
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    order["gift_sent"] = True
+                    order["gift_processing"] = False
                     order["gift_error"] = str(exc)
                     db.save()
                     log.error("Gift yuborishda xato: %s", exc)
-                    await notify_admins(f"❌ Gift #{order['id']} yuborishda xato: {exc}")
+                    await notify_admins(f"❌ Gift <code>#{order['id']}</code> yuborishda xato: {exc}")
         except Exception as exc:  # noqa: BLE001
             log.error("process_gift_orders xato: %s", exc)
             await asyncio.sleep(5)
@@ -2750,6 +2893,608 @@ async def adm_logout(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("🚪 Admin paneldan chiqdingiz.")
 
 
+# ------------------------------------------------------------------ statistika
+def db_stats() -> dict:
+    users = list(db.data["users"].values())
+    orders = list(db.data["orders"].values())
+    topups = list(db.data["topups"].values())
+    settings = db.data.get("settings", {})
+    return {
+        "users": len(users),
+        "active": sum(1 for u in users if int(u.get("total_spent", 0)) > 0),
+        "banned": sum(1 for u in users if u.get("banned")),
+        "balance": sum(int(u.get("balance", 0)) for u in users),
+        "orders": len(orders),
+        "volume": int(settings.get("total_volume_uzs", 0) or 0),
+        "topups_done": sum(1 for t in topups if t.get("status") == "completed"),
+        "topups_pending": sum(1 for t in topups if t.get("status") == "pending"),
+        "pending_orders": sum(1 for o in orders if o.get("status") in
+                              ("processing", "manual_pending", "unknown")),
+    }
+
+
+@admin_router.callback_query(F.data == "adm:stats")
+async def adm_stats(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    s = db_stats()
+    wallet = db.data.get("settings", {})
+    await call.message.answer(
+        "📊 <b>Statistika</b>\n\n"
+        f"👥 Foydalanuvchilar: <b>{fmt(s['users'])}</b> (faol {s['active']})\n"
+        f"🚫 Banlangan: <b>{s['banned']}</b>\n"
+        f"💰 Umumiy balans: <b>{fmt(s['balance'])} so'm</b>\n"
+        f"⭐ Buyurtmalar: <b>{fmt(s['orders'])}</b>\n"
+        f"💵 Aylanma: <b>{fmt(s['volume'])} so'm</b>\n"
+        f"💳 To'ldirishlar: <b>{s['topups_done']}</b> (kutilmoqda {s['topups_pending']})\n"
+        f"⏳ Kutilayotgan buyurtma: <b>{s['pending_orders']}</b>\n\n"
+        f"💎 USDT: <b>{wallet.get('wallet_usdt_balance', 0)} USDT</b>\n"
+        f"🪙 TON: <b>{wallet.get('wallet_ton_balance', 0)} TON</b>",
+        reply_markup=admin_back_kb(),
+    )
+
+
+# ------------------------------------------------------------------ broadcast
+@admin_router.callback_query(F.data == "adm:bc")
+async def adm_broadcast(call: CallbackQuery, state: FSMContext):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    await state.set_state(AdminStates.broadcast)
+    await call.message.answer(
+        "📣 <b>Xabar yuborish</b>\n\n"
+        "Yubormoqchi bo'lgan xabarni yuboring (rasm, video yoki matn bo'lishi mumkin).\n"
+        "🛑 Bekor qilish uchun /cancel yozing.",
+        reply_markup=admin_back_kb(),
+    )
+
+
+@admin_router.message(StateFilter(AdminStates.broadcast), F.text)
+async def adm_broadcast_wait(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    if message.text.strip().lower() in ("/cancel", "bekor", "cancel"):
+        await state.clear()
+        await message.answer("🛑 Bekor qilindi.", reply_markup=admin_back_kb())
+        return
+
+    users = [int(u["id"]) for u in db.data["users"].values() if not u.get("banned")]
+    status = await message.answer(f"📣 Yuborilmoqda... <b>0</b>/{len(users)}")
+
+    sent = failed = 0
+    for index, uid in enumerate(users, start=1):
+        try:
+            await message.bot.send_message(uid, message.html_text or message.text)
+            sent += 1
+        except TelegramForbiddenError:
+            failed += 1
+        except Exception:  # noqa: BLE001
+            failed += 1
+        if index % 25 == 0:
+            try:
+                await status.edit_text(f"📣 Yuborilmoqda... <b>{index}</b>/{len(users)}")
+            except Exception:  # noqa: BLE001
+                pass
+        await asyncio.sleep(0.05)   # Telegram flood limitdan qat'iy o'tmaslik uchun
+
+    await state.clear()
+    try:
+        await status.edit_text(
+            f"✅ <b>Xabar yuborildi!</b>\n\n"
+            f"📤 Yuborildi: <b>{sent}</b>\n"
+            f"🚫 Xato: <b>{failed}</b>"
+        )
+    except Exception:  # noqa: BLE001
+        await message.answer(f"✅ Yuborildi: {sent}, xato: {failed}")
+
+
+# ------------------------------------------------------------------ top 20
+@admin_router.callback_query(F.data == "adm:top20")
+async def adm_top20(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    users = sorted(
+        db.data["users"].values(),
+        key=lambda u: int(u.get("total_spent", 0) or 0),
+        reverse=True,
+    )[:20]
+    if not users:
+        await call.message.answer("📊 Hali ma'lumot yo'q.", reply_markup=admin_back_kb())
+        return
+
+    lines = ["🏆 <b>TOP 20 xaridorlar</b>\n"]
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for i, u in enumerate(users, start=1):
+        mark = medals.get(i, f"{i}.")
+        name = f"@{u.get('username')}" if u.get("username") else str(u.get("id"))
+        lines.append(f"{mark} {esc(name)} — <b>{fmt(u.get('total_spent', 0))} so'm</b>")
+    lines.append(f"\n💰 Jami: <b>{fmt(sum(int(u.get('total_spent', 0) or 0) for u in users))} so'm</b>")
+    await call.message.answer("\n".join(lines), reply_markup=admin_back_kb())
+
+
+# ------------------------------------------------------------------ balans
+def _balance_kb(action: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"adm:bal_do:{action}")],
+        [InlineKeyboardButton(text="🛑 Bekor qilish", callback_data="adm:home")],
+    ])
+
+
+@admin_router.callback_query(F.data == "adm:bal_add")
+async def adm_bal_add(call: CallbackQuery, state: FSMContext):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    await state.set_state(AdminStates.balance_user)
+    await state.update_data(balance_action="add")
+    await call.message.answer("➕ <b>Balans qo'shish</b>\n\nFoydalanuvchi ID yoki @username kiriting:",
+                              reply_markup=admin_back_kb())
+
+
+@admin_router.callback_query(F.data == "adm:bal_take")
+async def adm_bal_take(call: CallbackQuery, state: FSMContext):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    await state.set_state(AdminStates.balance_user)
+    await state.update_data(balance_action="take")
+    await call.message.answer("➖ <b>Balans ayirish</b>\n\nFoydalanuvchi ID yoki @username kiriting:",
+                              reply_markup=admin_back_kb())
+
+
+@admin_router.message(StateFilter(AdminStates.balance_user), F.text)
+async def adm_balance_user(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    if message.text.strip().lower() == "/cancel":
+        await state.clear()
+        await message.answer("🛑 Bekor qilindi.", reply_markup=admin_back_kb())
+        return
+    user = db.find_user(message.text.strip())
+    if user is None:
+        await message.answer("❌ Foydalanuvchi topilmadi. ID yoki @username tekshirib ko'ring.")
+        return
+    await state.set_state(AdminStates.balance_amount)
+    await state.update_data(balance_target=user["id"])
+    await message.answer(
+        f"👤 Foydalanuvchi: <b>{esc('@' + str(user.get('username'))) if user.get('username') else user['id']}</b>\n"
+        f"💰 Hozirgi balans: <b>{fmt(user.get('balance', 0))} so'm</b>\n\n"
+        "💵 Summani kiriting (so'mda):"
+    )
+
+
+@admin_router.message(StateFilter(AdminStates.balance_amount), F.text)
+async def adm_balance_amount(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    amount = parse_uzs_amount(message.text)
+    if amount is None or amount <= 0:
+        await message.answer("❌ Noto'g'ri summa. Masalan: <code>50000</code>")
+        return
+    data = await state.get_data()
+    user = db.get_user(int(data.get("balance_target", 0)))
+    action = data.get("balance_action", "add")
+    if user is None:
+        await state.clear()
+        await message.answer("❌ Foydalanuvchi topilmadi.")
+        return
+
+    await state.set_state(AdminStates.balance_confirm)
+    await state.update_data(balance_amount=amount)
+    verb = "qo'shish" if action == "add" else "ayirish"
+    await message.answer(
+        f"✅ Tasdiqlaysizmi?\n\n"
+        f"👤 User: <code>{user['id']}</code>\n"
+        f"💵 <b>{fmt(amount)} so'm</b> {verb}\n"
+        f"💰 Joriy balans: <b>{fmt(user.get('balance', 0))} so'm</b>",
+        reply_markup=_balance_kb(action),
+    )
+
+
+@admin_router.callback_query(F.data.startswith("adm:bal_do:"))
+async def adm_balance_do(call: CallbackQuery, state: FSMContext):
+    if not await _admin_guard(call):
+        return
+    action = call.data.split(":")[-1]
+    data = await state.get_data()
+    user = db.get_user(int(data.get("balance_target", 0)))
+    amount = int(data.get("balance_amount", 0) or 0)
+    if user is None or amount <= 0:
+        await call.answer("❌ Ma'lumot topilmadi", show_alert=True)
+        await state.clear()
+        return
+
+    delta = amount if action == "add" else -amount
+    if delta < 0 and int(user.get("balance", 0)) < amount:
+        await call.answer("❌ Balansda yetarli mablag' yo'q", show_alert=True)
+        return
+
+    user["balance"] = int(user.get("balance", 0)) + delta
+    db.add_history(user, "admin_balance", delta, "Admin: qo'shdi" if delta > 0 else "Admin: ayirdi")
+    db.save()
+    await state.clear()
+    await call.answer("✅ Bajarildi")
+    await call.message.answer(
+        f"✅ <b>Balans o'zgartirildi!</b>\n\n"
+        f"👤 User: <code>{user['id']}</code>\n"
+        f"💵 {'+' if delta > 0 else ''}{fmt(delta)} so'm\n"
+        f"💰 Yangi balans: <b>{fmt(user['balance'])} so'm</b>",
+        reply_markup=admin_back_kb(),
+    )
+
+
+# ------------------------------------------------------------------ ban/unban
+def _resolve_user_text(user: dict) -> str:
+    return f"@{user.get('username')}" if user.get("username") else str(user.get("id"))
+
+
+@admin_router.callback_query(F.data == "adm:ban")
+async def adm_ban(call: CallbackQuery, state: FSMContext):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    await state.set_state(AdminStates.ban_user)
+    await call.message.answer("🚫 <b>Ban</b>\n\nBanlash uchun foydalanuvchi ID yoki @username:",
+                              reply_markup=admin_back_kb())
+
+
+@admin_router.message(StateFilter(AdminStates.ban_user), F.text)
+async def adm_ban_user(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    if message.text.strip().lower() == "/cancel":
+        await state.clear()
+        await message.answer("🛑 Bekor qilindi.", reply_markup=admin_back_kb())
+        return
+    user = db.find_user(message.text.strip())
+    if user is None:
+        await message.answer("❌ Foydalanuvchi topilmadi.")
+        return
+    user["banned"] = True
+    db.save()
+    await state.clear()
+    await message.answer(
+        f"🚫 <b>{esc(_resolve_user_text(user))}</b> banlandi.\n🆔 <code>{user['id']}</code>",
+        reply_markup=admin_back_kb(),
+    )
+    try:
+        await message.bot.send_message(
+            user["id"],
+            "🚫 <b>Siz botdan bloklandingiz.</b>\n\n"
+            "Savollaringiz uchun qo'llab-quvvatlashga murojaat qiling.",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@admin_router.callback_query(F.data == "adm:unban")
+async def adm_unban(call: CallbackQuery, state: FSMContext):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    await state.set_state(AdminStates.unban_user)
+    await call.message.answer("✅ <b>Unban</b>\n\nBandan chiqarish uchun foydalanuvchi ID yoki @username:",
+                              reply_markup=admin_back_kb())
+
+
+@admin_router.message(StateFilter(AdminStates.unban_user), F.text)
+async def adm_unban_user(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    if message.text.strip().lower() == "/cancel":
+        await state.clear()
+        await message.answer("🛑 Bekor qilindi.", reply_markup=admin_back_kb())
+        return
+    user = db.find_user(message.text.strip())
+    if user is None:
+        await message.answer("❌ Foydalanuvchi topilmadi.")
+        return
+    user["banned"] = False
+    db.save()
+    await state.clear()
+    await message.answer(
+        f"✅ <b>{esc(_resolve_user_text(user))}</b> bandan chiqarildi.",
+        reply_markup=admin_back_kb(),
+    )
+
+
+# ------------------------------------------------------------------ konkurs
+def contest_data() -> dict:
+    contest = db.data.setdefault("contest", {})
+    contest.setdefault("id", new_id("c"))
+    contest.setdefault("text", "🎉 Konkurs hali yaratilmagan")
+    contest.setdefault("prize_stars", 0)
+    contest.setdefault("winners", 0)
+    contest.setdefault("min", 0)
+    contest.setdefault("ends_in", 0)
+    contest.setdefault("end_at", "")
+    contest.setdefault("participants", [])
+    contest.setdefault("active", False)
+    return contest
+
+
+def contest_text(c: dict) -> str:
+    if not c.get("active"):
+        return "🎉 <b>Hozircha faol konkurs yo'q</b>\n\nYangi konkurs yaratish uchun quyidagi tugmani bosing."
+    end = c.get("end_at") or "—"
+    return (
+        f"🎉 <b>{esc(str(c.get('text', 'Konkurs')))}</b>\n\n"
+        f"🏆 Sovrin: <b>{fmt(c.get('prize_stars', 0))} ⭐ Stars</b>\n"
+        f"🥇 G'oliblar: <b>{c.get('winners', 0)} ta</b>\n"
+        f"💰 Minimal xarid: <b>{fmt(c.get('min', 0))} so'm</b>\n"
+        f"📅 Tugash: <b>{esc(end)}</b>\n"
+        f"👥 Ishtirokchilar: <b>{len(c.get('participants', []))} ta</b>"
+    )
+
+
+def contest_kb() -> InlineKeyboardMarkup:
+    c = contest_data()
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="✏️ Tahrirlash" if c.get("active") else "🎉 Konkurs yaratish",
+            callback_data="adm:contest_new")],
+        [InlineKeyboardButton(text="👥 Ishtirokchilar", callback_data="adm:contest_users"),
+         InlineKeyboardButton(text="🛑 Tugatish", callback_data="adm:contest_stop")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="adm:home")],
+    ])
+
+
+@admin_router.callback_query(F.data == "adm:contest")
+async def adm_contest(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    await call.message.answer(contest_text(contest_data()), reply_markup=contest_kb())
+
+
+@admin_router.callback_query(F.data == "adm:contest_new")
+async def adm_contest_new(call: CallbackQuery, state: FSMContext):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    await state.set_state(AdminStates.contest_text)
+    await call.message.answer(
+        "🎉 <b>Yangi konkurs</b>\n\n"
+        "1/5 — Konkurs matnini yuboring (misol: <b>Yangi yil sovg'asi — 1000 Stars!</b>)\n"
+        "🛑 /cancel"
+    )
+
+
+@admin_router.message(StateFilter(AdminStates.contest_text), F.text)
+async def adm_contest_text(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    await state.update_data(contest_text=message.html_text or message.text)
+    await state.set_state(AdminStates.contest_prize)
+    await message.answer("2/5 — Sovrami kiriting (Stars miqdori, masalan <code>1000</code>):\n🛑 /cancel")
+
+
+@admin_router.message(StateFilter(AdminStates.contest_prize), F.text)
+async def adm_contest_prize(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    try:
+        prize = int(float(re.sub(r"[^\d]", "", message.text or "") or 0))
+    except ValueError:
+        prize = 0
+    if prize <= 0:
+        await message.answer("❌ Noto'g'ri son. Masalan: <code>1000</code>")
+        return
+    await state.update_data(contest_prize=prize)
+    await state.set_state(AdminStates.contest_winners)
+    await message.answer("3/5 — G'oliblar soni (masalan <code>5</code>):\n🛑 /cancel")
+
+
+@admin_router.message(StateFilter(AdminStates.contest_winners), F.text)
+async def adm_contest_winners(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    try:
+        winners = int(re.sub(r"[^\d]", "", message.text or "") or 0)
+    except ValueError:
+        winners = 0
+    if winners <= 0:
+        await message.answer("❌ Noto'g'ri son. Masalan: <code>5</code>")
+        return
+    await state.update_data(contest_winners=winners)
+    await state.set_state(AdminStates.contest_min)
+    await message.answer("4/5 — Minimal xarid (so'mda, masalan <code>20000</code>):\n🛑 /cancel")
+
+
+@admin_router.message(StateFilter(AdminStates.contest_min), F.text)
+async def adm_contest_min(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    minimum = parse_uzs_amount(message.text)
+    if minimum is None:
+        await message.answer("❌ Noto'g'ri summa. Masalan: <code>20000</code>")
+        return
+    await state.update_data(contest_min=minimum)
+    await state.set_state(AdminStates.contest_days)
+    await message.answer("5/5 — Necha kun davomida (masalan <code>7</code>):\n🛑 /cancel")
+
+
+@admin_router.message(StateFilter(AdminStates.contest_days), F.text)
+async def adm_contest_days(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    try:
+        days = int(re.sub(r"[^\d]", "", message.text or "") or 0)
+    except ValueError:
+        days = 0
+    if days <= 0:
+        await message.answer("❌ Noto'g'ri son. Masalan: <code>7</code>")
+        return
+
+    data = await state.get_data()
+    end_dt = datetime.now(TZ) + timedelta(days=days)
+    contest = contest_data()
+    contest.update(
+        id=new_id("c"),
+        text=data.get("contest_text", "Konkurs"),
+        prize_stars=int(data.get("contest_prize", 0) or 0),
+        winners=int(data.get("contest_winners", 1) or 1),
+        min=int(data.get("contest_min", 0) or 0),
+        ends_in=days * 86400,
+        end_at=end_dt.strftime("%d.%m.%Y %H:%M"),
+        active=True,
+    )
+    db.data["contest"] = contest
+    db.save()
+    await state.clear()
+    await message.answer(
+        "✅ <b>Konkurs yaratildi!</b>\n\n" + contest_text(contest),
+        reply_markup=contest_kb(),
+    )
+    # WebApp'ga darhol ko'rinishi uchun
+    await notify_admins(f"🎉 Yangi konkurs e'lon qilindi: {esc(str(contest['text'])[:120])}")
+
+
+@admin_router.callback_query(F.data == "adm:contest_users")
+async def adm_contest_users(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    participants = contest_data().get("participants", [])
+    if not participants:
+        await call.message.answer("👥 Hali ishtirokchi yo'q.", reply_markup=contest_kb())
+        return
+    lines = ["👥 <b>Konkurs ishtirokchilari</b>\n"]
+    for uid in participants[:50]:
+        u = db.get_user(int(uid))
+        name = _resolve_user_text(u) if u else str(uid)
+        spent = fmt(u.get("total_spent", 0)) if u else "—"
+        lines.append(f"• {esc(name)} — {spent} so'm")
+    if len(participants) > 50:
+        lines.append(f"\n… va yana {len(participants) - 50} ta")
+    await call.message.answer("\n".join(lines), reply_markup=contest_kb())
+
+
+@admin_router.callback_query(F.data == "adm:contest_stop")
+async def adm_contest_stop(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer("Tugatildi", show_alert=True)
+    contest = contest_data()
+    contest["active"] = False
+    db.data["contest"] = contest
+    db.save()
+    await call.message.answer("🛑 Konkurs tugatildi.", reply_markup=admin_back_kb())
+
+
+# ------------------------------------------------------------------ userbot login
+@admin_router.callback_query(F.data == "adm:ub_qr")
+async def adm_ub_qr(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer("🔑 QR tayyorlanmoqda...")
+    if not (API_ID and API_HASH):
+        await call.message.answer("❌ API_ID va API_HASH o'zgaruvchilari yo'q.")
+        return
+    try:
+        client = UserbotClient("qr_login", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+        await client.start()
+        token = await client.export_login_token()
+        payload = f"tg://login?token={token}"
+        import base64 as _b64
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={_b64.urlsafe_b64encode(payload.encode()).decode()}"
+        await call.message.answer(
+            "🔑 <b>Userbot QR bilan ulash</b>\n\n"
+            "Quyidagi QR kodni <b>Telegra</b>ram (Settings → Devices → Link Desktop Device) orqali skanerlang:\n\n"
+            f"<a href=\"{qr_url}\">🖼 QR kodni ochish</a>\n\n"
+            "⏱ Kod 30 soniya ichida amal qiladi.",
+            reply_markup=admin_back_kb(),
+            disable_web_page_preview=False,
+        )
+        await asyncio.sleep(30)
+        try:
+            me = await client.import_login_token(token)
+            await call.message.answer(f"✅ <b>Userbot ulandi!</b>\n👤 {esc(me.first_name or '')} (@{esc(me.username or '—')})")
+            global userbot
+            if userbot is not None:
+                await userbot.stop()
+            userbot = client
+            await client.add_handler(UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT)))
+            asyncio.create_task(ub_idle())
+        except Exception as exc:  # noqa: BLE001
+            await call.message.answer(f"⏱ Vaqt tugadi yoki tasdiqlanmadi: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        await call.message.answer(f"❌ QR login xatosi: {exc}")
+
+
+@admin_router.callback_query(F.data == "adm:ub_phone")
+async def adm_ub_phone(call: CallbackQuery, state: FSMContext):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    if not (API_ID and API_HASH):
+        await call.message.answer("❌ API_ID va API_HASH o'zgaruvchilari yo'q.")
+        return
+    await state.set_state(AdminStates.ub_phone)
+    await call.message.answer("📱 <b>Raqam bilan ulash</b>\n\nTelefon raqamingizni +998 XX XXX XX XX ko'rinishida yuboring:",
+                              reply_markup=admin_back_kb())
+
+
+@admin_router.message(StateFilter(AdminStates.ub_phone), F.text)
+async def adm_ub_phone_wait(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    phone = re.sub(r"[^\d+]", "", message.text or "")
+    if not re.fullmatch(r"\+\d{9,15}", phone):
+        await message.answer("❌ Format noto'g'ri. Masalan: <code>+998901234567</code>")
+        return
+    await state.set_state(AdminStates.ub_code)
+    await state.update_data(ub_phone=phone)
+    try:
+        client = UserbotClient("phone_login", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+        await client.start(phone=phone)
+        await state.update_data(ub_client_id="phone_login")
+    except Exception as exc:  # noqa: BLE001
+        await state.clear()
+        await message.answer(f"❌ Xato: {exc}")
+        return
+    await message.answer("🔐 Telegram yuborgan <b>tasdiqlash kodi</b>ni kiriting:")
+
+
+@admin_router.message(StateFilter(AdminStates.ub_code), F.text)
+async def adm_ub_code_wait(message: Message, state: FSMContext):
+    if not is_admin_authed(message.from_user.id):
+        return
+    code = re.sub(r"[^\d]", "", message.text or "")[:5]
+    if not code:
+        await message.answer("❌ Kodni to'g'ri kiriting.")
+        return
+    try:
+        client = await UserbotClient("phone_login", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+        await client.start(phone=(await state.get_data()).get("ub_phone"), code=code)
+        global userbot
+        if userbot is not None:
+            try:
+                await userbot.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        userbot = client
+        await client.add_handler(UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT)))
+        asyncio.create_task(ub_idle())
+        session = await client.export_session_string()
+        await state.clear()
+        await message.answer(
+            f"✅ <b>Userbot ulandi!</b>\n\n"
+            f"🔑 <b>Railway ENV ga qo'ying</b> (bu sessiya kaliti — uni hech kimga bermang):\n\n"
+            f"<code>SESSION_STRING={esc(session)}</code>",
+            reply_markup=admin_back_kb(),
+            disable_web_page_preview=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        await state.clear()
+        await message.answer(f"❌ Kod noto'g'ri: {exc}")
+
+
 # =============================================================================
 # 16b. ASOSIY MENYU CALLBACK
 # =============================================================================
@@ -2785,6 +3530,7 @@ async def main() -> None:
 
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     bot.session.middleware(StyledButtonsMiddleware())
+    bot.session.middleware(PremiumEmojiMiddleware())
     dp = Dispatcher(storage=MemoryStorage())
     DP = dp
 

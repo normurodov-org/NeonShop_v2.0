@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { StoreSettings } from '../types';
-import { Shield, Lock, Power, Users, ShoppingBag, DollarSign, CheckCircle2, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
+import { StoreSettings, Contest } from '../types';
+import { Shield, Lock, Power, Users, ShoppingBag, DollarSign, CheckCircle2, AlertCircle, ArrowRight, RefreshCw, Trophy } from 'lucide-react';
 
 interface AdminPanelProps {
   onSettingsUpdated: (newSettings: StoreSettings) => void;
@@ -12,6 +12,65 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
   const [adminData, setAdminData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Konkurs boshqaruvi
+  const [contest, setContest] = useState<Contest | null>(null);
+  const [ctForm, setCtForm] = useState({
+    text: '',
+    prize_stars: '1000',
+    winners: '5',
+    min: '20000',
+    days: '7',
+  });
+  const [ctLoading, setCtLoading] = useState(false);
+  const [ctMsg, setCtMsg] = useState<string | null>(null);
+
+  const loadContest = async () => {
+    try {
+      const res = await fetch('/api/admin/contest');
+      const data = await res.json();
+      if (data.ok && data.contest) {
+        setContest(data.contest);
+        setCtForm({
+          text: (data.contest.text || '').replace(/<[^>]+>/g, ''),
+          prize_stars: String(data.contest.prize_stars || 1000),
+          winners: String(data.contest.winners || 5),
+          min: String(data.contest.min || 20000),
+          days: String(Math.max(1, Math.round((data.contest.ends_in || 604800) / 86400))),
+        });
+      }
+    } catch (e) {
+      /* offline */
+    }
+  };
+
+  const saveContest = async (active: boolean) => {
+    setCtLoading(true);
+    setCtMsg(null);
+    try {
+      const res = await fetch('/api/admin/contest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: ctForm.text,
+          prize_stars: Number(ctForm.prize_stars),
+          winners: Number(ctForm.winners),
+          min: Number(ctForm.min),
+          days: Number(ctForm.days),
+          active,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Xatolik');
+      setContest(data.contest);
+      setCtMsg(active ? '✅ Konkurs yaratildi va e\'lon qilindi!' : '🛑 Konkurs tugatildi.');
+      loadContest();
+    } catch (err: any) {
+      setCtMsg('❌ ' + err.message);
+    } finally {
+      setCtLoading(false);
+    }
+  };
 
   // Balance adjustment state
   const [adjUserId, setAdjUserId] = useState<string>('8307046273');
@@ -52,6 +111,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
     } catch (err) {
       console.error(err);
     }
+    loadContest();
   };
 
   const toggleBot = async () => {
@@ -303,6 +363,110 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
           100 ⭐ Stars narxi = <b>{((settings?.star_usdt_rate || 0.015) * 100).toFixed(2)} USDT</b>.
           Kurs o'zgarganda ushbu maydonda yangilab borishingiz mumkin.
         </p>
+      </div>
+
+      {/* Konkurs boshqaruvi */}
+      <div className="rounded-3xl liquid-glass-card p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Trophy className="w-4 h-4 text-purple-400" />
+            <span>Konkurs boshqaruvi</span>
+          </h3>
+          <span
+            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              contest?.active ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-500/20 text-slate-400'
+            }`}
+          >
+            {contest?.active ? '🟢 Faol' : '⚪ Faol emas'}
+          </span>
+        </div>
+
+        {contest?.active && (
+          <div className="p-3 rounded-2xl liquid-glass-pill text-[11px] space-y-1">
+            <div className="font-bold text-purple-300">
+              {contest.text?.replace(/<[^>]+>/g, '')}
+            </div>
+            <div className="text-neutral-400">
+              🏆 {contest.prize_stars} ⭐ · 🥇 {contest.winners} ta g'olib · 💰 min{' '}
+              {(contest.min || 0).toLocaleString()} UZS
+            </div>
+            <div className="text-neutral-500">
+              👥 {Array.isArray(contest.participants) ? contest.participants.length : 0} ishtirokchi
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1 sm:col-span-2">
+            <label className="text-xs text-slate-400">Konkurs matni</label>
+            <input
+              type="text"
+              value={ctForm.text}
+              onChange={(e) => setCtForm({ ...ctForm, text: e.target.value })}
+              placeholder="Misol: 🎉 Yangi yil sovg'asi — 1000 Stars!"
+              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs text-white"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">Sovrin (Stars)</label>
+            <input
+              type="number"
+              value={ctForm.prize_stars}
+              onChange={(e) => setCtForm({ ...ctForm, prize_stars: e.target.value })}
+              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono text-white"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">G'oliblar soni</label>
+            <input
+              type="number"
+              value={ctForm.winners}
+              onChange={(e) => setCtForm({ ...ctForm, winners: e.target.value })}
+              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono text-white"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">Minimal xarid (UZS)</label>
+            <input
+              type="number"
+              value={ctForm.min}
+              onChange={(e) => setCtForm({ ...ctForm, min: e.target.value })}
+              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono text-white"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">Davomiylik (kun)</label>
+            <input
+              type="number"
+              value={ctForm.days}
+              onChange={(e) => setCtForm({ ...ctForm, days: e.target.value })}
+              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono text-white"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => saveContest(true)}
+            disabled={ctLoading}
+            className="flex-1 py-2.5 px-4 rounded-xl apple-spring cursor-pointer font-bold text-xs bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-50"
+          >
+            {ctLoading ? 'Saqlanmoqda...' : '🎉 Yaratish / Yangilash'}
+          </button>
+          {contest?.active && (
+            <button
+              onClick={() => saveContest(false)}
+              disabled={ctLoading}
+              className="py-2.5 px-4 rounded-xl apple-spring cursor-pointer font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-50"
+            >
+              🛑 Tugatish
+            </button>
+          )}
+        </div>
+
+        {ctMsg && (
+          <div className="p-3 rounded-xl liquid-glass-pill text-[11px] text-neutral-200">{ctMsg}</div>
+        )}
       </div>
 
       {/* Orders List */}

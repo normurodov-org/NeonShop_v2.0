@@ -59,15 +59,17 @@ export interface UsdtRate {
 export interface Contest {
   id: string;
   text: string;
-  color: string;
+  color?: string;
   winners: number;
   ends_in: number;
   end_at: string;
-  participants: number;
-  joined: boolean;
-  spent: number;
+  participants: number[] | number;
+  joined?: boolean;
+  spent?: number;
   min: number;
   prize_stars: number;
+  /** Faol konkurs bormi (admin panel orqali yaratiladi) */
+  active?: boolean;
 }
 
 export interface GiftItem {

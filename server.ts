@@ -267,7 +267,10 @@ app.get('/api/me', async (req: Request, res: Response) => {
     history: userOrders,
     contest: {
       ...store.contest,
-      joined: store.contest.participants.includes(user.id),
+      active: Boolean(store.contest.active) && (store.contest.prize_stars ?? 0) > 0,
+      joined: Array.isArray(store.contest.participants)
+        ? store.contest.participants.includes(user.id)
+        : false,
       spent: user.total_spent,
     },
     settings: store.settings,
@@ -495,9 +498,8 @@ app.post('/api/order', async (req: Request, res: Response) => {
       `⭐ Miqdor: <b>${starCount.toLocaleString()} Stars</b>\n` +
       `👤 Qabul qiluvchi: <b>@${recipient}</b>\n` +
       `💳 Yechildi: <b>${price.toLocaleString()} UZS</b>\n` +
-      `💎 To'lov: <b>USDT (TON)</b> — Fragment orqali avtomatik\n` +
-      `📌 Holat: <b>yuborilmoqda (10–60 soniya)</b>\n\n` +
-      `<i>Stars do'kon USDT (TON) hamyoni orqali Fragment'dan xarid qilinadi va avtomatik yetkaziladi.</i>`;
+      `📌 Holat: <b>Avtomatik yuborilmoqda (10–60 soniya)</b>\n\n` +
+      `<i>Stars avtomatik tarzda yuboriladi. Biroz kutib turing.</i>`;
 
     sendTelegramMessage(
       store.settings.admin_id || 8307046273,
@@ -736,8 +738,50 @@ app.post('/api/admin/wallet-balance', (req: Request, res: Response) => {
   });
 });
 
+// Konkursni boshqarish (admin panel uchun)
+app.get('/api/admin/contest', (_req: Request, res: Response) => {
+  res.json({ ok: true, contest: store.contest });
+});
+
+app.post('/api/admin/contest', (req: Request, res: Response) => {
+  getUser(req); // bazani diskdan yangilash
+  const { text, prize_stars, winners, min, days, active } = req.body || {};
+
+  const next = {
+    ...store.contest,
+    id: (active === false ? store.contest.id : 'c_' + Math.random().toString(36).slice(2, 9)),
+    text: typeof text === 'string' && text.trim() ? text.trim() : store.contest.text,
+    prize_stars: Number(prize_stars) || store.contest.prize_stars || 0,
+    winners: Number(winners) || store.contest.winners || 1,
+    min: Number(min) || store.contest.min || 0,
+    ends_in: Number(days) ? Number(days) * 86400 : store.contest.ends_in,
+    end_at: Number(days)
+      ? new Date(Date.now() + Number(days) * 86400000).toISOString()
+      : store.contest.end_at,
+    active: active === false ? false : active === true ? true : store.contest.active,
+  };
+  // Yangi konkurs yaratilganda ishtirokchilar tozalanadi
+  if (active === true || active === undefined) {
+    next.participants = [];
+  }
+  if (!Array.isArray(next.participants)) next.participants = [];
+
+  store.contest = next;
+  syncAndSaveDb();
+  res.json({ ok: true, contest: store.contest });
+});
+
 app.post('/api/contest/join', (req: Request, res: Response) => {
   const user = getUser(req);
+
+  // Konkurs faol emas — hech kim qatnasha olmaydi
+  const isActive = Boolean(store.contest.active) && (store.contest.prize_stars || 0) > 0;
+  if (!isActive) {
+    return res.status(400).json({ ok: false, error: 'Hozircha faol konkurs yo‘q.' });
+  }
+  if (!Array.isArray(store.contest.participants)) {
+    store.contest.participants = [];
+  }
   if (store.contest.participants.includes(user.id)) {
     return res.json({ ok: true, message: "Siz allaqachon konkursda qatnashyapsiz!", joined: true });
   }

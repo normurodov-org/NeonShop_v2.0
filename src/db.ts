@@ -61,13 +61,15 @@ export interface DatabaseSchema {
   contest: {
     id: string;
     text: string;
-    color: string;
+    color?: string;
     winners: number;
     prize_stars: number;
     ends_in: number;
     end_at: string;
     participants: number[];
     min: number;
+    /** Faol konkurs bormi — admin panel orqali yaratiladi */
+    active: boolean;
   };
 }
 
@@ -164,16 +166,17 @@ const defaultData: DatabaseSchema = {
     },
   },
   topups: {},
+  // Hali konkurs yaratilmagan — admin panel orqali yaratiladi
   contest: {
-    id: 'contest_march',
-    text: "🎉 <b>NEON STORE Bahorgi Katta Konkursi!</b>\n\nSovrin jamg'armasi: <b>1 000 ⭐ Stars</b>\n5 nafar g'olib random orqali aniqlanadi.\nQatnashish uchun minimal xarid: 20 000 so'm.",
-    color: 'purple',
-    winners: 5,
-    prize_stars: 1000,
-    ends_in: 86400 * 3,
-    end_at: new Date(Date.now() + 86400000 * 3).toISOString(),
-    participants: [8307046273, 541098231, 672901239, 908123491],
-    min: 20000,
+    id: 'contest_none',
+    text: '🎉 Hali konkurs yaratilmagan',
+    winners: 0,
+    prize_stars: 0,
+    ends_in: 0,
+    end_at: '',
+    participants: [],
+    min: 0,
+    active: false,
   },
 };
 

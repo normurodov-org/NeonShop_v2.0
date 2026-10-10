@@ -68,6 +68,8 @@ export const BuyView: React.FC<BuyViewProps> = ({
 
   const usdtRate = rate?.usdt_uzs || settings?.usdt_rate_uzs || 0;
   const usdtForStars = +(amount * (settings?.star_usdt_rate || 0.015)).toFixed(3);
+  // Kurs hali kelmagan bo'lsa — ko'rsatmaymiz (null bo'lib qolmasin)
+  const showRate = usdtRate > 0;
 
   // USDT kursini yangilab turamiz (har daqiqada)
   useEffect(() => {
@@ -240,9 +242,11 @@ export const BuyView: React.FC<BuyViewProps> = ({
             <div className={`text-[11px] font-bold font-mono ${isDark ? 'text-emerald-300' : 'text-emerald-600'}`}>
               ≈ {usdtForStars.toFixed(3)} USDT
             </div>
-            <div className="text-[9px] text-neutral-400 font-mono">
-              1 USDT ≈ {rate.usdt_uzs.toLocaleString()} UZS
-            </div>
+            {showRate && (
+              <div className="text-[9px] text-neutral-400 font-mono">
+                1 USDT ≈ {usdtRate.toLocaleString()} UZS
+              </div>
+            )}
           </div>
         </div>
       )}
