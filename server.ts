@@ -761,24 +761,50 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 
   if (!token) {
     out.bot_error = 'BOT_TOKEN ENV da yo‘q — Railway sozlamasini tekshiring';
-    return res.json(out);
-  }
-  try {
-    const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
-      signal: AbortSignal.timeout(15000),
-    });
-    const d: any = await r.json();
-    if (d.ok) {
-      out.bot_online = true;
-      out.bot_username = d.result.username;
-    } else {
+  } else {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+        signal: AbortSignal.timeout(15000),
+      });
+      const d: any = await r.json();
+      if (d.ok) {
+        out.bot_online = true;
+        out.bot_username = d.result.username;
+      } else {
+        out.bot_online = false;
+        out.bot_error = `Telegram: ${d.description || 'noma\'lum xato'}`;
+      }
+    } catch (e) {
       out.bot_online = false;
-      out.bot_error = `Telegram: ${d.description || 'noma\'lum xato'}`;
+      out.bot_error = (e as Error)?.message || 'Telegram\'ga ulanib bo\'lmadi';
     }
-  } catch (e) {
-    out.bot_online = false;
-    out.bot_error = (e as Error)?.message || 'Telegram\'ga ulanib bo\'lmadi';
   }
+
+  // Python botning o'z holati (bazaga yozilgan)
+  try {
+    const fresh = loadDatabase();
+    const rt = (fresh.settings as any)?.runtime;
+    if (rt) out.python_bot = rt;
+  } catch (e) {
+    /* db o'qilmasa */
+  }
+
+  // Bo'ldimagi tekshiruvlar ro'yxati
+  out.checks = [];
+  if (!out.bot_token_set) out.checks.push('❌ BOT_TOKEN yo‘q');
+  if (out.bot_online === false) out.checks.push(`❌ Bot online emas: ${out.bot_error}`);
+  if (out.bot_online === true) out.checks.push('✅ Bot online');
+  if (!out.fragment_cookies) out.checks.push('❌ FRAGMENT_COOKIE_HEADER yo‘q — Stars xaridi ishlamaydi');
+  else out.checks.push('✅ Fragment cookie‘lar bor');
+  if (!out.wallet_seed) out.checks.push('❌ WALLET_SEED yo‘q — USDT yuborilmaydi');
+  else out.checks.push('✅ WALLET_SEED bor');
+  const ub = out.userbot_env;
+  if (!ub.api_id || !ub.api_hash || !ub.session_string) {
+    out.checks.push('⚠️ Userbot kalitlari to‘liq emas');
+  } else {
+    out.checks.push('✅ Userbot kalitlari bor');
+  }
+
   return res.json(out);
 });
 

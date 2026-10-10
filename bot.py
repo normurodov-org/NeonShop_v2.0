@@ -2815,6 +2815,17 @@ def userbot_diagnose() -> list[str]:
     return lines
 
 
+def set_runtime_status(**kwargs: Any) -> None:
+    """Botning ish vaqtidagi holatini bazaga yozadi.
+
+    server.ts /api/health shu ma'lumotni o'qib, Railway loglariga
+    kirishsiz userbot va worker holatini ko'rsatadi.
+    """
+    settings = db.data.setdefault("settings", {})
+    settings["runtime"] = {**datetime.now(TZ).isoformat(), **kwargs}
+    db.save()
+
+
 def maybe_start_userbot() -> None:
     global userbot
     missing = []
@@ -2830,9 +2841,11 @@ def maybe_start_userbot() -> None:
             "/admin → 📱 Raqam bilan ulash orqali SESSION_STRING oling.",
             ", ".join(missing),
         )
+        set_runtime_status(userbot="missing_env", missing=missing)
         return
 
     async def _start() -> None:
+        set_runtime_status(userbot="starting")
         try:
             ub = UserbotClient(
                 "humo_userbot",
@@ -2845,11 +2858,23 @@ def maybe_start_userbot() -> None:
                 UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
             )
             userbot = ub
-            log.info("👤 Userbot ishga tushdi, bank xabarlari kuzatilmoqda...")
+            try:
+                me = await ub.get_me()
+                who = f"@{me.username}" if me.username else str(me.id)
+            except Exception:  # noqa: BLE001
+                who = "noma'lum"
+            log.info("👤 Userbot ishga tushdi (%s), bank xabarlari kuzatilmoqda...", who)
+            set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
             asyncio.create_task(ub_idle())
         except Exception as exc:  # noqa: BLE001
             log.error("Userbot ishga tushmadi: %s", exc)
-            await notify_admins(f"⚠️ Userbot ishga tushmadi: {exc}")
+            set_runtime_status(userbot="error", error=str(exc)[:300])
+            await notify_admins(
+                "⚠️ <b>Userbot ishga tushmadi</b>\n\n"
+                f"🔍 Sabab: <code>{esc(str(exc)[:200])}</code>\n\n"
+                "<i>Odatda sabab: SESSION_STRING muddati tuggan. "
+                "/admin → 📱 Raqam bilan ulash orqali yangisini oling.</i>"
+            )
 
     asyncio.create_task(_start())
 
@@ -3690,6 +3715,13 @@ async def main() -> None:
             log.warning("Menyu tugmasi o'rnatilmadi: %s", exc)
 
         log.info("🤖 Bot muvaffaqiyatli ishga tushdi: @%s (WebApp: %s)", me.username, WEBAPP_URL)
+        set_runtime_status(
+            bot="online",
+            username=me.username,
+            fragment_cookies=bool(FRAGMENT_COOKIES.get("stel_token") and FRAGMENT_COOKIES.get("stel_ssid")),
+            fragment_hash=bool(FRAGMENT_API_HASH),
+            wallet_seed=bool(WALLET_WORDS and not WALLET_SEED_ERROR),
+        )
         await bot.delete_webhook(drop_pending_updates=False)
         maybe_start_userbot()
         asyncio.create_task(process_gift_orders())
