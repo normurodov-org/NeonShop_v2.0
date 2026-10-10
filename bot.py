@@ -590,7 +590,11 @@ def parse_fragment_transaction(resp: dict) -> FragmentTx:
     destination = msg.get("address") or tx.get("destination") or tx.get("address") or resp.get("destination") or ""
 
     if msg.get("amount") is not None:
-        amount_nano = int(Decimal(str(msg["amount"])))
+        # Fragment miqdorni ham nano (butun son), ham decimal TON ("0.015") ko'rinishida
+        # qaytarishi mumkin. int(Decimal("0.015")) == 0 bo'lgani uchun alohata
+        # tekshiramiz — aks holda to'lov "noto'g'ri miqdor" deb rad etiladi.
+        raw_amount = Decimal(str(msg["amount"]))
+        amount_nano = int(raw_amount * 10**9) if raw_amount < 10**6 else int(raw_amount)
     elif tx.get("ton_amount") is not None or resp.get("ton_amount") is not None:
         amount_nano = to_nano(tx.get("ton_amount", resp.get("ton_amount")))
     elif tx.get("amount") is not None:
@@ -776,13 +780,37 @@ class FragmentClient:
             lines.append(f"❌ searchStarsRecipient: {exc}")
         return lines
 
+    def update_buy_state(self, amount: int) -> None:
+        """Fragment'da Stars xaridi holatini yangilaydi.
+
+        Fragment sayfasida har safar "Xarid qilish" ochilganda avval shu so'rov
+        yuboriladi. `initBuyStarsRequest` faqat shundan KEYIN ishlaydi.
+
+        Haqiqiy brauzer so'rovi (Network -> Payload):
+            method=updateStarsBuyState, mode=new, lv=false, dh=<9 xonali son>
+        """
+        dh = random.randint(100000000, 999999999)
+        try:
+            self.api("updateStarsBuyState", mode="new", lv="false", dh=str(dh))
+            log.debug("Fragment updateStarsBuyState yangilandi (dh=%s)", dh)
+        except FragmentError as exc:
+            # Ba'zi versiyalar bu qadamni talab qilmaydi — to'xtatmaymiz,
+            # asosiy so'rovda xato aniq ko'rinadi.
+            log.warning("updateStarsBuyState muvaffaqiyatsiz: %s", exc)
+
     def create_stars_order(self, username: str, amount: int, account: dict, device: dict) -> FragmentTx:
         username = username.lstrip("@")
+
+        # 1) Xarid holatini yangilash (initBuyStarsRequest dan OLDIN)
+        self.update_buy_state(amount)
+
+        # 2) Qabul qiluvchini topish
         found = self.api("searchStarsRecipient", query=username, quantity=amount)
         recipient = (found.get("found") or {}).get("recipient")
         if not recipient:
             raise FragmentError(f"@{username} Fragment'da topilmadi")
 
+        # 3) Buyurtmani yaratish — FAQAT USDT (TON)
         init = self.api("initBuyStarsRequest", recipient=recipient, quantity=amount,
                         payment_method=FRAGMENT_PAYMENT_METHOD)
         req_id = init.get("req_id")
