@@ -361,6 +361,8 @@ log = logging.getLogger("neon_store")
 for _noisy in ("LiteClient", "LiteBalancer", "pytoniq", "BlockStore"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
+log.info("🐍 Python %s", sys.version.split()[0])
+
 if _env_method and _env_method != "usdt":
     log.warning(
         "FRAGMENT_PAYMENT_METHOD=%s bekor qilindi — bot faqat USDT (TON) orqali to'laydi.",
@@ -2786,18 +2788,24 @@ async def process_gift_orders() -> None:
 
 def userbot_diagnose() -> list[str]:
     """Userbot ishlashiga nima to'sqinlik qilayotganini aniq ko'rsatadi."""
+    # Eslatma: f-string ichida apostrof yoki backslash ishlatmang —
+    # Python 3.11 (Railway) buni SYNTAX ERROR beradi va bot umuman ishlamaydi.
+    yes = "✅"
+    no = "❌"
+    set_txt = "to‘ldirilgan"
+    missing_txt = "YO‘Q"
+
     lines = ["🩺 <b>Userbot diagnostikasi</b>\n"]
-    lines.append(f"{'✅' if API_ID else '❌'} API_ID: {'to\'ldirilgan' if API_ID else 'YO‘Q'}")
-    lines.append(f"{'✅' if API_HASH else '❌'} API_HASH: {'to\'ldirilgan' if API_HASH else 'YO‘Q'}")
+    lines.append(f"{yes if API_ID else no} API_ID: {set_txt if API_ID else missing_txt}")
+    lines.append(f"{yes if API_HASH else no} API_HASH: {set_txt if API_HASH else missing_txt}")
+
     has_session = bool(SESSION_STRING and len(SESSION_STRING) > 20)
-    lines.append(
-        f"{'✅' if has_session else '❌'} SESSION_STRING: "
-        f"{'to‘ldirilgan (' + str(len(SESSION_STRING)) + ' belgi)' if has_session else 'YO‘Q'}"
-    )
-    lines.append(
-        f"{'✅' if userbot is not None else '❌'} Userbot obyekti: "
-        f"{'ishlayapti' if userbot is not None else 'yo‘q (avto-start muvaffaqiyatsiz)'}"
-    )
+    session_txt = f"{set_txt} ({len(SESSION_STRING)} belgi)" if has_session else missing_txt
+    lines.append(f"{yes if has_session else no} SESSION_STRING: {session_txt}")
+
+    ub_ok = userbot is not None
+    ub_txt = "ishlayapti" if ub_ok else "yo‘q (avto-start muvaffaqiyatsiz)"
+    lines.append(f"{yes if ub_ok else no} Userbot obyekti: {ub_txt}")
     lines.append(f"ℹ️ Bank kuzatuv manzasi: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>")
 
     if not (API_ID and API_HASH and has_session):

@@ -15,6 +15,12 @@ RUN python3 -m venv /app/.venv && /app/.venv/bin/pip install --no-cache-dir -r r
 
 # Kod va build
 COPY . .
+
+# Python sintaksisini TEKSHIRISH — Railway'dagi Python 3.11 bilan mosligini
+# oldindan aniqlaydi (3.12+ xususiyatlari, masalan f-string ichida backslash,
+# bu yerda build paytida xato beradi va bot ishlamaydi).
+RUN /app/.venv/bin/python -c "import ast; [ast.parse(open(f, encoding='utf-8').read()) for f in ('bot.py', 'premium_emoji.py')]; print('Python syntax OK')"
+
 RUN npm run build
 
 ENV NODE_ENV=production
