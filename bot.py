@@ -805,6 +805,43 @@ class FragmentClient:
                 return data
             raise FragmentError("Fragment so'rovi muvaffaqiyatsiz")
 
+    async def probe_init_variants(self, recipient: str, amount: int,
+                                 balance_nano: Optional[int]) -> list[str]:
+        """initBuyStarsRequest ning turli kombinatsiyalarini sinab ko'radi.
+
+        Maqsad — Fragment'ning talab qiladigan aniq parametrlarni avtomatik topish.
+        Har bir kombinatsiya xavfsiz: muvaffaqiyatsiz bo'lsa hech narsa yaratilmaydi.
+        """
+        lines: list[str] = []
+        methods = FRAGMENT_PAYMENT_METHODS + ["ton"]
+        variants = [
+            ("balance bilan", {"balance": str(int(balance_nano))} if balance_nano else {}),
+            ("balansiz", {}),
+        ]
+
+        for label, extra in variants:
+            for method in methods:
+                params: dict[str, Any] = {
+                    "recipient": recipient,
+                    "quantity": amount,
+                    "payment_method": method,
+                    **extra,
+                }
+                try:
+                    self.api("updateStarsBuyState", mode="new", lv="false",
+                             dh=str(random.randint(100000000, 9999999999)))
+                    init = self.api("initBuyStarsRequest", **params)
+                except FragmentError as exc:
+                    msg = str(exc).replace("\n", " ")[:70]
+                    lines.append(f"❌ {method:7} + {label:12} — {msg}")
+                    continue
+                req_id = init.get("req_id")
+                if req_id:
+                    lines.append(f"✅✅ {method:7} + {label:12} — req_id={req_id} ISHLADI!")
+                else:
+                    lines.append(f"⚠️ {method:7} + {label:12} — req_id yo'q: {json.dumps(init)[:70]}")
+        return lines
+
     async def diagnose(self, username: str) -> list[str]:
         lines = []
         lines.append(f"🍪 Cookie'lar: {', '.join(sorted(self.auth_cookies)) or 'YO‘Q'}")
@@ -854,9 +891,26 @@ class FragmentClient:
             lines.append(f"✅ initBuyStarsRequest: req_id={req_id}")
             lines.append(f"💎 To'lov usuli kodi: <code>{esc(method)}</code>")
         except FragmentError as exc:
-            lines.append(f"❌ initBuyStarsRequest: {exc}")
-            lines.append("💡 Aniq kod: fragment.com/stars → DevTools → Network → "
-                         "initBuyStarsRequest → Payload → payment_method")
+            lines.append(f"❌ initBuyStarsRequest: {str(exc)[:150]}")
+            lines.append("")
+            lines.append("🔬 <b>Barcha kombinatsiyalar sinanmoqda:</b>")
+            try:
+                probe = await self.probe_init_variants(recipient, MIN_STARS_BUY, balance)
+                lines.extend(probe[:12])
+                if not any("ISHLADI" in x for x in probe):
+                    lines.append("")
+                    lines.append(
+                        "💡 Hech biri ishlamadi. Brauzerdan aniq so'rovni oling:\n"
+                        "fragment.com/stars → F12 → Console → quyidagini yozing va "
+                        "xaridni boshlang:\n"
+                        "<code>const f=window.fetch;window.fetch=function(...a){"
+                        "console.log('REQ',a[1]?.body);return f(...a)};"
+                        "const s=XMLHttpRequest.prototype.send;"
+                        "XMLHttpRequest.prototype.send=function(b){"
+                        "console.log('REQ',b);return s.apply(this,arguments)}</code>"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                lines.append(f"❌ Sinov xatosi: {exc}")
         return lines
 
     def update_buy_state(self, amount: int) -> None:
