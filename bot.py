@@ -300,8 +300,21 @@ TON_FEE_RESERVE_NANO = 50_000_000
 # =============================================================================
 # Bot Stars'ni Fragment'dan FAQAT USDT (TON jetton) orqali oladi.
 # Gram / TON / boshqa turlar butunlay yo'q — ataylab shunday qilingan.
-FRAGMENT_PAYMENT_METHOD = "usdt"
-_env_method = os.getenv("FRAGMENT_PAYMENT_METHOD", "usdt").strip().lower()
+#
+# MUHIM: Fragment "payment_method" uchun KO'RSATILGAN nomni emas, ICHKI KODni
+# yuboradi. Masalan GRAM -> "ton". USDT esa boshqa kod (ko'pincha "crypto").
+# "usdt" deb yozish Fragment'da "Access denied" keltiradi.
+#
+# Aniq kodni qayerdan ko'rish:
+#   fragment.com/stars -> DevTools -> Network -> "api" filteri ->
+#   initBuyStarsRequest so'rovi -> Payload -> payment_method
+#
+# Birinchi ishlagan kod ishlatiladi, qolganlari zaxira sifatida sinanadi.
+FRAGMENT_PAYMENT_METHODS = ["crypto", "usdt", "jetton"]
+FRAGMENT_PAYMENT_METHOD = (
+    os.getenv("FRAGMENT_PAYMENT_METHOD", "").strip().lower() or FRAGMENT_PAYMENT_METHODS[0]
+)
+_env_method = os.getenv("FRAGMENT_PAYMENT_METHOD", "").strip().lower()
 
 # USDT jetton master (TON zanjiri) — O'Zgartiring (ixtiyoriy)
 USDT_MASTER = os.getenv("USDT_MASTER", "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs")
@@ -576,6 +589,7 @@ class FragmentTx:
     payload: str
     req_id: Optional[str] = None
     messages_count: int = 1
+    payment_method: str = ""
 
 
 def _wallet_balance_nano() -> int:
@@ -827,14 +841,15 @@ class FragmentClient:
             return lines
         try:
             balance = await asyncio.to_thread(_wallet_balance_nano)
-            init = await asyncio.to_thread(
+            req_id, method = await asyncio.to_thread(
                 self.init_buy_stars_request, recipient, MIN_STARS_BUY, balance
             )
-            lines.append(f"✅ initBuyStarsRequest: req_id={init}")
+            lines.append(f"✅ initBuyStarsRequest: req_id={req_id}")
+            lines.append(f"💎 To'lov usuli kodi: <code>{esc(method)}</code>")
         except FragmentError as exc:
             lines.append(f"❌ initBuyStarsRequest: {exc}")
-            lines.append("💡 Haqiqiy brauzer so'rovini (fragment.com/stars → Network → "
-                         "Payload) ko'rib, parametrlarni solishtiring")
+            lines.append("💡 Aniq kod: fragment.com/stars → DevTools → Network → "
+                         "initBuyStarsRequest → Payload → payment_method")
         return lines
 
     def update_buy_state(self, amount: int) -> None:
@@ -863,38 +878,71 @@ class FragmentClient:
                     time.sleep(1.2)
         raise FragmentError(f"Fragment xarid holatini yangilab bo'lmadi: {last_error}")
 
-    def init_buy_stars_request(self, recipient: str, amount: int, balance_nano: Optional[int] = None) -> str:
-        """Buyurtmani yaratadi.
+    def init_buy_stars_request(
+        self,
+        recipient: str,
+        amount: int,
+        balance_nano: Optional[int] = None,
+    ) -> tuple[str, str]:
+        """Buyurtmani yaratadi va (req_id, payment_method) qaytaradi.
 
         Fragment `initBuyStarsRequest` da to'lovchining TON balansini (`balance`)
-        yuborishni talab qiladi — u gaz to'lovi yetarliligini tekshiradi.
-        Bu parametr berilmasa, Fragment "Access denied" qaytaradi.
+        yuborishni talab qiladi — gaz to'lovi yetarliligini tekshiradi.
 
-        Qo'shimcha: "Access denied" olsa — holat tiklanib, bir marta qayta uriniladi.
+        "Access denied" bo'lsa ikki narsa sinab ko'riladi:
+          1) Fragment ichki `payment_method` kodi (crypto/usdt/jetton)
+          2) xarid holatini tiklash (updateStarsBuyState) va hash'ni qayta olish
         """
-        params: dict[str, Any] = {
-            "recipient": recipient,
-            "quantity": amount,
-            "payment_method": FRAGMENT_PAYMENT_METHOD,
-        }
-        if balance_nano is not None:
-            params["balance"] = str(int(balance_nano))
+        candidates = [FRAGMENT_PAYMENT_METHOD] + [
+            m for m in FRAGMENT_PAYMENT_METHODS if m != FRAGMENT_PAYMENT_METHOD
+        ]
+        last_error: Optional[str] = None
 
-        try:
-            init = self.api("initBuyStarsRequest", **params)
-        except FragmentError as exc:
-            if "access denied" not in str(exc).lower():
-                raise
-            log.warning("initBuyStarsRequest 'Access denied' — holatni tiklab qayta urinilmoqda")
-            time.sleep(1.5)
-            self.api_hash = None       # hashni sahifadan qayta olamiz
-            self.update_buy_state(amount)
-            init = self.api("initBuyStarsRequest", **params)
+        for index, method in enumerate(candidates):
+            params: dict[str, Any] = {
+                "recipient": recipient,
+                "quantity": amount,
+                "payment_method": method,
+            }
+            if balance_nano is not None:
+                params["balance"] = str(int(balance_nano))
 
-        req_id = init.get("req_id")
-        if not req_id:
-            raise FragmentError(f"Fragment buyurtma ID (req_id) qaytarmadi: {json.dumps(init)[:200]}")
-        return str(req_id)
+            try:
+                init = self.api("initBuyStarsRequest", **params)
+            except FragmentError as exc:
+                last_error = str(exc)
+                if "access denied" not in last_error.lower():
+                    raise
+                log.warning(
+                    "initBuyStarsRequest 'Access denied' (payment_method=%s) — "
+                    "keyingi kod sinanadi", method,
+                )
+                if index + 1 < len(candidates):
+                    time.sleep(0.8)
+                    self.update_buy_state(amount)
+                continue
+
+            req_id = init.get("req_id")
+            if not req_id:
+                last_error = f"req_id yo'q: {json.dumps(init)[:160]}"
+                log.warning("initBuyStarsRequest req_id bermadi (%s)", method)
+                if index + 1 < len(candidates):
+                    time.sleep(0.8)
+                    self.update_buy_state(amount)
+                continue
+
+            if index == 0:
+                log.info("Fragment to'lov usuli: %s ✅", method)
+            else:
+                log.info("Fragment to'lov usuli '%s' ishlamadi, '%s' ishladi ✅", FRAGMENT_PAYMENT_METHOD, method)
+            return str(req_id), method
+
+        raise FragmentError(
+            "Fragment USDT to'lov usuli topilmadi. Aniq kodni ko'rish uchun: "
+            "fragment.com/stars → DevTools → Network → initBuyStarsRequest → Payload "
+            f"→ payment_method. Sinangan kodlar: {', '.join(candidates)}. "
+            f"Oxirgi javob: {last_error}"
+        )
 
     def create_stars_order(
         self,
@@ -916,7 +964,7 @@ class FragmentClient:
             raise FragmentError(f"@{username} Fragment'da topilmadi")
 
         # 3) Buyurtma — FAQAT USDT (TON), balans bilan
-        req_id = self.init_buy_stars_request(recipient, amount, balance_nano)
+        req_id, used_method = self.init_buy_stars_request(recipient, amount, balance_nano)
 
         link = self.api(
             "getBuyStarsLink",
@@ -931,6 +979,7 @@ class FragmentClient:
 
         tx = parse_fragment_transaction(link)
         tx.req_id = str(req_id)
+        tx.payment_method = used_method
         return tx
 
 
