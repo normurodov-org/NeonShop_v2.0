@@ -310,10 +310,18 @@ TON_FEE_RESERVE_NANO = 50_000_000
 #   initBuyStarsRequest so'rovi -> Payload -> payment_method
 #
 # Birinchi ishlagan kod ishlatiladi, qolganlari zaxira sifatida sinanadi.
-FRAGMENT_PAYMENT_METHODS = ["crypto", "usdt", "jetton"]
+# MUHIM: Fragment "payment_method" uchun ICHKI KOD yuboradi va zanjir bo'yicha
+# farqlanadi. Haqiqiy qiymatlar (brauzerdan tasdiqlandi):
+#   GRAM / Toncoin -> "ton"
+#   USDT (TON zanjiri) -> "usdt_ton"   ← bizning ushimiz shu
+#   boshqa zanjirlar (ETH/BSC/...) -> boshqa kodlar
+FRAGMENT_PAYMENT_METHODS = ["usdt_ton", "crypto", "usdt", "jetton"]
 FRAGMENT_PAYMENT_METHOD = (
     os.getenv("FRAGMENT_PAYMENT_METHOD", "").strip().lower() or FRAGMENT_PAYMENT_METHODS[0]
 )
+# `balance` parametrini yuborish kerakmi? Brauzer yubormaydi (tasdiqlandi),
+# shuning uchun odatda yuborilmaydi. FRAGMENT_SEND_BALANCE=1 bilan yoqiladi.
+FRAGMENT_SEND_BALANCE = os.getenv("FRAGMENT_SEND_BALANCE", "0").strip().lower() in ("1", "true", "yes")
 _env_method = os.getenv("FRAGMENT_PAYMENT_METHOD", "").strip().lower()
 
 # USDT jetton master (TON zanjiri) — O'Zgartiring (ixtiyoriy)
@@ -971,7 +979,10 @@ class FragmentClient:
                 "quantity": amount,
                 "payment_method": method,
             }
-            if balance_nano is not None:
+            # Brauzer `balance` parametrini YUBORMAYDI (2026-10 da tekshirilgan),
+            # shuning uchun biz ham standart holatda yubormaymiz.
+            # FRAGMENT_SEND_BALANCE=1 bo'lsa yuboriladi.
+            if balance_nano is not None and FRAGMENT_SEND_BALANCE:
                 params["balance"] = str(int(balance_nano))
 
             try:
