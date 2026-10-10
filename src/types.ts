@@ -35,6 +35,7 @@ export interface Order {
   status:
     | 'completed'
     | 'processing'
+    | 'queued'
     | 'pending'
     | 'manual'
     | 'failed'

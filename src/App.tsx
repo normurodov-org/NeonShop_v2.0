@@ -204,6 +204,70 @@ export default function App() {
     showToast(msg);
   };
 
+  /**
+   * Buyurtma holatini kuzatish
+   * -----------------------
+   * Stars yuborilayotgan paytda webapp "yuborilmoqda" deb turmasligi uchun
+   * holatni avtomatik yangilaymiz. Bot yetkazganda "✅ Stars yuborildi!"
+   * xabari chiqadi va balantari ham yangilanadi.
+   */
+  const processingCount = history.filter(
+    (o) => o.status === 'processing' || o.status === 'queued' || o.status === 'pending'
+  ).length;
+
+  useEffect(() => {
+    if (processingCount === 0) return;
+    let alive = true;
+    let ticks = 0;
+
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/me', {
+          headers: { 'x-telegram-user-id': user?.id?.toString() || '' },
+        });
+        const data = await res.json();
+        if (!alive || !data.ok) return;
+
+        const fresh: Order[] = data.history || [];
+        if (!fresh.length) return;
+
+        // Eski holat bilan solishtirib, tugaganlarini topamiz
+        setHistory((prev) => {
+          const prevMap = new Map(prev.map((o) => [o.id, o]));
+          let changed = false;
+          const merged = fresh.map((o) => {
+            const before = prevMap.get(o.id);
+            const wasPending =
+              before && (before.status === 'processing' || before.status === 'queued' || before.status === 'pending');
+            const nowDone = o.status === 'done' || o.status === 'completed' || o.status === 'sent_unconfirmed';
+            if (wasPending && nowDone) changed = true;
+            return o;
+          });
+          return changed ? merged : prev;
+        });
+
+        if (data.user?.balance !== undefined && user && data.user.balance !== user.balance) {
+          setUser(data.user);
+        }
+      } catch (e) {
+        /* tarmoq uzilishi — keyingi urinishda */
+      }
+    };
+
+    poll();
+    const timer = setInterval(() => {
+      ticks += 1;
+      if (ticks > 75) return;      // ~10 daqiqadan keyin to'xtaydi
+      poll();
+    }, 8000);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processingCount, user?.id]);
+
   const handleTopupSuccess = (newBalance: number, msg: string) => {
     if (user) {
       setUser({ ...user, balance: newBalance });

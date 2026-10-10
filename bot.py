@@ -2066,6 +2066,12 @@ async def show_history(message: Message, state: FSMContext, db_user: dict):
 # =============================================================================
 # 13. STARS SOTIB OLISH (Fragment USDT orqali)
 # =============================================================================
+@router.callback_query(F.data == "bonus_claim")
+async def bonus_claim(call: CallbackQuery):
+    """Kanal xabaridagi bonus tugmasi — mijozni botga olib boradi."""
+    await call.answer("🎁 Bonusni olish uchun botga yozing: /start", show_alert=True)
+
+
 @router.message(F.text == BTN_BUY)
 async def buy_start(message: Message, state: FSMContext, db_user: dict):
     await state.clear()
@@ -2159,8 +2165,13 @@ async def buy_confirm(call: CallbackQuery, state: FSMContext, db_user: dict):
     await call.answer()
     try:
         await call.message.edit_text(
-            f"⏳ Buyurtma <code>{order['id']}</code> bajarilmoqda...\n"
-            f"⭐ {fmt(amount)} → @{esc(username)}\n\nFragment USDT orqali yuborilmoqda..."
+            f"⏳ <b>Buyurtmangiz qabul qilindi!</b>\n\n"
+            f"⭐ {fmt(amount)} Stars → @{esc(username)}\n"
+            f"💳 Yechilgan: <b>{fmt(amount * STAR_BUY_PRICE_UZS)} so'm</b>\n"
+            f"🆔 <code>{order['id']}</code>\n\n"
+            f"📦 Stars <b>avtomatik tarzda yuborilmoqda</b> — 1–5 daqiqa ichida "
+            f"hisobingizga tushadi.\n"
+            f"⏳ Sabr qiling, xabarni kuting."
         )
     except Exception:  # noqa: BLE001
         pass
@@ -2287,10 +2298,22 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
     usdt_spent = order.get("usdt_spent")
     await _safe_send(
         chat_id,
-        f"✅ <b>Stars avtomatik yuborildi!</b>\n\n"
-        f"⭐ {fmt(amount)} Stars @${esc(username)} ga yetkazildi.\n"
+        f"✅ <b>Stars yuborildi!</b>\n\n"
+        f"⭐ {fmt(amount)} Stars @{esc(username)} ga yetkazildi.\n"
         f"💳 Yechilgan summa: <b>{fmt(price)} UZS</b>\n"
         f"🆔 Buyurtma: <code>{order_id}</code>",
+    )
+
+    # Kanalga xabar (har bir xariddan keyin)
+    buyer = db.get_user(user_id)
+    cashback = int(round(price * CASHBACK_RATE))
+    await post_order_to_channel(
+        order,
+        title="Stars olindi",
+        username=(buyer or {}).get("username") or str(user_id),
+        amount_text=f"Miqdor: {fmt(amount)} ⭐",
+        price=price,
+        cashback=cashback,
     )
 
 
@@ -2386,6 +2409,51 @@ async def star_order_worker() -> None:
         except Exception as exc:  # noqa: BLE001
             log.exception("Stars worker xatosi: %s", exc)
             await asyncio.sleep(5)
+
+
+async def post_order_to_channel(order: dict, title: str, username: str,
+                                 amount_text: str, price: int, cashback: int = 0) -> None:
+    """Har bir xariddan keyin ORDERS_CHANNEL kanaliga xabar yuboradi.
+
+    Format (rasmdagidek):
+        ⭐ Stars olindi
+        👤 odilbek
+        📦 Miqdor: 50 ⭐
+          Summasi: 10 000 so'm
+          Keshbek: +10 so'm
+        [🎁 Bonus: 10 so'm (🌸)]  [📊 NeonShop]
+    """
+    if not ORDERS_CHANNEL or bot is None:
+        return
+
+    who = f"@{username}" if username else f"ID {order.get('user_id')}"
+    lines = [
+        f"⭐ <b>{esc(title)}</b>",
+        f"👤 <b>{esc(who)}</b>",
+        "",
+        f"📦 <b>{esc(amount_text)}</b>",
+        f"💵 Summasi: <b>{fmt(price)} so'm</b>",
+    ]
+    if cashback:
+        lines.append(f"🎁 Keshbek: <b>+{fmt(cashback)} so'm</b>")
+
+    markup: Optional[InlineKeyboardMarkup] = None
+    if cashback:
+        markup = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=f"🎁 Bonus: {fmt(cashback)} so'm (🌸)",
+                callback_data="bonus_claim",
+            )
+        ]])
+    buttons: list[list[Any]] = [list(markup.inline_keyboard[0])] if markup else []
+    buttons.append([InlineKeyboardButton(text="📊 NeonShop", url=WEBAPP_URL)])
+    markup = InlineKeyboardMarkup(inline_keyboard=buttons)  # type: ignore[arg-type]
+
+    try:
+        await bot.send_message(ORDERS_CHANNEL, "\n".join(lines),
+                               reply_markup=markup, disable_web_page_preview=True)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Kanalga xabar yuborilmadi: %s", exc)
 
 
 async def _safe_send(chat_id: int, text: str, **kwargs: Any) -> None:
@@ -2714,10 +2782,52 @@ async def process_gift_orders() -> None:
             await asyncio.sleep(5)
 
 
+def userbot_diagnose() -> list[str]:
+    """Userbot ishlashiga nima to'sqinlik qilayotganini aniq ko'rsatadi."""
+    lines = ["🩺 <b>Userbot diagnostikasi</b>\n"]
+    lines.append(f"{'✅' if API_ID else '❌'} API_ID: {'to\'ldirilgan' if API_ID else 'YO‘Q'}")
+    lines.append(f"{'✅' if API_HASH else '❌'} API_HASH: {'to\'ldirilgan' if API_HASH else 'YO‘Q'}")
+    has_session = bool(SESSION_STRING and len(SESSION_STRING) > 20)
+    lines.append(
+        f"{'✅' if has_session else '❌'} SESSION_STRING: "
+        f"{'to‘ldirilgan (' + str(len(SESSION_STRING)) + ' belgi)' if has_session else 'YO‘Q'}"
+    )
+    lines.append(
+        f"{'✅' if userbot is not None else '❌'} Userbot obyekti: "
+        f"{'ishlayapti' if userbot is not None else 'yo‘q (avto-start muvaffaqiyatsiz)'}"
+    )
+    lines.append(f"ℹ️ Bank kuzatuv manzasi: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>")
+
+    if not (API_ID and API_HASH and has_session):
+        lines.append("")
+        if not (API_ID and API_HASH):
+            lines.append("👉 my.telegram.org → API development tools → ID va API hash olish")
+        if not has_session:
+            lines.append("👉 Bu yerdan: <b>/admin → 📱 Raqam bilan ulash</b> — kodni kiriting, "
+                         "u sizga <code>SESSION_STRING</code> beradi.")
+            lines.append("👉 Uni Railway ENV ga qo'ying va redeploy qiling.")
+    else:
+        lines.append("")
+        lines.append("👉 Kalitlar to'g'ri, lekin ulanish muvaffaqiyatsiz. "
+                     "Railway loglarida <code>Userbot ishga tushmadi</code> qatorini qarang.")
+    return lines
+
+
 def maybe_start_userbot() -> None:
     global userbot
-    if not (SESSION_STRING and API_ID and API_HASH):
-        log.warning("Userbot uchun SESSION_STRING/API_ID/API_HASH yo'q — bank xabarlari kuzatilmaydi.")
+    missing = []
+    if not SESSION_STRING:
+        missing.append("SESSION_STRING")
+    if not API_ID:
+        missing.append("API_ID")
+    if not API_HASH:
+        missing.append("API_HASH")
+    if missing:
+        log.warning(
+            "Userbot uchun %s yo'q — avto to'ldirish va gift yuborish ishlamaydi. "
+            "/admin → 📱 Raqam bilan ulash orqali SESSION_STRING oling.",
+            ", ".join(missing),
+        )
         return
 
     async def _start() -> None:
@@ -2882,7 +2992,13 @@ async def adm_ub_status(call: CallbackQuery):
         return
     await call.answer()
     status = "✅ Ishlayapti" if userbot is not None else "⚠️ Ishlamayapti"
-    await call.message.answer(f"🩺 Userbot holati: <b>{status}</b>")
+    lines = userbot_diagnose()
+    if userbot is not None:
+        lines.insert(2, f"💬 Tuzatilgan xabarlar kuzatilmoqda: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>")
+    await call.message.answer(
+        f"🩺 Userbot holati: <b>{status}</b>\n\n" + "\n".join(lines),
+        reply_markup=admin_back_kb(),
+    )
 
 
 @admin_router.callback_query(F.data == "adm:logout")

@@ -498,8 +498,9 @@ app.post('/api/order', async (req: Request, res: Response) => {
       `⭐ Miqdor: <b>${starCount.toLocaleString()} Stars</b>\n` +
       `👤 Qabul qiluvchi: <b>@${recipient}</b>\n` +
       `💳 Yechildi: <b>${price.toLocaleString()} UZS</b>\n` +
-      `📌 Holat: <b>Avtomatik yuborilmoqda (10–60 soniya)</b>\n\n` +
-      `<i>Stars avtomatik tarzda yuboriladi. Biroz kutib turing.</i>`;
+      `🆔 <code>${orderId}</code>\n\n` +
+      `📦 Stars <b>avtomatik tarzda yuborilmoqda</b> — 1–5 daqiqa ichida ` +
+      `hisobingizga tushadi.\n⏳ Sabr qiling, xabarni kuting.`;
 
     sendTelegramMessage(
       store.settings.admin_id || 8307046273,

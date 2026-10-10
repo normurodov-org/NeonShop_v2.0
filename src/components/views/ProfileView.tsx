@@ -280,11 +280,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     {(ord.price ?? ord.price_uzs ?? 0).toLocaleString()} UZS
                   </div>
                   <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-                    ord.status === 'completed'
+                    ['completed', 'done', 'sent_unconfirmed'].includes(ord.status)
                       ? 'bg-emerald-500/10 text-emerald-500'
+                      : ['failed', 'unknown', 'manual_pending'].includes(ord.status)
+                      ? 'bg-rose-500/10 text-rose-500'
                       : 'bg-amber-500/10 text-amber-500'
                   }`}>
-                    {ord.status === 'completed' ? t.done : t.pending}
+                    {['completed', 'done', 'sent_unconfirmed'].includes(ord.status)
+                      ? t.done
+                      : ['failed', 'unknown', 'manual_pending'].includes(ord.status)
+                      ? t.failed
+                      : 'Yuborilmoqda…'}
                   </span>
                 </div>
               </div>
