@@ -887,6 +887,21 @@ app.get('/api/health', async (_req: Request, res: Response) => {
   if (rt) {
     if (rt.userbot === 'connected') out.checks.push('✅ Userbot ulangan');
     else if (rt.userbot) out.checks.push(`⚠️ Userbot: ${rt.userbot}${rt.error ? ' — ' + String(rt.error).slice(0, 80) : ''}`);
+
+    if (rt.bot === 'conflict') {
+      out.checks.push('❌ CONFLICT: boshqa jarayon shu token bilan polling qilmoqda!');
+      out.checks.push('   → AUTO_START_TG_BOT=false bo‘lishi kerak');
+      out.checks.push('   → Boshqa joyda (kompyuter/Cloud Run) bot ishlamayotganini tekshiring');
+    }
+    if (typeof rt.updates === 'number') {
+      out.checks.push(`📨 Polling olgan update'lar: ${rt.updates}`);
+      if (rt.last_update_ago_sec !== null && rt.last_update_ago_sec !== undefined) {
+        out.checks.push(`   oxirgisi: ${rt.last_update_ago_sec} soniya oldin`);
+      }
+      if (rt.updates === 0) {
+        out.checks.push('   ⚠️ Hali birorta update kelmagan — polling ishlayaptimi?');
+      }
+    }
   }
 
   return res.json(out);

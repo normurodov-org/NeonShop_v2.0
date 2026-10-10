@@ -109,6 +109,7 @@ from aiogram.methods import EditMessageCaption, EditMessageText, SendMessage, Se
 from aiogram.enums import ChatMemberStatus, ParseMode
 from aiogram.exceptions import (
     TelegramBadRequest,
+    TelegramConflictError,
     TelegramForbiddenError,
     TelegramRetryAfter,
 )
@@ -2828,10 +2829,59 @@ def set_runtime_status(**kwargs: Any) -> None:
 
     server.ts /api/health shu ma'lumotni o'qib, Railway loglariga
     kirishsiz userbot va worker holatini ko'rsatadi.
+
+    MUHIM: bu funksiya HECH QACHON xato bermasligi kerak — u main()
+    ichida chaqiriladi va xatosi butun botni to'xtatib qo'yadi
+    (polling umuman boshlanmaydi). Shuning uchun try/except bilan
+    o'ralgan: diagnostika yozilmasa ham bot ishlashda davom etadi.
     """
-    settings = db.data.setdefault("settings", {})
-    settings["runtime"] = {**datetime.now(TZ).isoformat(), **kwargs}
-    db.save()
+    try:
+        settings = db.data.setdefault("settings", {})
+        # DIQQAT: **str UNPACK qilinmaydi (TypeError). Vaqt alohida "at" kaliti ostida.
+        settings["runtime"] = {"at": datetime.now(TZ).isoformat(), **kwargs}
+        db.save()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("runtime holatini yozib bo'lmadi: %s", exc)
+
+
+# Polling ishlayotganini isbotlash uchun update hisoblagichi
+UPDATES_RECEIVED = {"count": 0, "last_at": None}
+
+
+async def update_heartbeat() -> None:
+    """Har 20 soniyada runtime holatini yangilaydi.
+
+    /api/health dagi `updates` maydoni orqali polling ishlayotganini
+    aniq ko'rish mumkin: soni oshsa — update'lar kelmoqda.
+    """
+    while True:
+        try:
+            await asyncio.sleep(20)
+            last = UPDATES_RECEIVED["last_at"]
+            set_runtime_status(
+                bot="polling",
+                updates=UPDATES_RECEIVED["count"],
+                last_update_at=last,
+                last_update_ago_sec=(int(time.time() - last) if last else None),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class UpdateCounterMiddleware(BaseMiddleware):
+    """Har bir kelgan update'ni hisoblaydi (polling ishlayotganini isbotlash uchun)."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        UPDATES_RECEIVED["count"] += 1
+        UPDATES_RECEIVED["last_at"] = time.time()
+        return await handler(event, data)
 
 
 def maybe_start_userbot() -> None:
@@ -3688,6 +3738,8 @@ async def main() -> None:
     access = AccessMiddleware()
     dp.message.outer_middleware(access)
     dp.callback_query.outer_middleware(access)
+    dp.message.outer_middleware(UpdateCounterMiddleware())
+    dp.callback_query.outer_middleware(UpdateCounterMiddleware())
 
     dp.include_router(common_router)
     dp.include_router(admin_router)
@@ -3730,15 +3782,32 @@ async def main() -> None:
             fragment_hash=bool(FRAGMENT_API_HASH),
             wallet_seed=bool(WALLET_WORDS and not WALLET_SEED_ERROR),
         )
-        try:
-            await bot.delete_webhook(drop_pending_updates=False)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Webhook o'chirilmadi (davom etamiz): %s", exc)
 
-        maybe_start_userbot()
-        asyncio.create_task(process_gift_orders())
-        asyncio.create_task(star_order_worker())
-        asyncio.create_task(get_usdt_uzs_rate())
+        # Ixtiyoriy bosqichlar — HECH QACHON polling'ni to'xtatmasligi kerak.
+        # Har biri alohida himoyalangan: bitta xato butun botni o'ldirmasin.
+        async def _safe(coro, label: str) -> None:
+            try:
+                await coro
+            except Exception as exc:  # noqa: BLE001
+                log.warning("%s bajarilmadi (davom etamiz): %s", label, exc)
+
+        try:
+            await _safe(bot.delete_webhook(drop_pending_updates=False), "Webhook o'chirish")
+            maybe_start_userbot()
+            for label, coro in (
+                ("Gift worker", process_gift_orders()),
+                ("Stars worker", star_order_worker()),
+                ("USDT kursi", get_usdt_uzs_rate()),
+                ("Heartbeat", update_heartbeat()),
+            ):
+                try:
+                    asyncio.create_task(coro)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("%s ishga tushmadi: %s", label, exc)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Startup qo'shimchalarida xato (polling davom etadi): %s", exc)
+
+        set_runtime_status(bot="polling_started")
 
         # Polling'ni o'limaydigan qilamiz: vaqtinchalik xato botni to'xtatmasin
         while True:
@@ -3749,6 +3818,17 @@ async def main() -> None:
                 break
             except asyncio.CancelledError:
                 raise
+            except TelegramConflictError as exc:
+                # Boshqa bot yoki ikkinchi jarayon shu token bilan polling qilmoqda.
+                # Bu holatda Telegram update'larni BIRINCHI kelgan jarayonga beradi —
+                # ya'ni bizning bot hech narsa olmaydi.
+                log.error(
+                    "⚠️ CONFLICT: boshqa jarayon shu BOT_TOKEN bilan polling qilmoqda. "
+                    "Bu bot javob bermaydi. (%s)",
+                    str(exc)[:150],
+                )
+                set_runtime_status(bot="conflict", error=str(exc)[:200])
+                await asyncio.sleep(10)
             except Exception as exc:  # noqa: BLE001
                 log.exception("Polling xatosi, 10 soniyadan keyin qayta uriniladi: %s", exc)
                 set_runtime_status(bot="polling_error", error=str(exc)[:200])
