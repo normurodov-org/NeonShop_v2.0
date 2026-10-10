@@ -168,7 +168,9 @@ def _load_dotenv(path: str = ".env") -> None:
 
 _load_dotenv()
 
-TOKEN = os.getenv("BOT_TOKEN", "8604259613:AAFe1ZivmZ1tz-WwOj0sXpAf0QwaMoZovuA")
+# BOT_TOKEN FAQAT Railway ENV dan olinadi. Kod ichiga token yozish XAVFSIZ EMAS
+# (repo ochiq — token o'g'rilishi mumkin). Bo'sh bo'lsa bot aniq xato bilan to'xtaydi.
+TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8307046273"))
 ADMIN_IDS = {ADMIN_ID}
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "neon2025")
@@ -3659,7 +3661,26 @@ async def main() -> None:
     dp.include_router(router)
 
     try:
-        me = await bot.get_me()
+        # TOKEN tekshiruvi — xato bo'lsa bot O'LMASIN, kutib turadi.
+        # Oldingi kodda get_me() xatosi butun jarayonni tugatirdi,
+        # shuning uchun /start ga javob bo'lmasdi.
+        me = None
+        for attempt in range(1, 31):
+            try:
+                me = await bot.get_me()
+                break
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "Telegram bilan ulanib bo'lmadi (%d/30): %s — BOT_TOKEN to'g'rimi?",
+                    attempt, exc,
+                )
+                await asyncio.sleep(10)
+
+        if me is None:
+            log.error("BOT_TOKEN noto'g'ri yoki bekor qilingan. Bot ishga tushmadi.")
+            log.error("Railway ENV da BOT_TOKEN ni yangiling (mas'alan @BotFather orqali yangi token).")
+            return
+
         BOT_USERNAME = me.username or ""
         try:
             await bot.set_chat_menu_button(
@@ -3675,9 +3696,16 @@ async def main() -> None:
         asyncio.create_task(star_order_worker())
         asyncio.create_task(get_usdt_uzs_rate())
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Bot ishlashida kutilmagan xato: %s", exc)
     finally:
         db.save()
-        await bot.session.close()
+        try:
+            await bot.session.close()
+        except Exception:  # noqa: BLE001
+            pass
         log.info("Bot to'xtatildi.")
 
 

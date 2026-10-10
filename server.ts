@@ -739,6 +739,49 @@ app.post('/api/admin/wallet-balance', (req: Request, res: Response) => {
   });
 });
 
+// Bot holati tekshiruvi — Python bot o'lsa ham server ishlashda davom etadi,
+// shuning uchun muammoni shu yerdan ko'rish mumkin.
+app.get('/api/health', async (_req: Request, res: Response) => {
+  const token = (process.env.BOT_TOKEN || '').trim();
+  const out: Record<string, any> = {
+    ok: true,
+    server: 'running',
+    bot_token_set: Boolean(token),
+    bot_online: null,
+    bot_username: null,
+    bot_error: null,
+    userbot_env: {
+      api_id: Boolean(process.env.API_ID),
+      api_hash: Boolean(process.env.API_HASH),
+      session_string: Boolean(process.env.SESSION_STRING),
+    },
+    wallet_seed: Boolean(process.env.WALLET_SEED),
+    fragment_cookies: Boolean(process.env.FRAGMENT_COOKIE_HEADER),
+  };
+
+  if (!token) {
+    out.bot_error = 'BOT_TOKEN ENV da yo‘q — Railway sozlamasini tekshiring';
+    return res.json(out);
+  }
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    const d: any = await r.json();
+    if (d.ok) {
+      out.bot_online = true;
+      out.bot_username = d.result.username;
+    } else {
+      out.bot_online = false;
+      out.bot_error = `Telegram: ${d.description || 'noma\'lum xato'}`;
+    }
+  } catch (e) {
+    out.bot_online = false;
+    out.bot_error = (e as Error)?.message || 'Telegram\'ga ulanib bo\'lmadi';
+  }
+  return res.json(out);
+});
+
 // Konkursni boshqarish (admin panel uchun)
 app.get('/api/admin/contest', (_req: Request, res: Response) => {
   res.json({ ok: true, contest: store.contest });
