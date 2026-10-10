@@ -319,6 +319,10 @@ _env_method = os.getenv("FRAGMENT_PAYMENT_METHOD", "").strip().lower()
 # USDT jetton master (TON zanjiri) — O'Zgartiring (ixtiyoriy)
 USDT_MASTER = os.getenv("USDT_MASTER", "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs")
 USDT_DECIMALS = 6
+# 1 Stars uchun taxminiy USDT narxi (ko'rsatish va bashorat uchun).
+# 50 Stars ≈ 0.75 USDT  ->  0.015 USDT/Stars
+STAR_USDT_RATE = Decimal(os.getenv("STAR_USDT_RATE", "0.015"))
+# Fragment bozori qimmatlashsa, tekshiruv chegarasi (faqat nazorat uchun)
 USDT_MAX_PER_STAR = Decimal(os.getenv("USDT_MAX_PER_STAR", "0.03"))
 JETTON_TRANSFER_OP = 0x0F8A7EA5
 
@@ -1101,14 +1105,47 @@ async def _wait_seqno_change(wallet: WalletV4R2, old_seqno: int, timeout: int = 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         await asyncio.sleep(4)
-        seqno = await _safe_seqno(wallet)
-        if seqno is not None and seqno > old_seqno:
+        try:
+            seqno = await ton_with_retry(wallet.get_seqno, "Seqno kuzatuvi", attempts=2)
+        except Exception:  # noqa: BLE001
+            continue
+        if seqno is not None and int(seqno) > old_seqno:
             return True
     return False
 
 
 def fmt_usdt(micro: int) -> str:
     return f"{Decimal(micro) / (10 ** USDT_DECIMALS):.2f}"
+
+
+async def ton_with_retry(operation, name: str = "TON amali", attempts: int = 3):
+    """TON RPC amalini vaqtinchalik server xatolarida qayta urinadi.
+
+    "Liteserver crashed with 651 / out of sync" — shard vaqtincha mos emas.
+    Bu holda yangi server bilan qayta urinish muammoni hal qiladi.
+    """
+    last_error: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            return await operation()
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            low = str(exc).lower()
+            transient = any(
+                k in low for k in
+                ("liteserver crashed", "lite server", "not in db", "out of sync",
+                 "shard", "651", "seqno", "timeout", "timed out", "connection")
+            )
+            if not transient or attempt + 1 >= attempts:
+                if transient:
+                    raise PurchaseError(f"{name}: TON tarmog'i barqaror emas — {exc}") from exc
+                raise
+            log.warning(
+                "%s: vaqtinchalik TON xatosi (%d/%d), qayta urinilmoqda: %s",
+                name, attempt + 1, attempts, str(exc)[:90],
+            )
+            await asyncio.sleep(2 + attempt * 2)
+    raise PurchaseError(f"{name}: {last_error}")
 
 
 async def connect_wallet(retries: int = 3):
@@ -1144,17 +1181,23 @@ async def connect_wallet(retries: int = 3):
 
 
 async def usdt_wallet_address(provider: LiteBalancer, owner: Address) -> Address:
-    stack = await provider.run_get_method(
-        address=USDT_MASTER, method="get_wallet_address",
-        stack=[begin_cell().store_address(owner).end_cell().begin_parse()],
-    )
-    return stack[0].load_address()
+    async def _get() -> Address:
+        stack = await provider.run_get_method(
+            address=USDT_MASTER, method="get_wallet_address",
+            stack=[begin_cell().store_address(owner).end_cell().begin_parse()],
+        )
+        return stack[0].load_address()
+
+    return await ton_with_retry(_get, "USDT hamyon manzili", attempts=3)
 
 
 async def usdt_balance(provider: LiteBalancer, jetton_wallet: Address) -> int:
-    try:
+    async def _get() -> int:
         stack = await provider.run_get_method(address=jetton_wallet, method="get_wallet_data", stack=[])
         return int(stack[0])
+
+    try:
+        return await ton_with_retry(_get, "USDT balansi", attempts=3)
     except Exception:  # noqa: BLE001
         return 0
 
@@ -1213,10 +1256,10 @@ async def buy_stars_via_fragment(username: str, amount: int) -> PurchaseResult:
 
             # Balans initBuyStarsRequest dan OLDIN kerak (Fragment "balance" parametrini
             # talab qiladi — u gaz to'lovi yetarliligini tekshiradi)
-            try:
-                balance = await wallet.get_balance()
-            except Exception as exc:  # noqa: BLE001
-                raise PurchaseError(f"Hamyon balansini olib bo'lmadi: {exc}") from exc
+            balance = await ton_with_retry(
+                wallet.get_balance, "Hamyon balansi", attempts=3
+            )
+            log.info("TON hamyon balansi: %s TON (gaz uchun)", from_nano(balance))
 
             try:
                 tx = await asyncio.to_thread(
@@ -1246,7 +1289,8 @@ async def buy_stars_via_fragment(username: str, amount: int) -> PurchaseResult:
                 fmt_usdt(usdt_amount), from_nano(tx.amount_nano),
             )
 
-            old_seqno = await _safe_seqno(wallet)
+            old_seqno = await ton_with_retry(wallet.get_seqno, "Seqno", attempts=3)
+            old_seqno = int(old_seqno) if old_seqno is not None else None
             if old_seqno is None:
                 raise PurchaseError("Hamyon seqno olinmadi")
 
@@ -1256,7 +1300,10 @@ async def buy_stars_via_fragment(username: str, amount: int) -> PurchaseResult:
             )
             transfer_error: Optional[Exception] = None
             try:
-                await wallet.transfer(destination=destination, amount=tx.amount_nano, body=body)
+                await ton_with_retry(
+                    lambda: wallet.transfer(destination=destination, amount=tx.amount_nano, body=body),
+                    "TON transfer", attempts=2,
+                )
             except Exception as exc:  # noqa: BLE001
                 transfer_error = exc
                 log.warning("transfer() xato berdi: %s", exc)
@@ -1267,7 +1314,7 @@ async def buy_stars_via_fragment(username: str, amount: int) -> PurchaseResult:
 
             balance_after = None
             try:
-                balance_after = await wallet.get_balance()
+                balance_after = await ton_with_retry(wallet.get_balance, "Balans (keyin)", attempts=2)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -2005,7 +2052,8 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
                 "fragment xatosi", "req_id", "to'lov usuli",
             )
         )
-        usdt_needed = (Decimal(amount) * USDT_MAX_PER_STAR).quantize(Decimal("0.001"))
+        # Taxminiy USDT sarfi (haqiqiy kursdan — 50 Stars ≈ 0.75 USDT)
+        usdt_needed = (Decimal(amount) * STAR_USDT_RATE).quantize(Decimal("0.01"))
 
         if technical:
             headline = "🔴 <b>Texnik xato — buyurtma bajarilmadi</b>"
