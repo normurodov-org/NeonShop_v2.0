@@ -322,6 +322,11 @@ USDT_DECIMALS = 6
 USDT_MAX_PER_STAR = Decimal(os.getenv("USDT_MAX_PER_STAR", "0.03"))
 JETTON_TRANSFER_OP = 0x0F8A7EA5
 
+# TON lite-server ishonch darajasi:
+#   1 — tez, lekin server shard "out of sync" bo'lsa butun xaridni hal qiladi
+#   2 — bloklarni tekshiradi, barqaror ("Liteserver crashed with 651" oldini oladi)
+TON_TRUST_LEVEL = int(os.getenv("TON_TRUST_LEVEL", "2"))
+
 # USDT -> UZS kursi. Asosiy manba: live API, zaxira: ENV (offline holat uchun)
 USDT_RATE_FALLBACK = Decimal(os.getenv("USDT_RATE_UZS", "13000"))
 USDT_RATE_TTL = int(os.getenv("USDT_RATE_TTL", "300"))  # 5 daqiqa kesh
@@ -595,10 +600,8 @@ class FragmentTx:
 def _wallet_balance_nano() -> int:
     """TON hamyon balansini nano birlikda oladi (sinxron — Fragment oqimi uchun)."""
     async def _get() -> int:
-        provider = LiteBalancer.from_mainnet_config(trust_level=1)
+        provider, wallet = await connect_wallet(retries=2)
         try:
-            await provider.start_up()
-            wallet = await WalletV4R2.from_mnemonic(provider, WALLET_WORDS)
             return await wallet.get_balance()
         finally:
             try:
@@ -1108,6 +1111,38 @@ def fmt_usdt(micro: int) -> str:
     return f"{Decimal(micro) / (10 ** USDT_DECIMALS):.2f}"
 
 
+async def connect_wallet(retries: int = 3):
+    """TON tarmog'iga ishonchli ulanadi va WALLET_SEED dan hamyonni yuklaydi.
+
+    `trust_level=1` lite-serverga ishonib qoladi va u shard'dan "out of sync"
+    bo'lganda butun xaridni hal qiladi ("Liteserver crashed with 651 code").
+    `trust_level=2` server bloklarni tekshiradi — sekinroq, lekin barqaror.
+    Qo'shimcha: har bir urinishda YANGI provider yaratiladi (eski yopiladi).
+    """
+    last_error: Optional[Exception] = None
+    for attempt in range(retries):
+        provider = None
+        try:
+            provider = LiteBalancer.from_mainnet_config(trust_level=TON_TRUST_LEVEL)
+            await provider.start_up()
+            wallet = await WalletV4R2.from_mnemonic(provider, WALLET_WORDS)
+            return provider, wallet
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            log.warning(
+                "TON ulanishi %d/%d muvaffaqiyatsiz: %s",
+                attempt + 1, retries, str(exc)[:120],
+            )
+            if provider is not None:
+                try:
+                    await provider.close_all()
+                except Exception:  # noqa: BLE001
+                    pass
+            if attempt + 1 < retries:
+                await asyncio.sleep(2 + attempt * 2)
+    raise PurchaseError(f"TON tarmog'iga ulanib bo'lmadi: {last_error}")
+
+
 async def usdt_wallet_address(provider: LiteBalancer, owner: Address) -> Address:
     stack = await provider.run_get_method(
         address=USDT_MASTER, method="get_wallet_address",
@@ -1169,13 +1204,10 @@ async def buy_stars_via_fragment(username: str, amount: int) -> PurchaseResult:
         raise PurchaseError(WALLET_SEED_ERROR)
 
     async with PURCHASE_LOCK:
-        provider = LiteBalancer.from_mainnet_config(trust_level=1)
+        provider = None
         try:
-            try:
-                await provider.start_up()
-                wallet = await WalletV4R2.from_mnemonic(provider, WALLET_WORDS)
-            except Exception as exc:  # noqa: BLE001
-                raise PurchaseError(f"TON tarmog'iga ulanib bo'lmadi: {exc}") from exc
+            # Ishonchli ulanish (2-3 marta qayta urinadi, yangi server bilan)
+            provider, wallet = await connect_wallet()
 
             account = build_tonconnect_account(wallet)
 
@@ -1960,19 +1992,25 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
         db.save()
 
         # Xatani to'g'ri kategoriyaga ajratamiz:
-        #  • "Access denied" / cookie / state  -> TEXNIK xato (admin hal qiladi)
-        #  • "USDT yetarli" / "Hamyonda"       -> TONGA ZARUR bo'lgan xato
+        #  • tarmoq/sessiya/cookie/holat  -> TEXNIK (admin hal qiladi)
+        #  • "yetarli emas" / "Hamyonda"  -> TONGA ZARUR xato
         err_text = str(exc)
+        low = err_text.lower()
         technical = any(
-            k in err_text.lower()
-            for k in ("access denied", "cookie", "xarid holati", "api_hash", "json qaytarmadi", "tarmoq")
+            k in low
+            for k in (
+                "access denied", "cookie", "xarid holati", "api_hash",
+                "json qaytarmadi", "tarmo", "liteserver", "lite server",
+                "shard", "seqno", "block", "ulana", "sozlan", "purov",
+                "fragment xatosi", "req_id", "to'lov usuli",
+            )
         )
         usdt_needed = (Decimal(amount) * USDT_MAX_PER_STAR).quantize(Decimal("0.001"))
 
         if technical:
-            headline = "🔴 <b>Fragment muammosi — buyurtma bajarilmadi</b>"
-            advice = ("👉 <i>fragment.com'da qayta kiring va yangi cookie olib, "
-                      "so'ng /admin → 🩺 Fragment diagnostika tugmasini bosing.</i>")
+            headline = "🔴 <b>Texnik xato — buyurtma bajarilmadi</b>"
+            advice = ("👉 <i>Avtomatik ravishda qayta urinish mumkin. Agar takrorlansa, "
+                      "/admin → 🩺 Fragment diagnostika ni bosib ko'ring.</i>")
         else:
             headline = "⚠️ <b>TON hamyonda USDT yetarli emas</b>"
             advice = "👉 <i>Iltimos, TON hamyonga USDT tashlang (Telegram → USDT → TON).</i>"
@@ -2050,9 +2088,7 @@ async def refresh_wallet_usdt() -> None:
         return
     provider = None
     try:
-        provider = LiteBalancer.from_mainnet_config(trust_level=1)
-        await provider.start_up()
-        wallet = await WalletV4R2.from_mnemonic(provider, WALLET_WORDS)
+        provider, wallet = await connect_wallet(retries=2)
         jetton_wallet = await usdt_wallet_address(provider, wallet.address)
         balance = await usdt_balance(provider, jetton_wallet)
         settings = db.data.setdefault("settings", {})
