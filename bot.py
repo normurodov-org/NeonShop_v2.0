@@ -710,6 +710,10 @@ class FragmentClient:
         self.api_hash: Optional[str] = FRAGMENT_API_HASH.strip() or None
         self._lock = threading.Lock()
         self.last_page_html = ""
+        # Fragment brauzerda `dh` ni butun sahifa davomida BIR XIL saqlaydi
+        # (kuzatuv: 20+ so'rov, barchasi dh=395299368). Biz ham shunday qilamiz —
+        # har chaqiruvda yangilash sessiyani buzishi mumkin.
+        self._buy_dh: Optional[str] = None
 
     def _pin_cookies(self) -> None:
         jar = self.scraper.cookies
@@ -828,8 +832,7 @@ class FragmentClient:
                     **extra,
                 }
                 try:
-                    self.api("updateStarsBuyState", mode="new", lv="false",
-                             dh=str(random.randint(100000000, 9999999999)))
+                    self.update_buy_state(amount)
                     init = self.api("initBuyStarsRequest", **params)
                 except FragmentError as exc:
                     msg = str(exc).replace("\n", " ")[:70]
@@ -927,14 +930,17 @@ class FragmentClient:
         """
         last_error: Optional[Exception] = None
         for attempt in range(2):
-            dh = random.randint(100000000, 999999999)
+            # `dh` butun sessiya davomida bir xil qoladi (brauzerdagidek)
+            if self._buy_dh is None:
+                self._buy_dh = str(random.randint(100000000, 9999999999))
             try:
-                self.api("updateStarsBuyState", mode="new", lv="false", dh=str(dh))
-                log.debug("Fragment updateStarsBuyState yangilandi (dh=%s)", dh)
+                self.api("updateStarsBuyState", mode="new", lv="false", dh=self._buy_dh)
+                log.debug("Fragment updateStarsBuyState yangilandi (dh=%s)", self._buy_dh)
                 return
             except FragmentError as exc:
                 last_error = exc
                 log.warning("updateStarsBuyState muvaffaqiyatsiz (%d/2): %s", attempt + 1, exc)
+                self._buy_dh = None      # muvaffaqiyatsiz bo'lsa — yangi qiymat
                 if attempt == 0:
                     time.sleep(1.2)
         raise FragmentError(f"Fragment xarid holatini yangilab bo'lmadi: {last_error}")
