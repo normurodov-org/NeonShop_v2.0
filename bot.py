@@ -578,6 +578,23 @@ class FragmentTx:
     messages_count: int = 1
 
 
+def _wallet_balance_nano() -> int:
+    """TON hamyon balansini nano birlikda oladi (sinxron — Fragment oqimi uchun)."""
+    async def _get() -> int:
+        provider = LiteBalancer.from_mainnet_config(trust_level=1)
+        try:
+            await provider.start_up()
+            wallet = await WalletV4R2.from_mnemonic(provider, WALLET_WORDS)
+            return await wallet.get_balance()
+        finally:
+            try:
+                await provider.close_all()
+            except Exception:  # noqa: BLE001
+                pass
+
+    return asyncio.run(_get())
+
+
 def parse_fragment_transaction(resp: dict) -> FragmentTx:
     if not isinstance(resp, dict):
         raise FragmentError("Fragment javobi noto'g'ri formatda")
@@ -767,7 +784,7 @@ class FragmentClient:
                 return data
             raise FragmentError("Fragment so'rovi muvaffaqiyatsiz")
 
-    def diagnose(self, username: str) -> list[str]:
+    async def diagnose(self, username: str) -> list[str]:
         lines = []
         lines.append(f"🍪 Cookie'lar: {', '.join(sorted(self.auth_cookies)) or 'YO‘Q'}")
         if self.missing_cookies:
@@ -797,6 +814,27 @@ class FragmentClient:
                          f"{'topildi' if recipient else 'topilmadi'}")
         except Exception as exc:  # noqa: BLE001
             lines.append(f"❌ searchStarsRecipient: {exc}")
+            return lines
+
+        # 3) initBuyStarsRequest — eng ko'p rad etiladigan bosqich.
+        #    Haqiqiy TON balans talab qilinadi, shuning uchun WALLET_SEED kerak.
+        if not recipient:
+            lines.append("⏭️ initBuyStarsRequest: tekshirilmadi (qabul qiluvchi topilmadi)")
+            return lines
+        if not WALLET_WORDS:
+            lines.append("⚠️ WALLET_SEED yo'q — init tekshiruvi o'tkazilmaydi "
+                         "(Fragment 'balance' parametrini talab qiladi)")
+            return lines
+        try:
+            balance = await asyncio.to_thread(_wallet_balance_nano)
+            init = await asyncio.to_thread(
+                self.init_buy_stars_request, recipient, MIN_STARS_BUY, balance
+            )
+            lines.append(f"✅ initBuyStarsRequest: req_id={init}")
+        except FragmentError as exc:
+            lines.append(f"❌ initBuyStarsRequest: {exc}")
+            lines.append("💡 Haqiqiy brauzer so'rovini (fragment.com/stars → Network → "
+                         "Payload) ko'rib, parametrlarni solishtiring")
         return lines
 
     def update_buy_state(self, amount: int) -> None:
@@ -825,10 +863,23 @@ class FragmentClient:
                     time.sleep(1.2)
         raise FragmentError(f"Fragment xarid holatini yangilab bo'lmadi: {last_error}")
 
-    def init_buy_stars_request(self, recipient: str, amount: int) -> str:
-        """Buyurtmani yaratadi. 'Access denied' olsa — holatni tiklab bir marta
-        qayta urinadi (Fragment sessiyasi vaqt vaqtida tiklanadi)."""
-        params = dict(recipient=recipient, quantity=amount, payment_method=FRAGMENT_PAYMENT_METHOD)
+    def init_buy_stars_request(self, recipient: str, amount: int, balance_nano: Optional[int] = None) -> str:
+        """Buyurtmani yaratadi.
+
+        Fragment `initBuyStarsRequest` da to'lovchining TON balansini (`balance`)
+        yuborishni talab qiladi — u gaz to'lovi yetarliligini tekshiradi.
+        Bu parametr berilmasa, Fragment "Access denied" qaytaradi.
+
+        Qo'shimcha: "Access denied" olsa — holat tiklanib, bir marta qayta uriniladi.
+        """
+        params: dict[str, Any] = {
+            "recipient": recipient,
+            "quantity": amount,
+            "payment_method": FRAGMENT_PAYMENT_METHOD,
+        }
+        if balance_nano is not None:
+            params["balance"] = str(int(balance_nano))
+
         try:
             init = self.api("initBuyStarsRequest", **params)
         except FragmentError as exc:
@@ -842,10 +893,17 @@ class FragmentClient:
 
         req_id = init.get("req_id")
         if not req_id:
-            raise FragmentError("Fragment buyurtma ID (req_id) qaytarmadi")
+            raise FragmentError(f"Fragment buyurtma ID (req_id) qaytarmadi: {json.dumps(init)[:200]}")
         return str(req_id)
 
-    def create_stars_order(self, username: str, amount: int, account: dict, device: dict) -> FragmentTx:
+    def create_stars_order(
+        self,
+        username: str,
+        amount: int,
+        account: dict,
+        device: dict,
+        balance_nano: Optional[int] = None,
+    ) -> FragmentTx:
         username = username.lstrip("@")
 
         # 1) Xarid holatini yangilash (MAJBURIY — init dan oldin)
@@ -857,8 +915,8 @@ class FragmentClient:
         if not recipient:
             raise FragmentError(f"@{username} Fragment'da topilmadi")
 
-        # 3) Buyurtma — FAQAT USDT (TON)
-        req_id = self.init_buy_stars_request(recipient, amount)
+        # 3) Buyurtma — FAQAT USDT (TON), balans bilan
+        req_id = self.init_buy_stars_request(recipient, amount, balance_nano)
 
         link = self.api(
             "getBuyStarsLink",
@@ -1072,9 +1130,16 @@ async def buy_stars_via_fragment(username: str, amount: int) -> PurchaseResult:
 
             account = build_tonconnect_account(wallet)
 
+            # Balans initBuyStarsRequest dan OLDIN kerak (Fragment "balance" parametrini
+            # talab qiladi — u gaz to'lovi yetarliligini tekshiradi)
+            try:
+                balance = await wallet.get_balance()
+            except Exception as exc:  # noqa: BLE001
+                raise PurchaseError(f"Hamyon balansini olib bo'lmadi: {exc}") from exc
+
             try:
                 tx = await asyncio.to_thread(
-                    fragment.create_stars_order, username, amount, account, TONCONNECT_DEVICE
+                    fragment.create_stars_order, username, amount, account, TONCONNECT_DEVICE, balance
                 )
             except FragmentError as exc:
                 raise PurchaseError(str(exc)) from exc
@@ -1084,11 +1149,6 @@ async def buy_stars_via_fragment(username: str, amount: int) -> PurchaseResult:
             destination = tx.destination or FRAGMENT_ADDRESS
             if not destination or "PUT_" in destination:
                 raise PurchaseError("Fragment manzili aniqlanmadi")
-
-            try:
-                balance = await wallet.get_balance()
-            except Exception as exc:  # noqa: BLE001
-                raise PurchaseError(f"Hamyon balansini olib bo'lmadi: {exc}") from exc
 
             if tx.payload_type == "none":
                 raise PurchaseError("Fragment to'lov ma'lumotini qaytarmadi")
@@ -2403,7 +2463,7 @@ async def adm_diag(call: CallbackQuery):
     await call.answer("🔍 Tekshirilmoqda...")
     await call.message.answer("🔍 Fragment diagnostikasi boshlandi, 10-20 soniya kuting...")
     try:
-        lines = await asyncio.to_thread(fragment.diagnose, "normuzb")
+        lines = await fragment.diagnose("normuzb")
     except Exception as exc:  # noqa: BLE001
         lines = [f"❌ Diagnostika xatosi: {exc}"]
     await call.message.answer(
