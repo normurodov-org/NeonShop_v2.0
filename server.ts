@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { startTelegramBot, stopTelegramBot, getBotStatus, sendTelegramMessage } from './src/botService';
 import { loadDatabase, saveDatabase, DB_FILE } from './src/db';
@@ -770,6 +771,28 @@ app.get('/api/health', async (_req: Request, res: Response) => {
       if (d.ok) {
         out.bot_online = true;
         out.bot_username = d.result.username;
+
+        // Webhook o'rnatilganmi? (bo'lsa polling umuman ishlamaydi!)
+        try {
+          const wr = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`, {
+            signal: AbortSignal.timeout(15000),
+          });
+          const wd: any = await wr.json();
+          if (wd.ok) {
+            out.webhook_url = wd.result.url || null;
+            out.pending_updates = wd.result.pending_update_count;
+            if (wd.result.url) {
+              // O'zimiz to'g'ramiz — Python bot polling bilan ishlashi uchun
+              await fetch(
+                `https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=false`,
+                { signal: AbortSignal.timeout(15000) }
+              );
+              out.webhook_auto_cleared = true;
+            }
+          }
+        } catch (e) {
+          /* webhook tekshiruvi ixtiyoriy */
+        }
       } else {
         out.bot_online = false;
         out.bot_error = `Telegram: ${d.description || 'noma\'lum xato'}`;
@@ -789,11 +812,62 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     /* db o'qilmasa */
   }
 
+  // Python jarayoni yashirmi? (bir xil konteynerda bo'lgani uchun ko'rish mumkin)
+  try {
+    const run = (cmd: string): string => execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    let ps = '';
+    try {
+      ps = run('ps -eo pid,etimes,args');
+    } catch {
+      try {
+        ps = run('ps -eo pid,args');            // macOS da etimes yo'q
+      } catch {
+        ps = run('ps aux');                      // eng oxirgi zaxira
+      }
+    }
+    const procs = ps
+      .split('\n')
+      // Faqat haqiqiy "python ... bot.py" jarayonlari (py_compile/grep kabi chalg'ituvchilar chiqarib tashlanadi)
+      .filter((l) => {
+        if (!/python/.test(l) || !/\bbot\.py\b/.test(l)) return false;
+        if (/py_compile|grep|ps -eo|execSync/.test(l)) return false;
+        return true;
+      })
+      .map((l) => {
+        const parts = l.trim().split(/\s+/);
+        if (parts.length < 3) return null;
+        const pid = Number(parts[0]);
+        if (!pid || isNaN(pid)) return null;
+        return {
+          pid,
+          uptime_sec: /^\d+$/.test(parts[1]) ? Number(parts[1]) : null,
+          cmd: parts.slice(2).join(' ').slice(0, 60),
+        };
+      })
+      .filter(Boolean);
+    out.python_process = procs;
+    out.python_running = procs.length > 0;
+  } catch (e) {
+    out.python_process = null;
+    out.python_running = null;
+  }
+
   // Bo'ldimagi tekshiruvlar ro'yxati
   out.checks = [];
   if (!out.bot_token_set) out.checks.push('❌ BOT_TOKEN yo‘q');
   if (out.bot_online === false) out.checks.push(`❌ Bot online emas: ${out.bot_error}`);
   if (out.bot_online === true) out.checks.push('✅ Bot online');
+  if (out.webhook_url) {
+    out.checks.push(`❌ WEBHOOK o‘rnatilgan edi: ${out.webhook_url} — o‘chirildi (polling uchun zarur emas)`);
+  } else if (out.webhook_auto_cleared) {
+    out.checks.push('✅ Webhook avtomatik o‘chirildi');
+  }
+  if (process.env.AUTO_START_TG_BOT === 'true') {
+    out.checks.push('❌ AUTO_START_TG_BOT=true — Node bot ham polling qilmoqda, '
+      + 'Python bilan conflict bo‘ladi. Railway da false qiling.');
+  } else {
+    out.checks.push('✅ AUTO_START_TG_BOT sozlamasi to‘g‘ri');
+  }
   if (!out.fragment_cookies) out.checks.push('❌ FRAGMENT_COOKIE_HEADER yo‘q — Stars xaridi ishlamaydi');
   else out.checks.push('✅ Fragment cookie‘lar bor');
   if (!out.wallet_seed) out.checks.push('❌ WALLET_SEED yo‘q — USDT yuborilmaydi');
@@ -803,6 +877,16 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     out.checks.push('⚠️ Userbot kalitlari to‘liq emas');
   } else {
     out.checks.push('✅ Userbot kalitlari bor');
+  }
+  if (out.python_running === true) {
+    out.checks.push(`✅ Python bot jarayoni ishlayapti (PID ${out.python_process?.[0]?.pid})`);
+  } else if (out.python_running === false) {
+    out.checks.push('❌ Python bot jarayoni YO‘Q — Railway loglariga qarang');
+  }
+  const rt: any = out.python_bot;
+  if (rt) {
+    if (rt.userbot === 'connected') out.checks.push('✅ Userbot ulangan');
+    else if (rt.userbot) out.checks.push(`⚠️ Userbot: ${rt.userbot}${rt.error ? ' — ' + String(rt.error).slice(0, 80) : ''}`);
   }
 
   return res.json(out);

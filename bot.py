@@ -3722,12 +3722,29 @@ async def main() -> None:
             fragment_hash=bool(FRAGMENT_API_HASH),
             wallet_seed=bool(WALLET_WORDS and not WALLET_SEED_ERROR),
         )
-        await bot.delete_webhook(drop_pending_updates=False)
+        try:
+            await bot.delete_webhook(drop_pending_updates=False)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Webhook o'chirilmadi (davom etamiz): %s", exc)
+
         maybe_start_userbot()
         asyncio.create_task(process_gift_orders())
         asyncio.create_task(star_order_worker())
         asyncio.create_task(get_usdt_uzs_rate())
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+
+        # Polling'ni o'limaydigan qilamiz: vaqtinchalik xato botni to'xtatmasin
+        while True:
+            try:
+                await dp.start_polling(
+                    bot, allowed_updates=dp.resolve_used_update_types(), handle_signals=False
+                )
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Polling xatosi, 10 soniyadan keyin qayta uriniladi: %s", exc)
+                set_runtime_status(bot="polling_error", error=str(exc)[:200])
+                await asyncio.sleep(10)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001
