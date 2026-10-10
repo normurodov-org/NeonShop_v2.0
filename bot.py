@@ -748,13 +748,19 @@ class FragmentClient:
 
                 if isinstance(data, dict) and data.get("error"):
                     err = str(data["error"])
-                    if attempt == 0 and ("hash" in err.lower() or "access denied" in err.lower()):
+                    lower = err.lower()
+                    # "Access denied" — bu sessiya/holat muammosi, HASH muammosi emas.
+                    # Hashni qayta skrap qilish to'g'ri ishlagan hashni buzadi,
+                    # shuning uchun faqat hash bilan bog'liq xatolarda yangilanadi.
+                    if attempt == 0 and "hash" in lower and "access denied" not in lower:
                         self.fetch_api_hash()
                         continue
                     self._pin_cookies()
                     hint = ""
-                    if "access denied" in err.lower():
-                        hint = " — Fragment sessiyasi tan olinmadi: cookie'larni tekshiring."
+                    if "access denied" in lower:
+                        hint = (" — Fragment sessiyasi yoki xarid holati to'g'ri emas. "
+                                "Cookie muddati o'tgan bo'lishi mumkin (fragment.com'da "
+                                "qayta kiring) yoki updateStarsBuyState muvaffaqiyatsiz.")
                     raise FragmentError(f"Fragment [{method}]: {err}{hint}")
                 if not isinstance(data, dict):
                     raise FragmentError("Fragment javobi noto'g'ri formatda")
@@ -764,44 +770,85 @@ class FragmentClient:
     def diagnose(self, username: str) -> list[str]:
         lines = []
         lines.append(f"🍪 Cookie'lar: {', '.join(sorted(self.auth_cookies)) or 'YO‘Q'}")
+        if self.missing_cookies:
+            lines.append(f"⚠️ Yetishmayotgan: {', '.join(self.missing_cookies)}")
         try:
             self.api_hash = None
             h = self.fetch_api_hash()
-            lines.append(f"✅ api_hash olindi ({h[:6]}…)")
+            lines.append(f"✅ api_hash olindi ({h[:10]}…)")
         except Exception as exc:  # noqa: BLE001
             lines.append(f"❌ api_hash: {exc}")
+            lines.append("💡 Sahifa bloklangan bo'lishi mumkin — FRAGMENT_API_HASH ni qo'lda kiriting")
             return lines
+
+        # 1) Xarid holati (majburiy qadam)
+        try:
+            self.update_buy_state(MIN_STARS_BUY)
+            lines.append("✅ updateStarsBuyState (xarid holati)")
+        except FragmentError as exc:
+            lines.append(f"❌ updateStarsBuyState: {exc}")
+            lines.append("💡 Bu qadam uzilmasa, initBuyStarsRequest 'Access denied' beradi")
+
+        # 2) Qabul qiluvchi
         try:
             found = self.api("searchStarsRecipient", query=username, quantity=MIN_STARS_BUY)
             recipient = (found.get("found") or {}).get("recipient")
             lines.append(f"{'✅' if recipient else '⚠️'} searchStarsRecipient(@{username}): "
-                         f"{'topildi' if recipient else 'qabul qiluvchi topilmadi'}")
+                         f"{'topildi' if recipient else 'topilmadi'}")
         except Exception as exc:  # noqa: BLE001
             lines.append(f"❌ searchStarsRecipient: {exc}")
         return lines
 
     def update_buy_state(self, amount: int) -> None:
-        """Fragment'da Stars xaridi holatini yangilaydi.
+        """Fragment'da Stars xaridi holatini yangilaydi — MAJBURIY QADAM.
 
         Fragment sayfasida har safar "Xarid qilish" ochilganda avval shu so'rov
         yuboriladi. `initBuyStarsRequest` faqat shundan KEYIN ishlaydi.
 
         Haqiqiy brauzer so'rovi (Network -> Payload):
             method=updateStarsBuyState, mode=new, lv=false, dh=<9 xonali son>
+
+        Bu qadam muvaffaqiyatsiz bo'lsa, keyingi so'rov "Access denied" oladi —
+        shuning uchun xatoni jimgina o'tkazmaymiz, darhol ko'taramiz.
         """
-        dh = random.randint(100000000, 999999999)
+        last_error: Optional[Exception] = None
+        for attempt in range(2):
+            dh = random.randint(100000000, 999999999)
+            try:
+                self.api("updateStarsBuyState", mode="new", lv="false", dh=str(dh))
+                log.debug("Fragment updateStarsBuyState yangilandi (dh=%s)", dh)
+                return
+            except FragmentError as exc:
+                last_error = exc
+                log.warning("updateStarsBuyState muvaffaqiyatsiz (%d/2): %s", attempt + 1, exc)
+                if attempt == 0:
+                    time.sleep(1.2)
+        raise FragmentError(f"Fragment xarid holatini yangilab bo'lmadi: {last_error}")
+
+    def init_buy_stars_request(self, recipient: str, amount: int) -> str:
+        """Buyurtmani yaratadi. 'Access denied' olsa — holatni tiklab bir marta
+        qayta urinadi (Fragment sessiyasi vaqt vaqtida tiklanadi)."""
+        params = dict(recipient=recipient, quantity=amount, payment_method=FRAGMENT_PAYMENT_METHOD)
         try:
-            self.api("updateStarsBuyState", mode="new", lv="false", dh=str(dh))
-            log.debug("Fragment updateStarsBuyState yangilandi (dh=%s)", dh)
+            init = self.api("initBuyStarsRequest", **params)
         except FragmentError as exc:
-            # Ba'zi versiyalar bu qadamni talab qilmaydi — to'xtatmaymiz,
-            # asosiy so'rovda xato aniq ko'rinadi.
-            log.warning("updateStarsBuyState muvaffaqiyatsiz: %s", exc)
+            if "access denied" not in str(exc).lower():
+                raise
+            log.warning("initBuyStarsRequest 'Access denied' — holatni tiklab qayta urinilmoqda")
+            time.sleep(1.5)
+            self.api_hash = None       # hashni sahifadan qayta olamiz
+            self.update_buy_state(amount)
+            init = self.api("initBuyStarsRequest", **params)
+
+        req_id = init.get("req_id")
+        if not req_id:
+            raise FragmentError("Fragment buyurtma ID (req_id) qaytarmadi")
+        return str(req_id)
 
     def create_stars_order(self, username: str, amount: int, account: dict, device: dict) -> FragmentTx:
         username = username.lstrip("@")
 
-        # 1) Xarid holatini yangilash (initBuyStarsRequest dan OLDIN)
+        # 1) Xarid holatini yangilash (MAJBURIY — init dan oldin)
         self.update_buy_state(amount)
 
         # 2) Qabul qiluvchini topish
@@ -810,12 +857,8 @@ class FragmentClient:
         if not recipient:
             raise FragmentError(f"@{username} Fragment'da topilmadi")
 
-        # 3) Buyurtmani yaratish — FAQAT USDT (TON)
-        init = self.api("initBuyStarsRequest", recipient=recipient, quantity=amount,
-                        payment_method=FRAGMENT_PAYMENT_METHOD)
-        req_id = init.get("req_id")
-        if not req_id:
-            raise FragmentError("Fragment buyurtma ID (req_id) qaytarmadi")
+        # 3) Buyurtma — FAQAT USDT (TON)
+        req_id = self.init_buy_stars_request(recipient, amount)
 
         link = self.api(
             "getBuyStarsLink",
@@ -1309,6 +1352,7 @@ def admin_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text=toggle, callback_data="adm:toggle", style="danger" if bot_active() else "success")],
             [InlineKeyboardButton(text="👛 USDT balansi", callback_data="adm:wallet")],
+            [InlineKeyboardButton(text="🩺 Fragment diagnostika", callback_data="adm:diag")],
             [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
         ]
@@ -1806,17 +1850,33 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
         order.update(status="manual_pending", error=str(exc), chat_id=chat_id, finished_at=now_iso())
         db.save()
 
-        # USDT yetarli emas yoki hamyon muammosi — adminga ogohlantirish
+        # Xatani to'g'ri kategoriyaga ajratamiz:
+        #  • "Access denied" / cookie / state  -> TEXNIK xato (admin hal qiladi)
+        #  • "USDT yetarli" / "Hamyonda"       -> TONGA ZARUR bo'lgan xato
+        err_text = str(exc)
+        technical = any(
+            k in err_text.lower()
+            for k in ("access denied", "cookie", "xarid holati", "api_hash", "json qaytarmadi", "tarmoq")
+        )
         usdt_needed = (Decimal(amount) * USDT_MAX_PER_STAR).quantize(Decimal("0.001"))
+
+        if technical:
+            headline = "🔴 <b>Fragment muammosi — buyurtma bajarilmadi</b>"
+            advice = ("👉 <i>fragment.com'da qayta kiring va yangi cookie olib, "
+                      "so'ng /admin → 🩺 Fragment diagnostika tugmasini bosing.</i>")
+        else:
+            headline = "⚠️ <b>TON hamyonda USDT yetarli emas</b>"
+            advice = "👉 <i>Iltimos, TON hamyonga USDT tashlang (Telegram → USDT → TON).</i>"
+
         await notify_admins(
-            f"⚠️ <b>Stars buyurtmasi adminga o'tdi (USDT yetarli emas)</b>\n\n"
+            f"{headline}\n\n"
             f"📦 <b>Buyurtma ID:</b> <code>#{order_id}</code>\n"
             f"👤 <b>Mijoz ID:</b> <code>{user_id}</code> (@{esc(username)})\n"
             f"⭐ <b>Stars miqdori:</b> {amount} ⭐\n"
-            f"💵 <b>Kerakli USDT:</b> ~{usdt_needed} USDT (on TON)\n"
+            f"💎 <b>Kerakli USDT:</b> ~{usdt_needed} USDT (on TON)\n"
             f"💳 <b>Yechilgan so'm:</b> {fmt(price)} UZS\n"
-            f"🔍 <b>Sabab:</b> <code>{esc(exc)}</code>\n\n"
-            f"👉 <i>Iltimos, TON hamyonga USDT tashlang (Telegram -&gt; USDT -&gt; TON).</i>"
+            f"🔍 <b>Sabab:</b> <code>{esc(err_text)}</code>\n\n"
+            f"{advice}"
         )
         await _safe_send(
             chat_id,
@@ -1825,7 +1885,13 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
             f"👤 Qabul qiluvchi: <b>@{esc(username)}</b>\n"
             f"💳 To'langan summa: <b>{fmt(price)} UZS</b>\n"
             f"📌 Holat: <b>Qayta ishlanmoqda (Adminga yuborildi)</b>\n\n"
-            f"<i>Do'kon USDT (TON) zaxirasi vaqtincha yetarli emas. Admin to'ldirgach Stars avtomatik yuboriladi.</i>",
+            + (
+                "<i>Do'kon tomonida texnik xatolik bor. Administrator tuzatadi va "
+                "Stars'ni avtomatik yuboradi.</i>"
+                if technical
+                else "<i>Do'kon USDT (TON) zaxirasi vaqtincha yetarli emas. "
+                "Admin to'ldirgach Stars avtomatik yuboriladi.</i>"
+            ),
         )
         return
     except Exception as exc:  # noqa: BLE001
@@ -2328,6 +2394,22 @@ async def adm_wallet(call: CallbackQuery):
     await call.message.answer("🔄 TON tarmog'idan USDT balansi olinmoqda...")
     await refresh_wallet_usdt()
     await call.message.answer(admin_panel_text(), reply_markup=admin_kb())
+
+
+@admin_router.callback_query(F.data == "adm:diag")
+async def adm_diag(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer("🔍 Tekshirilmoqda...")
+    await call.message.answer("🔍 Fragment diagnostikasi boshlandi, 10-20 soniya kuting...")
+    try:
+        lines = await asyncio.to_thread(fragment.diagnose, "normuzb")
+    except Exception as exc:  # noqa: BLE001
+        lines = [f"❌ Diagnostika xatosi: {exc}"]
+    await call.message.answer(
+        "<b>🩺 Fragment diagnostikasi</b>\n\n" + "\n".join(esc(x) for x in lines),
+        reply_markup=admin_kb(),
+    )
 
 
 @admin_router.callback_query(F.data == "adm:ub_status")
