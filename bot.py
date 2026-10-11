@@ -504,8 +504,19 @@ def now_iso() -> str:
     return now().isoformat(timespec="seconds")
 
 
-def fmt(n: int | float) -> str:
-    return f"{int(n):,}".replace(",", " ")
+def fmt(n: Any) -> str:
+    """Sonni 1 234 5 67 ko'rinishida formatlaydi.
+
+    None / bo'sh / noto'g'ri qiymat kelganda XATO TOSHLAYDI — bu
+    /start menyusining butunlay chiqmasiga olib keladi (foydalanuvchi
+    hech narsani ko'rmaydi). Shuning uchun himoya qilamiz.
+    """
+    if n is None or n == "":
+        return "0"
+    try:
+        return f"{int(n):,}".replace(",", " ")
+    except (TypeError, ValueError):
+        return "0"
 
 
 def esc(text: Any) -> str:
@@ -562,6 +573,31 @@ def b64decode_padded(data: str) -> bytes:
 # =============================================================================
 # 5. JSON MA'LUMOTLAR BAZASI
 # =============================================================================
+# Foydalanuvchi hisobidagi sonli maydonlar. Bulardagi null / "" / "abc"
+# qiymat butun botni buzadi (masalan int(None) -> TypeError -> /start
+# menyusining umuman chiqmasligi).
+USER_NUM_FIELDS = (
+    "balance", "total_spent", "total_topup", "referrals_count",
+    "ref_stars", "ref_stars_earned", "bonus_claimed", "stars_bought",
+)
+
+
+def normalize_user_numbers(user: dict) -> dict:
+    """Foydalanuvchi dict'idagi sonli maydonlarni int qiladi.
+
+    Nima uchun kerak: ma'lumotlar bazasi, WebApp va eski yozuvlardan
+    keladi — u yerda `null` yoki matn bo'lishi mumkin. Bunday bitta
+    noto'g'ri qiymat foydalanuvchiga menyuning umuman ko'rinmasiga
+    olib keladi. Shu sababli foydalanuvchi ma'lumotlari O'QILGANDA
+    (get_user / get_or_create_user) avtomatik tozalaymiz — shunda
+    25+ joydagi `int(...)` xavfsiz bo'lib qoladi.
+    """
+    for f in USER_NUM_FIELDS:
+        if f in user:
+            user[f] = num(user.get(f))
+    return user
+
+
 class JsonDB:
     def __init__(self, path: str):
         self.path = path
@@ -638,7 +674,10 @@ class JsonDB:
         return self.data["users"]
 
     def get_user(self, user_id: int) -> Optional[dict]:
-        return self.users.get(str(user_id))
+        u = self.users.get(str(user_id))
+        if u is not None:
+            normalize_user_numbers(u)
+        return u
 
     def get_or_create_user(self, user_id: int, username: Optional[str], full_name: str) -> tuple[dict, bool]:
         user = self.get_user(user_id)
@@ -667,6 +706,7 @@ class JsonDB:
             user["username"] = username
             user["full_name"] = full_name
             self.save()
+        normalize_user_numbers(user)
         return user, created
 
     def find_user(self, query: str) -> Optional[dict]:
@@ -1647,7 +1687,10 @@ def webapp_config() -> dict:
         "rb": REF_BONUS_STARS,
         "rmin": REF_MIN_WITHDRAW,
         "prem": {mode: {str(m): p for m, p in plans.items()} for mode, plans in PREMIUM_PLANS.items()},
-        "gifts": [[key, name, stars, price] for key, name, stars, price in GIFTS],
+        # DIQQAT: GIFTS tuple'i 5 ta elementli (emoji oxirida).
+        # Guruhlab ochish (unpack) o'rniga INDEKS bilan olamiz — kelajakda
+        # yana element qo'shilsa ham bu qator buzilmaydi.
+        "gifts": [[g[0], g[1], g[2], g[3]] for g in GIFTS],
         "sup": SUPPORT_USERNAME,
     }
 
@@ -1659,14 +1702,30 @@ def webapp_history(user: dict) -> list[dict]:
     ]
 
 
+def num(value: Any, default: int = 0) -> int:
+    """Qiymatdan xavfsiz butun son oladi.
+
+    Nima uchun kerak: ma'lumotlar baza yoki WebApp dan keladi, u yerda
+    null / "" / "abc" bo'lishi mumkin. `int(None)` esa TypeError beradi
+    va butun menyuni (masalan /start) YO'Q QILADI — foydalanuvchi hech
+    narsani ko'rmaydi. Shu sababli har joyda himoya qilamiz.
+    """
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def build_webapp_url(user: dict) -> str:
     params = {
         "uid": user["id"],
         "un": user.get("username") or "",
         "photo_url": user.get("photo_url") or "",
-        "balance": int(user.get("balance", 0)),
-        "refs": int(user.get("referrals_count", 0)),
-        "rs": int(user.get("ref_stars", 0)),
+        "balance": num(user.get("balance")),
+        "refs": num(user.get("referrals_count")),
+        "rs": num(user.get("ref_stars")),
         "bot": BOT_USERNAME,
         "history": json.dumps(webapp_history(user), ensure_ascii=False, separators=(",", ":")),
         "cfg": json.dumps(webapp_config(), ensure_ascii=False, separators=(",", ":")),
@@ -5507,7 +5566,11 @@ async def gifts_start(message: Message, state: FSMContext) -> None:
     await state.set_state(GiftStates.recipient)
     rows: list[list[InlineKeyboardButton]] = []
     line: list[InlineKeyboardButton] = []
-    for key, title, stars, price in GIFTS:
+    # DIQQAT: GIFTS tuple'i 5 ta elementli (emoji oxirida) — indeks bilan
+    # olamiz, guruhlab ochmaymiz (avval shu sababli Giftlar menyusi ham
+    # "too many values to unpack" xatosi bilan ishlamay qolgan edi).
+    for g in GIFTS:
+        key, title, price = g[0], g[1], g[3]
         line.append(
             InlineKeyboardButton(text=f"{title}\n{fmt(price)} so'm",
                                  callback_data=f"gift_pick:{key}", style="primary")
