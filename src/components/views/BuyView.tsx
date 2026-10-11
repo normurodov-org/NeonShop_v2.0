@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, StoreSettings, Order, UsdtRate } from '../../types';
 import { Lang, translations } from '../../i18n';
-import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check, Wallet } from 'lucide-react';
+import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check, Wallet, Layers, ChevronRight } from 'lucide-react';
 import AEmoji from '../AEmoji';
 
 interface BuyViewProps {
@@ -9,7 +9,7 @@ interface BuyViewProps {
   settings: StoreSettings | null;
   lang: Lang;
   isDark: boolean;
-  initialTab?: 'stars' | 'premium' | 'gifts';
+  initialTab?: 'stars' | 'premium' | 'gifts' | 'nft';
   onOrderSuccess: (order: Order, newBalance: number, msg: string) => void;
   onGoToTopup: () => void;
 }
@@ -24,7 +24,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
   onGoToTopup,
 }) => {
   const t = translations[lang];
-  const [subTab, setSubTab] = useState<'stars' | 'premium' | 'gifts'>(initialTab);
+  const [subTab, setSubTab] = useState<'stars' | 'premium' | 'gifts' | 'nft'>(initialTab);
 
   // Chuqur menyu (masalan Premium/Gifts) tanlangan katoriya bilan sinxron bolsin
   React.useEffect(() => {
@@ -283,6 +283,23 @@ export const BuyView: React.FC<BuyViewProps> = ({
         >
           <Gift className="w-3.5 h-3.5" />
           <span>{t.gifts}</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setSubTab('nft');
+            setError(null);
+          }}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer apple-spring ${
+            subTab === 'nft'
+              ? isDark
+                ? 'bg-white text-black shadow-md'
+                : 'bg-black text-white shadow-md'
+              : isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-600 hover:text-black'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>NFT</span>
         </button>
       </div>
 
@@ -592,6 +609,78 @@ export const BuyView: React.FC<BuyViewProps> = ({
                 Ismingiz ko'rinadi
               </span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* NFT Gift ijarasi — alohida xizmat (boshqa menejer boshqaradi) */}
+      {subTab === 'nft' && (
+        <div className="space-y-4">
+          {/* professionally yozilgan ogohlantirish */}
+          <div className="rounded-[26px] bg-gradient-to-br from-amber-500/10 via-orange-500/10
+                          to-rose-500/10 border border-amber-500/25 p-5 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-[14px] bg-amber-500/20 border border-amber-500/30
+                              flex items-center justify-center shrink-0 text-xl">
+                ⚠️
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                  Xizmat haqida
+                </h3>
+                <p className="text-[11px] leading-relaxed text-amber-700/90 dark:text-amber-200/80 mt-1">
+                  🔹 Bu xizmat <b>boshqa @saidovManajer</b> ga tegishli.
+                  <br />🔹 Bu xizmat bo&apos;yicha biror muammo yuz bersa,
+                  <b> @saidovManajer</b> bilan bog&apos;laning.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Asosiy karta */}
+          <div className="rounded-[28px] liquid-glass-card p-6 space-y-4 text-center">
+            <div className="w-16 h-16 mx-auto rounded-[22px] bg-gradient-to-br from-amber-500/25
+                            to-rose-500/25 border border-amber-500/30 flex items-center
+                            justify-center text-3xl">
+              🎭
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-neutral-900 dark:text-white">
+                NFT Gift Ijarasi
+              </h2>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
+                NFT sovg&apos;a vaqtincha ijara qilish. Rasmiy xizmat
+                <b> @rentnftlarr </b> kanalida.
+              </p>
+            </div>
+
+            <a
+              href="https://t.me/rentnftlarr"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`w-full py-3.5 rounded-[18px] font-semibold text-xs flex items-center
+                          justify-center gap-2 apple-spring cursor-pointer ${
+                            isDark
+                              ? 'bg-white text-black hover:bg-neutral-100'
+                              : 'bg-black text-white hover:bg-neutral-800'
+                          }`}
+            >
+              <Layers className="w-4 h-4" />
+              <span>@rentnftlarr kanalini ochish</span>
+              <ChevronRight className="w-4 h-4" />
+            </a>
+
+            <div className="flex items-center justify-center gap-1.5 text-[10px] text-neutral-400">
+              <span>💬 Muammo bo&apos;lsa:</span>
+              <a
+                href="https://t.me/saidovManajer"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-cyan-500 hover:underline"
+              >
+                @saidovManajer
+              </a>
+            </div>
           </div>
         </div>
       )}

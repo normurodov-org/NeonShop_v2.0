@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { User, StoreSettings } from '../../types';
-import { Lang, translations } from '../../i18n';
+import { Lang, translations, fromPrice } from '../../i18n';
 import { ShoppingBag, Star, Sparkles, Gift, ChevronRight, Zap } from 'lucide-react';
 
 interface HomeViewProps {
@@ -151,7 +151,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
-              {t.fromWord} 40 000 UZS
+              {fromPrice(lang, '40 000')}
             </span>
             <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
@@ -181,7 +181,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
-              {t.fromWord} 3 000 UZS
+              {fromPrice(lang, '3 000')}
             </span>
             <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>

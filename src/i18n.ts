@@ -16,7 +16,7 @@ export const translations = {
     gifts: 'Giftlar',
     myself: "O'zimga",
     recipient: 'Qabul qiluvchi',
-    recipientUsername: "Qabul qiluvchi Telegram @username'i",
+    recipientUsername: "Qabul qiluvchining Telegram @username'i",
     starsAmount: 'Stars miqdori',
     price: 'Narxi',
     buyStars: 'Stars sotib olish',
@@ -24,10 +24,10 @@ export const translations = {
     fragmentDelivery: 'Fragment orqali avtomatik yetkazish',
     orderProcessing: 'Buyurtma yuborilmoqda…',
     usdtPerStar: '1 Stars ≈',
-    starsDesc: 'Barcha userlarga, 50 tadan boshlab',
+    starsDesc: 'Barcha foydalanuvchilarga, 50 tadan boshlab',
     premiumDesc: '3, 6 yoki 12 oylik obuna',
     giftsDesc: '🧸 Ayiqcha, 🌹 Atirgul, 🚀 Raketa...',
-    fromWord: 'dan boshlab',
+    fromWord: 'dan boshlab',   // eski usul (teskari tartib) — yangisi: fromPrice()
     needMore: "Yetishmayotgan summa",
     startShopping: 'Xaridni boshlash',
     telegramServices: 'TELEGRAM XIZMATLARI',
@@ -236,3 +236,18 @@ export const translations = {
     failed: 'Failed',
   },
 };
+
+/**
+ * "… dan boshlab" iborasi.
+ *
+ * ESKI KOD: `{t.fromWord} 40 000 UZS` -> "dan boshlab 40 000 UZS"
+ * Bu O'ZBEKCHADA noto'g'ri: to'g'risi "40 000 UZS dan boshlab".
+ * Ruscha esa "ot 40 000 UZS", inglizcha "from 40,000 UZS" — ya'ni
+ * boshqalar oldinga, o'zbekcha orqaga qo'yiladi.
+ * Shuning uchun ibora tilga qarab to'liq shakllantiriladi.
+ */
+export function fromPrice(lang: Lang, amount: string): string {
+  if (lang === 'ru') return `от ${amount} UZS`;
+  if (lang === 'en') return `from ${amount} UZS`;
+  return `${amount} UZS dan boshlab`;
+}

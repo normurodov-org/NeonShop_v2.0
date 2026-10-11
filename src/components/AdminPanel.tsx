@@ -205,7 +205,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
             <Users className="w-3.5 h-3.5 text-cyan-400" /> Jami foydalanuvchilar
           </div>
           <div className="text-2xl font-black text-white mt-1">
-            {stats?.totalUsers?.toLocaleString() || '14,281'}
+            {Number(stats?.totalUsers || 0).toLocaleString()}
           </div>
         </div>
 
@@ -214,7 +214,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
             <ShoppingBag className="w-3.5 h-3.5 text-purple-400" /> Jami buyurtmalar
           </div>
           <div className="text-2xl font-black text-purple-300 mt-1">
-            {stats?.totalOrders?.toLocaleString() || '8,743'}
+            {Number(stats?.totalOrders || 0).toLocaleString()}
           </div>
         </div>
 
@@ -223,7 +223,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
             <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Jami aylanma
           </div>
           <div className="text-xl font-black text-emerald-400 mt-1">
-            {stats?.totalVolume?.toLocaleString() || '485 000 000'} <span className="text-xs">UZS</span>
+            {Number(stats?.totalVolume || 0).toLocaleString()} <span className="text-xs">UZS</span>
           </div>
         </div>
 
@@ -484,7 +484,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
         </div>
 
         <div className="space-y-2">
-          {(showAllOrders ? adminData?.orders : adminData?.orders?.slice(0, 5)).map((ord: any) => (
+          {/* DIQQAT: ternary `adminData` hali yo'q bo'lsa `undefined` qaytaradi —
+              uning ustida to'g'ridan-to'g'ri .map() chaqirilsa, render
+              crash qilib butun ekran oq bo'lib qolardi (kirishdan keyin). */}
+          {((showAllOrders ? adminData?.orders : adminData?.orders?.slice(0, 5)) || []).map((ord: any) => (
             <div
               key={ord.id}
               className="p-3 rounded-xl bg-slate-950/80 border border-white/5 flex items-center justify-between text-xs"

@@ -1623,6 +1623,7 @@ def main_menu_kb(user: dict) -> InlineKeyboardMarkup:
             [b("💳 Balans to'ldirish", "topup", "success"), b("👥 Referal", "ref", "primary")],
             [make_button("📱 Web App ❐", web_app=WebAppInfo(url=build_webapp_url(user)), style="primary")],
             [b("👤 Profil", "profile"), b("📜 Tarix", "history")],
+            [make_button("🎭 NFT Gift ijarasi", callback_data="m:nft", style="primary")],
             [make_button("💬 Support", url=f"https://t.me/{SUPPORT_USERNAME}", style="danger")],
         ]
     )
@@ -1809,6 +1810,7 @@ MENU_EMOJI: dict[str, str] = {
     "Profil": "👤",              # odam
     "Tarix": "📜",               # hujjat
     "Support": "🆘",             # yordam
+    "NFT Gift ijarasi": "🎁",   # NFT (premium sovg'a belgisi)
 }
 
 
@@ -4828,6 +4830,51 @@ async def gift_confirm(call: CallbackQuery, state: FSMContext, db_user: dict):
 
 
 # =============================================================================
+# 15c. NFT GIFT IJARASI (boshqa menejer boshqaradi)
+# -----------------------------------------------------------------------------
+# Bu xizmat NEON STORE da emas — uni @saidovManajer boshqaradi.
+# Mijoz tanlaganda biz uni rasmiy @rentnftlarr kanaliga yo'naltiramiz.
+# =============================================================================
+
+NFT_CHANNEL = os.getenv("NFT_CHANNEL", "@rentnftlarr")
+NFT_MANAGER = os.getenv("NFT_MANAGER", "@saidovManajer")
+
+
+def nft_notice() -> str:
+    """NFT xizmati haqidagi professional ogohlantirish matni."""
+    return (
+        "⚠️ <b>Xizmat haqida</b>\n\n"
+        "🔹 Bu xizmat <b>boshqa "
+        f"{esc(NFT_MANAGER)}</b> ga tegishli.\n"
+        "🔹 Bu xizmat bo'yicha biror muammo yuz bersa, "
+        f"<b>{esc(NFT_MANAGER)}</b> bilan bog'laning.\n\n"
+        f"🎁 Rasmiy kanal: <b>{esc(NFT_CHANNEL)}</b>"
+    )
+
+
+async def nft_start(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        f"🎭 <b>NFT Gift Ijarasi</b>\n\n"
+        "NFT sovg'a vaqtincha ijara qilish xizmati.\n\n"
+        f"{nft_notice()}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"🔗 {NFT_CHANNEL} kanalini ochish",
+                url=f"https://t.me/{NFT_CHANNEL.lstrip('@')}",
+                style="primary",
+            )],
+            [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:buy", style="danger")],
+        ]),
+    )
+
+
+@router.message(F.text == "NFT Gift Ijarasi")
+async def nft_text(message: Message, state: FSMContext):
+    await nft_start(message, state)
+
+
+# =============================================================================
 # 16b. ASOSIY MENYU CALLBACK
 # =============================================================================
 @router.callback_query(F.data.startswith("m:"))
@@ -4839,6 +4886,7 @@ async def main_menu_callback(call: CallbackQuery, state: FSMContext, bot: Bot, d
         "sell": lambda: sell_start(msg, state),
         "premium": lambda: msg.answer("💎 Premium bo'limi"),
         "gifts": lambda: gifts_start(msg, state),
+        "nft": lambda: nft_start(msg, state),
         "topup": lambda: topup_start(msg, state, db_user),
         "ref": lambda: show_referral(msg, state, bot, db_user),
         "profile": lambda: show_profile(msg, state, db_user),
