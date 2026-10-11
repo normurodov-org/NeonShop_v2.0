@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, GiftItem } from '../types';
 import { Gift, Star, Send, AlertCircle, ArrowRight, UserCheck } from 'lucide-react';
+import AEmoji from './AEmoji';
 
 interface GiftsTabProps {
   user: User | null;
@@ -79,8 +80,8 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
       {/* Banner */}
       <div className="rounded-2xl bg-gradient-to-r from-pink-500/15 via-purple-500/15 to-indigo-500/15 border border-pink-500/20 p-5">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-pink-500/20 border border-pink-500/30 flex items-center justify-center text-pink-300 text-2xl shrink-0">
-            🎁
+          <div className="w-12 h-12 rounded-2xl bg-pink-500/20 border border-pink-500/30 flex items-center justify-center shrink-0">
+            <AEmoji char="🎁" size={26} anim="bounce" label="Sovg'a" />
           </div>
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
@@ -143,7 +144,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                 </span>
               )}
               <div className="text-4xl my-2 transform transition-transform hover:scale-110">
-                {item.emoji}
+                <AEmoji char={item.emoji} size={26} anim="float" label={item.name} />
               </div>
               <div className="font-bold text-white text-xs mt-1">{item.name}</div>
               <div className="flex items-center gap-1 text-[11px] text-amber-400 font-semibold mt-1">
@@ -161,7 +162,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
       {/* Selected summary */}
       <div className="rounded-2xl bg-slate-950/90 border border-white/10 p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span className="text-3xl">{selectedGift.emoji}</span>
+          <AEmoji char={selectedGift.emoji} size={34} anim="pulse" label={selectedGift.name} />
           <div>
             <div className="text-xs text-slate-400">Tanlangan sovg'a:</div>
             <div className="text-base font-extrabold text-white">
@@ -199,7 +200,8 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
               <>
                 <Send className="w-4 h-4" />
                 <span>
-                  🔴 {selectedGift.emoji} {selectedGift.name} yuborish ({selectedGift.priceUzs.toLocaleString()} UZS)
+                  🔴 <AEmoji char={selectedGift.emoji} size={16} anim="none" label={selectedGift.name} />{' '}
+                  {selectedGift.name} yuborish ({selectedGift.priceUzs.toLocaleString()} UZS)
                 </span>
               </>
             )}

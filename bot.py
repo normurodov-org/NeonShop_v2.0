@@ -1611,7 +1611,9 @@ def main_menu_kb(user: dict) -> InlineKeyboardMarkup:
     """Asosiy menyu — Rasm 1 dagi ranglar va ko'rinish bilan."""
     def b(text: str, action: str, style: Optional[str] = None) -> InlineKeyboardButton:
         st = style or MENU_STYLES.get(f"m:{action}")
-        return InlineKeyboardButton(text=text, callback_data=f"m:{action}", style=st)
+        # make_button matndagi oddiy emojini olib, o'rniga animatsiyalangan
+        # premium emoji ikonkasini qo'yadi (Telegram Bot API 9.0+)
+        return make_button(text, callback_data=f"m:{action}", style=st)
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1619,9 +1621,9 @@ def main_menu_kb(user: dict) -> InlineKeyboardMarkup:
             [b("💸 Stars sotish", "sell", "primary"), b("💎 Premium", "premium", "primary")],
             [b("🎁 Giftlar", "gifts", "danger")],
             [b("💳 Balans to'ldirish", "topup", "success"), b("👥 Referal", "ref", "primary")],
-            [InlineKeyboardButton(text="📱 Web App ❐", web_app=WebAppInfo(url=build_webapp_url(user)), style="primary")],
+            [make_button("📱 Web App ❐", web_app=WebAppInfo(url=build_webapp_url(user)), style="primary")],
             [b("👤 Profil", "profile"), b("📜 Tarix", "history")],
-            [InlineKeyboardButton(text="💬 Support", url=f"https://t.me/{SUPPORT_USERNAME}", style="danger")],
+            [make_button("💬 Support", url=f"https://t.me/{SUPPORT_USERNAME}", style="danger")],
         ]
     )
 
@@ -1775,6 +1777,177 @@ async def send_main_menu(message: Message, user: dict, text: Optional[str] = Non
         reply_markup=main_menu_kb(user),
         disable_web_page_preview=True,
     )
+
+
+# =============================================================================
+# TUGMALARDAGI PREMIUM (ANIMATSIYALANGAN) EMOJILAR
+# -----------------------------------------------------------------------------
+# Telegram Bot API 9.0+ da `icon_custom_emoji_id` maydoni qo'shildi —
+# endi tugma belgisida ANIMATSIYALANGAN premium emoji chiqadi
+# (oddiy matn emojisi emas).
+#
+# Muhim: bu maydon Telegram'da (bot ichida) ishlaydi, WebApp brauzerida emas.
+# WebApp uchun alohida animatsiya tizimi bor (src/components/AEmoji.tsx).
+#
+# Xavfsizlik: Telegram yangi maydonni qabul qilmasa yoki ID noto'g'ri
+# bo'lsa, xabar yuborilmaydi. Shuning uchun barcha tugmalar avval
+# premium ikonka bilan yuboriladi, xato bo'lsa — oddiy matnli variant
+# bilan qayta yuboriladi (SafeIconMiddleware).
+# =============================================================================
+from premium_emoji import PREMIUM_EMOJI
+
+# Tugma matni → premium emoji belgisi
+MENU_EMOJI: dict[str, str] = {
+    "Stars sotib olish": "⭐",   # yulduz
+    "Stars sotish": "💸",        # pul uchqun
+    "Premium": "💎",             # olmos
+    "Giftlar": "🎁",             # sovg'a
+    "Balans to'ldirish": "💳",   # karta
+    "Referal": "👥",             # odamlar
+    "Web App": "🌐",             # global tarmoq
+    "Web App ❐": "🌐",
+    "Profil": "👤",              # odam
+    "Tarix": "📜",               # hujjat
+    "Support": "🆘",             # yordam
+}
+
+
+def _icon_to_emoji() -> dict[str, str]:
+    """ID → emoji (faqat MENU_EMOJI orqali, aniq moslik)."""
+    out: dict[str, str] = {}
+    for label, ch in MENU_EMOJI.items():
+        eid = PREMIUM_EMOJI.get(ch)
+        if eid:
+            out[str(eid)] = ch
+    return out
+
+
+ICON_TO_EMOJI: dict[str, str] = {}
+
+
+def premium_icon(text: str) -> Optional[str]:
+    """Tugma matnidan premium emoji ID'sini oladi (yo'q bo'lsa None)."""
+    clean = strip_leading_emoji(text)
+    key = clean if clean in MENU_EMOJI else text.strip()
+    ch = MENU_EMOJI.get(key)
+    if not ch:
+        return None
+    eid = PREMIUM_EMOJI.get(ch)
+    return str(eid) if eid else None
+
+
+def strip_leading_emoji(text: str) -> str:
+    """Matn boshidagi emojini olib tashlaydi (premium ikonkasi bilan almashtirish uchun)."""
+    import re as _re
+    return _re.sub(r"^[\U0001F000-\U0001FAFF☀-➿⬀-⯿️]+\s*", "", text or "").strip()
+
+
+def make_button(text: str, **kwargs: Any) -> InlineKeyboardButton:
+    """Premium emoji ikonkasi bilan tugma yaratadi.
+
+    `icon_custom_emoji_id` beriladi va matndagi oddiy emoji olib tashlanadi
+    (Telegram ikonkani o'zi ko'rsatadi). Telegram qabul qilmasa —
+    SafeIconMiddleware oddiy variantga qaytaradi.
+    """
+    icon = premium_icon(text)
+    if icon:
+        return InlineKeyboardButton(
+            text=strip_leading_emoji(text),
+            icon_custom_emoji_id=icon,
+            **kwargs,
+        )
+    return InlineKeyboardButton(text=text, **kwargs)
+
+
+ICON_TO_EMOJI.update(_icon_to_emoji())
+
+
+class SafeIconMiddleware(BaseRequestMiddleware):
+    """`icon_custom_emoji_id` qabul qilinmasa — oddiy tugma bilan qayta yuboradi.
+
+    Telegram/API versiyasi yangi maydonni qo'llamasa yoki emoji ID
+    noto'g'ri bo'lsa, butun bot ishlashini to'xtatmasligi kerak —
+    shuning uchun xatoda ikonkalar olib tashlanib, matn emojilari
+    tiklanib, xabar qayta yuboriladi.
+    """
+
+    _methods = (SendMessage, EditMessageText, SendPhoto, EditMessageCaption)
+
+    @staticmethod
+    def _strip(method: Any) -> Any:
+        """Tugmalardan ikonkalarni olib, matn emojilarini tiklaydi."""
+        markup = getattr(method, "reply_markup", None)
+        if markup is None:
+            return method
+
+        def fix_markup(mk: Any) -> Any:
+            rows = []
+            changed = False
+            for row in getattr(mk, "inline_keyboard", []) or []:
+                new_row = []
+                for btn in row:
+                    icon = getattr(btn, "icon_custom_emoji_id", None)
+                    if icon:
+                        changed = True
+                        ch = ICON_TO_EMOJI.get(str(icon), "⭐")
+                        # emoji matnning boshiga qaytamiz
+                        new_txt = f"{ch} {btn.text}".strip() if ch not in (btn.text or "") \
+                            else btn.text
+                        data = btn.model_dump(exclude={"icon_custom_emoji_id", "text"})
+                        new_row.append(InlineKeyboardButton(**data, text=new_txt))
+                    else:
+                        new_row.append(btn)
+                rows.append(new_row)
+            if not changed:
+                return mk
+            return markup.__class__(inline_keyboard=rows)
+
+        if hasattr(markup, "inline_keyboard"):
+            return method.model_copy(update={"reply_markup": fix_markup(markup)})
+
+        def fix_reply(mk: Any) -> Any:
+            rows = []
+            changed = False
+            for row in getattr(mk, "keyboard", []) or []:
+                new_row = []
+                for btn in row:
+                    icon = getattr(btn, "icon_custom_emoji_id", None)
+                    if icon:
+                        changed = True
+                        ch = ICON_TO_EMOJI.get(str(icon), "⭐")
+                        new_txt = f"{ch} {btn.text}".strip() if ch not in (btn.text or "") \
+                            else btn.text
+                        data = btn.model_dump(exclude={"icon_custom_emoji_id", "text"})
+                        new_row.append(KeyboardButton(**data, text=new_txt))
+                    else:
+                        new_row.append(btn)
+                rows.append(new_row)
+            if not changed:
+                return mk
+            return markup.__class__(keyboard=rows, resize_keyboard=getattr(mk, "resize_keyboard", None),
+                                   one_time_keyboard=getattr(mk, "one_time_keyboard", None),
+                                   input_field_placeholder=getattr(mk, "input_field_placeholder", None),
+                                   selective=getattr(mk, "selective", None))
+
+        if hasattr(markup, "keyboard"):
+            return method.model_copy(update={"reply_markup": fix_reply(markup)})
+        return method
+
+    async def __call__(self, make_request, bot_: Bot, method):  # type: ignore[override]
+        if not isinstance(method, self._methods):
+            return await make_request(bot_, method)
+        markup = getattr(method, "reply_markup", None)
+        has_icon = markup is not None and "icon_custom_emoji_id" in str(
+            getattr(markup, "model_dump_json", lambda: "")()
+        )
+        try:
+            return await make_request(bot_, method)
+        except Exception as exc:  # noqa: BLE001
+            if not has_icon:
+                raise
+            log.warning("Premium emoji ikonkalari qabul qilinmadi, oddiy variantga qaytamiz: %s",
+                        str(exc)[:120])
+            return await make_request(bot_, self._strip(method))
 
 
 # =============================================================================
@@ -4405,6 +4578,8 @@ async def main() -> None:
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     bot.session.middleware(StyledButtonsMiddleware())
     bot.session.middleware(PremiumEmojiMiddleware())
+    # Premium emoji ikonkalari qabul qilinmasa — oddiy variantga qaytadi
+    bot.session.middleware(SafeIconMiddleware())
     dp = Dispatcher(storage=MemoryStorage())
     DP = dp
 

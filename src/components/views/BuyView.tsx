@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, StoreSettings, Order, UsdtRate } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check, Wallet } from 'lucide-react';
+import AEmoji from '../AEmoji';
 
 interface BuyViewProps {
   user: User | null;
@@ -138,14 +139,15 @@ export const BuyView: React.FC<BuyViewProps> = ({
     ],
   };
 
+  // emoji alohida saqlanadi — animatsiyalangan ko'rinish uchun
   const giftsList = [
-    { key: 'bear', name: '🧸 Ayiqcha', stars: 15, price: 3000 },
-    { key: 'heart', name: '💝 Yurakcha', stars: 15, price: 3000 },
-    { key: 'rose', name: '🌹 Atirgul', stars: 25, price: 6000 },
-    { key: 'cake', name: '🎂 Tort', stars: 50, price: 10000 },
-    { key: 'rocket', name: '🚀 Raketa', stars: 50, price: 10000 },
-    { key: 'cup', name: '🏆 Kubok', stars: 100, price: 20000 },
-    { key: 'diamond', name: '💎 Olmos', stars: 100, price: 20000 },
+    { key: 'bear', name: 'Ayiqcha', emoji: '🧸', stars: 15, price: 3000 },
+    { key: 'heart', name: 'Yurakcha', emoji: '💝', stars: 15, price: 3000 },
+    { key: 'rose', name: 'Atirgul', emoji: '🌹', stars: 25, price: 6000 },
+    { key: 'cake', name: 'Tort', emoji: '🎂', stars: 50, price: 10000 },
+    { key: 'rocket', name: 'Raketa', emoji: '🚀', stars: 50, price: 10000 },
+    { key: 'cup', name: 'Kubok', emoji: '🏆', stars: 100, price: 20000 },
+    { key: 'diamond', name: 'Olmos', emoji: '💎', stars: 100, price: 20000 },
   ];
 
   // Calculate current price
@@ -512,9 +514,13 @@ export const BuyView: React.FC<BuyViewProps> = ({
                 }`}
               >
                 <div>
-                  <div className="text-xs font-bold">{g.name}</div>
-                  <div className="text-[10px] opacity-70 font-mono mt-0.5">
-                    {g.stars} ⭐
+                  <div className="text-xs font-bold flex items-center gap-1.5">
+                    <AEmoji char={g.emoji} size={16} anim="float" label={g.name} />
+                    {g.name}
+                  </div>
+                  <div className="text-[10px] opacity-70 font-mono mt-0.5 flex items-center gap-1">
+                    {g.stars}
+                    <AEmoji char="⭐" size={12} anim="shine" label="Stars" />
                   </div>
                 </div>
                 <div className="text-xs font-mono font-bold">

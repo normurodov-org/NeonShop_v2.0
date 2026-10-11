@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User, StoreSettings, Order } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { Shield, Plus, Users, Globe, Headphones, Settings, Copy, Check, ChevronRight, Sparkles, Star, Sun, Moon } from 'lucide-react';
+import AEmoji from '../AEmoji';
 
 interface ProfileViewProps {
   user: User | null;
@@ -77,7 +78,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
               </div>
               <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
-                <span className="text-[10px] text-neutral-400">⭐ Stars</span>
+                <span className="text-[10px] text-neutral-400 flex items-center gap-1">
+                  <AEmoji char="⭐" size={11} anim="shine" label="Stars" /> Stars
+                </span>
                 <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                   {user?.ref_stars ?? 0}
                 </div>

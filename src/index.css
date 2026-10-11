@@ -434,3 +434,86 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* =============================================================================
+   AEmoji — animatsiyalangan emoji (Telegram premium ko'rinishi)
+   -----------------------------------------------------------------------------
+   Telegram'dagi premium (custom) emoji faqat Telegram ilovalarida chiziladi,
+   brauzerda esa yo'q. Bu tizim shu effektni WebApp'da takrorlaydi:
+   Twemoji SVG (Telegram bilan bir xil ko'rinish) + CSS animatsiya.
+   ============================================================================= */
+
+.aemoji {
+  display: inline-block;
+  vertical-align: -0.18em;
+  user-select: none;
+  pointer-events: none;
+  will-change: transform, filter;
+}
+
+.aemoji--img {
+  object-fit: contain;
+  /* Liquid Glass uslubi: yumshoq soya va chetlari */
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.16));
+}
+
+.dark .aemoji--img,
+[data-theme='dark'] .aemoji--img {
+  filter: drop-shadow(0 1px 3px rgb(0 0 0 / 0.5));
+}
+
+/* Zaxira holat: rasm yuklanmaganda oddiy emoji. Uni ham jonlantiramiz */
+.aemoji--fallback {
+  text-align: center;
+}
+
+/* --- 1. Suzish (eng ko'p ishlatiladi) ---------------------------------------- */
+@keyframes aeFloat {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%      { transform: translateY(-3px) rotate(-2deg); }
+}
+.aemoji--float { animation: aeFloat 2.8s ease-in-out infinite; }
+
+/* --- 2. Pulsatsiya ------------------------------------------------------------ */
+@keyframes aePulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.16); }
+}
+.aemoji--pulse { animation: aePulse 1.6s ease-in-out infinite; }
+
+/* --- 3. Yaltirash (liquid sheen) --------------------------------------------- */
+@keyframes aeShine {
+  0%, 100% { filter: drop-shadow(0 1px 2px rgb(0 0 0 / .16)) brightness(1); }
+  50%      { filter: drop-shadow(0 0 8px rgb(255 255 255 / .55)) brightness(1.22); }
+}
+.aemoji--shine { animation: aeShine 2.4s ease-in-out infinite; }
+
+/* --- 4. Sakrash --------------------------------------------------------------- */
+@keyframes aeBounce {
+  0%, 100% { transform: translateY(0); }
+  30%      { transform: translateY(-7px); }
+  55%      { transform: translateY(0); }
+  70%      { transform: translateY(-3px); }
+}
+.aemoji--bounce { animation: aeBounce 1.9s cubic-bezier(.34, 1.56, .64, 1) infinite; }
+
+/* --- 5. Aylanish -------------------------------------------------------------- */
+@keyframes aeSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.aemoji--spin { animation: aeSpin 4.5s linear infinite; }
+
+/* --- 6. Tebranish ------------------------------------------------------------- */
+@keyframes aeSwing {
+  0%, 100% { transform: rotate(-7deg); }
+  50%      { transform: rotate(7deg); }
+}
+.aemoji--swing { animation: aeSwing 1.4s ease-in-out infinite; }
+
+.aemoji--none { animation: none; }
+
+/* Harakatni kamaytirish ustuni — accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .aemoji { animation: none !important; }
+}
