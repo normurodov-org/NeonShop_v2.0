@@ -62,6 +62,39 @@ function currentSnapshot() {
   };
 }
 
+/**
+ * Eski versiyalarda settings ga SOXTA statistika yozilgan edi
+ * (14 280 foydalanuvchi / 8 740 buyurtma / 485 000 000 UZS).
+ * Ular bazaga allaqachon saqlangan bo'lgani uchun kodni o'zgartirish
+ * o'zi yetarli emas — ularni tozalashimiz kerak.
+ *
+ * Shu bilan birga bot.py ham `total_users + store.users.size` qilib
+ * hisoblagan — ya'ni raqam ikki marta qo'shilardi.
+ */
+const LEGACY_FAKE_STATS: Record<string, number> = {
+  total_users: 14280,
+  total_orders: 8740,
+  total_volume_uzs: 485000000,
+};
+
+function migrateLegacyFakeStats() {
+  let changed = false;
+  for (const [key, fake] of Object.entries(LEGACY_FAKE_STATS)) {
+    if (Number(store.settings?.[key]) === fake) {
+      console.warn(`[migrate] soxta statistika tozalandi: ${key} = ${fake} -> 0`);
+      (store.settings as any)[key] = 0;
+      changed = true;
+    }
+  }
+  if (changed) {
+    try {
+      syncAndSaveDb();
+    } catch (e) {
+      console.error('[migrate] saqlashda xato:', e);
+    }
+  }
+}
+
 export function syncAndSaveDb() {
   let fresh: any;
   try {
@@ -122,8 +155,30 @@ export function syncAndSaveDb() {
 
 // Boshlang'ich holatni "o'zgartirilmagan" deb belgilaymiz
 lastSynced = clone(currentSnapshot());
+migrateLegacyFakeStats();
 
 const DEFAULT_USER_ID = 8307046273;
+
+/**
+ * Konkurs faqat admin yaratgan va hali muddati tugamagan bo'lsa faol.
+ *
+ * Himoya: eski/demo konkurs (active=true, lekin end_at o'tgan) hech qachon
+ * ko'rinmasligi kerak — aks holda "Hali konkurs yo'q" o'rniga o'lik
+ * konkurs ko'rinib turadi va "3 kun qoldi" yozib turadi.
+ */
+/** Qiymat berilgan bo'lsa uni ishlatadi (0 ham to'g'ri qiymat), aks holda zaxira. */
+function numOr(v: any, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) && v !== undefined && v !== null && v !== '' ? n : fallback;
+}
+
+function contestIsActive(c: any): boolean {
+  if (!c || !c.active) return false;
+  if ((c.prize_stars ?? 0) <= 0) return false;
+  const end = c.end_at ? Date.parse(c.end_at) : NaN;
+  if (!Number.isNaN(end) && end < Date.now()) return false;
+  return true;
+}
 
 function getUser(req?: Request, defaultId = DEFAULT_USER_ID) {
   // Always refresh latest state from /data/users_db.json so data matches bot 1:1
@@ -268,7 +323,7 @@ app.get('/api/me', async (req: Request, res: Response) => {
     history: userOrders,
     contest: {
       ...store.contest,
-      active: Boolean(store.contest.active) && (store.contest.prize_stars ?? 0) > 0,
+      active: contestIsActive(store.contest),
       joined: Array.isArray(store.contest.participants)
         ? store.contest.participants.includes(user.id)
         : false,
@@ -412,7 +467,7 @@ app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
 
 app.post('/api/order', async (req: Request, res: Response) => {
   const user = getUser(req);
-  const { kind, amount, months, gift, username } = req.body;
+  const { kind, amount, months, gift, username, hide_my_name } = req.body;
 
   let price = 0;
   let title = '';
@@ -550,6 +605,8 @@ app.post('/api/order', async (req: Request, res: Response) => {
     amount: amount || months || 1,
     stars: kind === 'stars' ? Number(amount) : undefined,
     gift: kind === 'gift' ? gift : undefined,
+    // Sovg'ani anonim yuborish: true -> yuboruvchining profili ko'rinmaydi
+    hide_my_name: kind === 'gift' ? Boolean(hide_my_name) : undefined,
     status: orderStatus,
     source: 'webapp',
     payment_method: 'usdt_ton',
@@ -609,7 +666,7 @@ app.get('/api/ranking', (req: Request, res: Response) => {  const currentUser = 
     userStats.set(u.id, {
       user: u,
       ordersCount: 0,
-      totalSpent: cutoffMs ? 0 : (u.total_spent || 0),
+      totalSpent: cutoffMs ? 0 : (Number(u.total_spent) || 0),
     });
   }
 
@@ -619,7 +676,7 @@ app.get('/api/ranking', (req: Request, res: Response) => {  const currentUser = 
       const existing = userStats.get(ord.user_id);
       if (existing) {
         existing.ordersCount += 1;
-        const ordPrice = ord.price ?? ord.price_uzs ?? 0;
+        const ordPrice = orderPrice(ord);
         if (cutoffMs || !existing.totalSpent) {
           existing.totalSpent += ordPrice;
         }
@@ -645,7 +702,11 @@ app.get('/api/ranking', (req: Request, res: Response) => {  const currentUser = 
 
   const myIndex = leaders.findIndex((l) => l.isMe);
   const myRank = myIndex !== -1 ? myIndex + 1 : (currentUser.total_spent > 0 ? leaders.length + 1 : null);
-  const mySpent = cutoffMs ? allOrders.filter((o) => o.user_id === currentUser.id).reduce((s, o) => s + o.price, 0) : (currentUser.total_spent || 0);
+  const mySpent = cutoffMs
+    ? allOrders
+        .filter((o) => o.user_id === currentUser.id)
+        .reduce((sum, o) => sum + orderPrice(o), 0)
+    : Number(currentUser.total_spent) || 0;
   const myOrders = allOrders.filter((o) => o.user_id === currentUser.id).length;
 
   res.json({
@@ -660,6 +721,15 @@ app.get('/api/ranking', (req: Request, res: Response) => {  const currentUser = 
   });
 });
 
+// Buyurtma narxini xavfsiz olish: price/price_uzs yo'q bo'lsa yoki
+// noto'g'ri turdagi bo'lsa 0 qaytaradi. Aks holda `s + undefined` -> NaN ->
+// JSON'da null -> frontend `null.toLocaleString()` bilan BUTUN EKRANNI
+// oq qilib qoldiradi (Reyting bo'limi "Bugun/3 kunlik"da shunday bo'lardi).
+function orderPrice(ord: any): number {
+  const raw = Number(ord?.price ?? ord?.price_uzs ?? 0);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
 // Resolve Telegram username into live display name and photo
 app.get('/api/resolve-user', async (req: Request, res: Response) => {
   const rawUsername = (req.query.username as string || '').replace('@', '').trim();
@@ -671,7 +741,10 @@ app.get('/api/resolve-user', async (req: Request, res: Response) => {
   const local = Array.from(store.users.values()).find(
     (u) => u.username && u.username.toLowerCase() === rawUsername.toLowerCase()
   );
-  if (local) {
+  // DIQQAT: baza yozuvi bor, lekin profil rasmi yo'q bo'lsa darhol
+  // qaytarib yubonmasak — foydalanuvchi bo'sh (sariq) doirani ko'radi.
+  // Bunday holatda quyidagi t.me dan haqiqiy ism/rasm olinadi.
+  if (local && local.photo_url) {
     return res.json({
       ok: true,
       user: {
@@ -679,7 +752,8 @@ app.get('/api/resolve-user', async (req: Request, res: Response) => {
         username: local.username,
         display_name: local.first_name || `@${local.username}`,
         first_name: local.first_name,
-        photo_url: local.photo_url || `https://t.me/i/userpic/320/${local.username}.jpg`,
+        photo_url: local.photo_url,
+        from_bot: true,
       },
     });
   }
@@ -701,12 +775,20 @@ app.get('/api/resolve-user', async (req: Request, res: Response) => {
       const title = ogTitleMatch ? ogTitleMatch[1].replace('Telegram: Contact ', '').trim() : rawUsername;
       const photo = ogImageMatch && !ogImageMatch[1].includes('telegram-logo') ? ogImageMatch[1] : undefined;
 
+      // Botda ro'yxatdan o'tmagan foydalanuvchi ham shu yerda
+      // ism/rasm oladi — botga kirish shart emas.
       return res.json({
         ok: true,
         user: {
+          id: local?.id,
           username: rawUsername,
-          display_name: title || rawUsername,
-          photo_url: photo || `https://t.me/i/userpic/320/${rawUsername}.jpg`,
+          display_name: local?.first_name || title || `@${rawUsername}`,
+          first_name: local?.first_name || title,
+          // rasm topilmasa — Telegram'ning standart avatarini qo'yamiz
+          // (bo'sh rasm emas, har doim ko'rinadigan doira)
+          photo_url: photo || (local ? '' : ''),
+          avatar_fallback: true,
+          from_bot: Boolean(local),
           extra: extraMatch ? extraMatch[1].trim() : undefined,
         },
       });
@@ -715,12 +797,18 @@ app.get('/api/resolve-user', async (req: Request, res: Response) => {
     // Ignore fetch error
   }
 
+  // Butunlay topilmasa — username'ni ko'rsatamiz, rasm o'rniga
+  // initial harfli avatar (frontend chizadi). Bo'sh/buzilgan rasm YO'Q.
   return res.json({
     ok: true,
     user: {
+      id: local?.id,
       username: rawUsername,
-      display_name: `@${rawUsername}`,
-      photo_url: `https://t.me/i/userpic/320/${rawUsername}.jpg`,
+      display_name: local?.first_name || `@${rawUsername}`,
+      first_name: local?.first_name,
+      photo_url: '',
+      avatar_fallback: true,
+      from_bot: Boolean(local),
     },
   });
 });
@@ -960,12 +1048,15 @@ app.post('/api/admin/contest', (req: Request, res: Response) => {
     ...store.contest,
     id: (active === false ? store.contest.id : 'c_' + Math.random().toString(36).slice(2, 9)),
     text: typeof text === 'string' && text.trim() ? text.trim() : store.contest.text,
-    prize_stars: Number(prize_stars) || store.contest.prize_stars || 0,
-    winners: Number(winners) || store.contest.winners || 1,
-    min: Number(min) || store.contest.min || 0,
-    ends_in: Number(days) ? Number(days) * 86400 : store.contest.ends_in,
-    end_at: Number(days)
-      ? new Date(Date.now() + Number(days) * 86400000).toISOString()
+    // DIQQAT: `Number(x) || eski` ishlatib bo'lmaydi — 0 falsy bo'lgani uchun
+    // admin narxni/yutuvchilar sonini 0 ga tushira olmasdi.
+    // Number.isFinite orqali "qiymat berilganmi?" aniq aniqlanadi.
+    prize_stars: numOr(prize_stars, store.contest.prize_stars ?? 0),
+    winners: numOr(winners, store.contest.winners ?? 1),
+    min: numOr(min, store.contest.min ?? 0),
+    ends_in: numOr(days, 0) ? numOr(days, 0) * 86400 : store.contest.ends_in,
+    end_at: numOr(days, 0)
+      ? new Date(Date.now() + numOr(days, 0) * 86400000).toISOString()
       : store.contest.end_at,
     active: active === false ? false : active === true ? true : store.contest.active,
   };
@@ -1034,11 +1125,23 @@ app.post('/api/referral/withdraw', (req: Request, res: Response) => {
 // Admin endpoints
 app.post('/api/admin/login', (req: Request, res: Response) => {
   const { password } = req.body;
-  const adminPass = process.env.ADMIN_PASSWORD || 'neon2025';
-  if (password === adminPass || password === 'admin' || password === 'neon2025') {
+  const adminPass = (process.env.ADMIN_PASSWORD || '').trim();
+
+  // Xavfsizlik: avvalgi versiyalarda "neon2025" va "admin" kodlari kod ichida
+  // yozilgan edi — endi FAQAT Railway Variables dagi ADMIN_PASSWORD ishlaydi.
+  // ENV yo'q bo'lsa kirish umuman yopiladi (tuzatilmaydigan zaiflik emas).
+  if (!adminPass) {
+    console.error('ADMIN_PASSWORD o‘zgaruvchisi yo‘q — admin panel kirishi yopilgan');
+    return res.status(503).json({
+      ok: false,
+      error: 'Admin paroli sozlanmagan. Railway Variables ga ADMIN_PASSWORD qo‘shing.',
+    });
+  }
+
+  if (password === adminPass) {
     return res.json({ ok: true, token: 'neon_admin_token_' + Date.now() });
   }
-  res.status(401).json({ ok: false, error: "Noto'g'ri admin paroli." });
+  res.status(401).json({ ok: false, error: 'Noto‘g‘ri admin paroli.' });
 });
 
 app.get('/api/admin/data', (req: Request, res: Response) => {
@@ -1054,10 +1157,13 @@ app.get('/api/admin/data', (req: Request, res: Response) => {
     ok: true,
     settings: store.settings,
     stats: {
-      totalUsers: users.length + store.settings.total_users,
-      totalOrders: orders.length + store.settings.total_orders,
-      totalVolume: store.settings.total_volume_uzs,
-      activeContests: 1,
+      // DIQQAT: eski kod `users.length + settings.total_users` qilardi —
+      // settings'dagi SOXTA qiymat ham qo'shilardi (va haqiqiy hisob
+      // ikki marta hisoblanardi). Endi FAQAT haqiqiy ma'lumot.
+      totalUsers: users.length,
+      totalOrders: orders.length,
+      totalVolume: Number(store.settings.total_volume_uzs) || 0,
+      activeContests: contestIsActive(store.contest) ? 1 : 0,
     },
     orders: orders.slice(0, 50),
     topups: topups.slice(0, 50),
@@ -1236,8 +1342,8 @@ app.post('/api/bot/chat', (req: Request, res: Response) => {
   } else if (text === 'admin' || text === '/admin') {
     botReply = `🔐 <b>Admin paneliga xush kelibsiz!</b>\n\n` +
       `Bot holati: <b>${store.settings.bot_active ? '🟢 Faol' : '🔴 To\'xtatilgan'}</b>\n` +
-      `Jami foydalanuvchilar: <b>${(store.settings.total_users + store.users.size).toLocaleString()}</b>\n` +
-      `Jami buyurtmalar: <b>${(store.settings.total_orders + store.orders.size).toLocaleString()}</b>\n` +
+      `Jami foydalanuvchilar: <b>${store.users.size.toLocaleString()}</b>\n` +
+      `Jami buyurtmalar: <b>${store.orders.size.toLocaleString()}</b>\n` +
       `Jami aylanma: <b>${store.settings.total_volume_uzs.toLocaleString()} UZS</b>\n\n` +
       `Admin buyruqlari quyida:`;
     inlineKeyboard = [

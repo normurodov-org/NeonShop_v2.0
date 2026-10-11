@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, StoreSettings, Topup } from '../../types';
 import { Lang, translations } from '../../i18n';
-import { CreditCard, Copy, Check, Clock, Plus, History, AlertCircle, RefreshCw } from 'lucide-react';
+import { CreditCard, Copy, Check, Clock, Plus, History, AlertCircle, RefreshCw, X } from 'lucide-react';
 
 interface TopupViewProps {
   user: User | null;
@@ -11,6 +11,7 @@ interface TopupViewProps {
   activeTopup: Topup | null;
   onTopupCreated: (t: Topup) => void;
   onTopupSuccess: (newBalance: number, msg: string) => void;
+  onTopupCancelled: () => void;
   onOpenHistory: () => void;
 }
 
@@ -22,6 +23,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
   activeTopup,
   onTopupCreated,
   onTopupSuccess,
+  onTopupCancelled,
   onOpenHistory,
 }) => {
   const t = translations[lang];
@@ -109,6 +111,30 @@ export const TopupView: React.FC<TopupViewProps> = ({
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // To'lov so'rovini bekor qilish (mijoz xato summani tanlagan bo'lsa)
+  const handleCancel = async () => {
+    if (!activeTopup) return;
+    setSimulating(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/topup/cancel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-telegram-user-id': user?.id?.toString() || '',
+        },
+        body: JSON.stringify({ id: activeTopup.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Bekor qilindi');
+      onTopupCancelled();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSimulating(false);
     }
   };
 
@@ -212,9 +238,33 @@ export const TopupView: React.FC<TopupViewProps> = ({
               isDark ? 'bg-white text-black hover:bg-neutral-100' : 'bg-black text-white hover:bg-neutral-800'
             }`}
           >
-            {simulating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
             <span>To'lovni tekshirish / Tasdiqlash</span>
           </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSimulatePayment}
+              disabled={simulating}
+              className={`flex-1 py-3.5 rounded-[18px] font-semibold text-xs flex items-center justify-center gap-2 apple-spring cursor-pointer ${
+                isDark ? 'bg-white text-black hover:bg-neutral-100' : 'bg-black text-white hover:bg-neutral-800'
+              }`}
+            >
+              {simulating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              <span>To'lovni tekshirish</span>
+            </button>
+            <button
+              onClick={handleCancel}
+              disabled={simulating}
+              className={`py-3.5 px-5 rounded-[18px] font-semibold text-xs flex items-center justify-center gap-1.5 apple-spring cursor-pointer ${
+                isDark
+                  ? 'bg-white/10 text-white/80 hover:bg-white/15 border border-white/10'
+                  : 'bg-black/5 text-neutral-700 hover:bg-black/10 border border-black/5'
+              }`}
+            >
+              <X className="w-4 h-4" />
+              <span>Bekor qilish</span>
+            </button>
+          </div>
         </div>
       )}
 

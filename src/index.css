@@ -374,13 +374,22 @@
 /* ============================================================
    TOAST & SHEET
    ============================================================ */
+/* DIQQAT: bu animatsiyada translateX(-50%) YO'Q.
+   Markazlashni konteyner (inset-x-0 + flex justify-center) qiladi —
+   ikkalasi birga ishlatilsa, toast ikki marta chapga surilib ekrandan
+   chiqib ketardi. */
 @keyframes toastIn {
-  0% { opacity: 0; transform: translate(-50%, -18px) scale(0.9); }
-  60% { opacity: 1; transform: translate(-50%, 3px) scale(1.03); }
-  100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  0%   { opacity: 0; transform: translateY(-18px) scale(0.9); }
+  60%  { opacity: 1; transform: translateY(3px) scale(1.03); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toastOut {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-14px) scale(0.94); }
 }
 .toast-in {
   animation: toastIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity;
 }
 
 @keyframes sheetUp {

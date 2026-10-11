@@ -55,7 +55,17 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
         if (isMounted && data.ok) {
           setLeaders(data.leaders || []);
           if (data.myRanking) {
-            setMyRanking(data.myRanking);
+            // DIQQAT: server eski versiyalarda `amount: null` qaytarardi
+            // (price yo'q bo'lgan buyurtmalar) — bu yerda crash qilib
+            // butun ekranni oq qilib qoldirardi. Endi himoyalangan.
+            const mr = data.myRanking;
+            const amt = Number(mr.amount);
+            setMyRanking({
+              rank: typeof mr.rank === 'number' ? mr.rank : null,
+              orders: Number(mr.orders) || 0,
+              amount: Number.isFinite(amt) ? amt : 0,
+              inTop10: Boolean(mr.inTop10),
+            });
           }
         }
       } catch (e) {
@@ -207,7 +217,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                   </span>
                   <span className="text-[10px] text-neutral-400">{leaders[1].orders} {t.orders}</span>
                   <div className="w-full h-18 mt-2 rounded-t-[18px] liquid-glass flex items-center justify-center font-mono font-bold text-xs">
-                    {(leaders[1].amount / 1000).toFixed(0)}K
+                    {((Number(leaders[1].amount) || 0) / 1000).toFixed(0)}K
                   </div>
                 </div>
               ) : (
@@ -230,7 +240,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                   </span>
                   <span className="text-[10px] text-neutral-400">{leaders[0].orders} {t.orders}</span>
                   <div className="w-full h-26 mt-2 rounded-t-[20px] liquid-glass-card flex items-center justify-center font-mono font-bold text-sm">
-                    {(leaders[0].amount / 1000).toFixed(0)}K
+                    {((Number(leaders[0].amount) || 0) / 1000).toFixed(0)}K
                   </div>
                 </div>
               )}
@@ -288,7 +298,8 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                     </div>
                   </div>
                   <div className={`text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                    {item.amount.toLocaleString()} <span className="text-[9px] font-normal opacity-70">UZS</span>
+                    {(Number(item.amount) || 0).toLocaleString()}{' '}
+                    <span className="text-[9px] font-normal opacity-70">UZS</span>
                   </div>
                 </div>
               ))}

@@ -25,7 +25,7 @@ export const translations = {
     orderProcessing: 'Buyurtma yuborilmoqda…',
     usdtPerStar: '1 Stars ≈',
     starsDesc: 'Barcha userlarga, 50 tadan boshlab',
-    premiumDesc: '3, 6 yoki 12 oy obuna',
+    premiumDesc: '3, 6 yoki 12 oylik obuna',
     giftsDesc: '🧸 Ayiqcha, 🌹 Atirgul, 🚀 Raketa...',
     fromWord: 'dan boshlab',
     needMore: "Yetishmayotgan summa",

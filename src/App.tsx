@@ -10,6 +10,7 @@ import { RankingView } from './components/views/RankingView';
 import { ProfileView } from './components/views/ProfileView';
 import { AdminPanel } from './components/AdminPanel';
 import { LiquidPointer } from './components/LiquidPointer';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { CheckCircle2, ArrowLeft, PauseCircle } from 'lucide-react';
 
 export default function App() {
@@ -318,10 +319,18 @@ export default function App() {
 
       {/* Apple Minimalist Toast */}
       {toastMsg && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 max-w-xs w-full px-4 pointer-events-none">
-          <div className="toast-in liquid-glass rounded-full px-4 py-2.5 shadow-2xl flex items-center justify-center gap-2 border">
+        <div
+          className="fixed top-[3.6rem] inset-x-0 z-50 flex justify-center px-4 pointer-events-none"
+          role="status"
+          aria-live="polite"
+        >
+          <div
+            className="toast-in liquid-glass rounded-full px-4 py-2.5 shadow-2xl
+                       flex items-center justify-center gap-2 border
+                       w-fit max-w-full break-words"
+          >
             <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-            <span className="text-xs font-semibold text-center">{toastMsg}</span>
+            <span className="text-xs font-semibold text-center leading-snug">{toastMsg}</span>
           </div>
         </div>
       )}
@@ -341,7 +350,7 @@ export default function App() {
 
       {/* Main View Area */}
       <main className="flex-1 max-w-md w-full mx-auto px-4 pt-3.5 relative z-10">
-        {/* 1. HOME VIEW */}
+        <ErrorBoundary label="Bosh sahifa">
         {currentTab === 'home' && (
           <HomeView
             user={user}
@@ -355,8 +364,10 @@ export default function App() {
             onGoToTopup={() => setCurrentTab('topup')}
           />
         )}
+        </ErrorBoundary>
 
         {/* 2. TOP UP VIEW */}
+        <ErrorBoundary label="To'ldirish">
         {currentTab === 'topup' && (
           <TopupView
             user={user}
@@ -369,11 +380,14 @@ export default function App() {
               showToast("To'lov so'rovi yaratildi.");
             }}
             onTopupSuccess={handleTopupSuccess}
+            onTopupCancelled={() => setActiveTopup(null)}
             onOpenHistory={() => setCurrentTab('profile')}
           />
         )}
+        </ErrorBoundary>
 
-        {/* 3. BUY VIEW (Stars, Premium, Gifts) */}
+        {/* 3. BUY VIEW */}
+        <ErrorBoundary label="Xarid">
         {currentTab === 'buy' && (
           <BuyView
             user={user}
@@ -385,8 +399,10 @@ export default function App() {
             onGoToTopup={() => setCurrentTab('topup')}
           />
         )}
+        </ErrorBoundary>
 
         {/* 4. RANKING VIEW */}
+        <ErrorBoundary label="Reyting">
         {currentTab === 'ranking' && (
           <RankingView
             user={user}
@@ -396,8 +412,10 @@ export default function App() {
             onGoToBuy={() => setCurrentTab('buy')}
           />
         )}
+        </ErrorBoundary>
 
         {/* 5. PROFILE VIEW */}
+        <ErrorBoundary label="Profil">
         {currentTab === 'profile' && (
           <ProfileView
             user={user}
@@ -412,6 +430,7 @@ export default function App() {
             isAdmin={isAdmin}
           />
         )}
+        </ErrorBoundary>
 
         {/* 6. SECRET ADMIN VIEW (ONLY FOR USER 8307046273) */}
         {currentTab === 'admin' && isAdmin && (

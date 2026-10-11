@@ -2140,9 +2140,15 @@ async def adm_topup_ok(call: CallbackQuery) -> None:
         await call.answer("Ruxsat yo'q", show_alert=True)
         return
     tid = call.data.split(":", 1)[1]
+    # So'rov WebApp'da yaratilgan bo'lishi mumkin — baza eskirgan bo'lsa,
+    # topup topilmadi deb "allaqachon ko'rilgan" xatosi chiqardi.
+    db.reload_if_changed()
     t = db.data["topups"].get(tid)
-    if not t or t["status"] != "pending":
-        await call.answer("Bu so'rov allaqachon ko'rilgan", show_alert=True)
+    if not t:
+        await call.answer("So'rov topilmadi (baza yangilanmagan bo'lishi mumkin)", show_alert=True)
+        return
+    if t["status"] != "pending":
+        await call.answer(f"Bu so'rov allaqachon yopilgan ({t['status']})", show_alert=True)
         return
     t["status"] = "completed"
     t["completed_at"] = now_iso()
@@ -2169,9 +2175,13 @@ async def adm_topup_no(call: CallbackQuery) -> None:
         await call.answer("Ruxsat yo'q", show_alert=True)
         return
     tid = call.data.split(":", 1)[1]
+    db.reload_if_changed()   # WebApp'da yaratilgan so'rovni topish uchun
     t = db.data["topups"].get(tid)
-    if not t or t["status"] != "pending":
-        await call.answer("Bu so'rov allaqachon ko'rilgan", show_alert=True)
+    if not t:
+        await call.answer("So'rov topilmadi (baza yangilanmagan bo'lishi mumkin)", show_alert=True)
+        return
+    if t["status"] != "pending":
+        await call.answer(f"Bu so'rov allaqachon yopilgan ({t['status']})", show_alert=True)
         return
     t["status"] = "cancelled"
     db.save()
@@ -2275,8 +2285,18 @@ async def buy_start(message: Message, state: FSMContext, db_user: dict):
 async def _ask_amount(message: Message, state: FSMContext, username: str) -> None:
     await state.update_data(username=username)
     await state.set_state(BuyStates.amount)
+    # Foydalanuvchi botda ro'yxatdan o'tmagan bo'lishi ham mumkin —
+    # shunda ham ismi va profil rasmini ko'rsatamiz (Stars uchun
+    # profil rasmi shart emas, faqat ma'lumot uchun).
+    prof = await resolve_recipient_profile(username)
+    who = f"@{esc(username)}"
+    if prof and prof.get("name"):
+        who = esc(str(prof["name"]))
+    line = f"👤 Qabul qiluvchi: <b>{who}</b>\n"
+    if prof and prof.get("from_bot") is False:
+        line += f"<i>(@{esc(username)} — botda ro'yxatdan o'tmagan)</i>\n"
     await message.answer(
-        f"👤 Qabul qiluvchi: <b>@{esc(username)}</b>\n\n"
+        line + "\n"
         f"Nechta ⭐ kerak? ({fmt(MIN_STARS_BUY)} – {fmt(MAX_STARS_BUY)})\n"
         f"1 ⭐ = {STAR_BUY_PRICE_UZS} UZS (Fragment USDT on TON)",
         reply_markup=cancel_inline_kb(),
@@ -3023,6 +3043,80 @@ async def on_humo_message(client: UserbotClient, message) -> None:
         await notify_admins(f"❌ Avto-to'lov tekshiruvi xatosi: {exc}")
 
 
+async def resolve_recipient_profile(username: str) -> Optional[dict]:
+    """Berilgan username egasi haqida ism va profil rasmini oladi.
+
+    MUHIM: foydalanuvchi botda RO'YXATDAN O'TMagan bo'lishi mumkin —
+    Telegram o'chiringan hisoblarni ham ko'rsatadi. Shu sababli:
+      1) avval bazadagi ma'lumotni tekshiramiz
+      2) yo'q bo'lsa — userbot orqali Telegram'dan so'raymiz
+    Botga kirish shart EMAS.
+
+    Stars xaridida profil rasmi shart emas, giftda ham ixtiyoriy —
+    shuning uchun xato bo'lsa ham `None` qaytaramiz, ishni to'xtirmaydi.
+    """
+    name = (username or "").lstrip("@").strip()
+    if not name:
+        return None
+
+    # 1) Bazadagi ma'lumot
+    local = next(
+        (u for u in db.data["users"].values()
+         if (u.get("username") or "").lower() == name.lower()),
+        None,
+    )
+    if local and local.get("photo_url"):
+        return {
+            "name": local.get("first_name") or f"@{name}",
+            "photo": local["photo_url"],
+            "from_bot": True,
+        }
+
+    # 2) Telegram'dan (userbot bo'lmasa ham xato berilmaydi)
+    if userbot is None:
+        return {
+            "name": (local or {}).get("first_name") or f"@{name}",
+            "photo": (local or {}).get("photo_url") or "",
+            "from_bot": False,
+        }
+    try:
+        chat = await userbot.get_chat(name)
+        display = (
+            " ".join(x for x in [getattr(chat, "first_name", ""),
+                                getattr(chat, "last_name", "")] if x)
+            or getattr(chat, "title", "")
+            or f"@{name}"
+        )
+        photo = ""
+        try:
+            if getattr(chat, "photo", None):
+                # Telegram'da har doim boshqa o'lchamli nusxalar bor;
+                # eng kichigi (katta) Telegram'da tez yuklanadi.
+                for size in ("big", "small", "thumb"):
+                    cand = next((s for s in chat.photo.sizes if s.type == size), None)
+                    if cand is not None:
+                        photo = cand.file_id
+                        break
+        except Exception:  # noqa: BLE001
+            photo = ""
+
+        # Natija bazasiga saqlaymiz — keyingi so'rovlarda tez
+        if local is not None:
+            local["first_name"] = display
+            if photo:
+                local["photo_url"] = photo
+            db.save()
+
+        return {"name": display, "photo": photo, "from_bot": False}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Profilni aniqlab bo'lmadi (%s): %s", name, exc)
+        return {
+            "name": (local or {}).get("first_name") or f"@{name}",
+            "photo": (local or {}).get("photo_url") or "",
+            "from_bot": False,
+        }
+
+
 async def process_gift_orders() -> None:
     """Gift buyurtmalarini userbot orqali avto-yuboradi.
 
@@ -3130,7 +3224,13 @@ async def process_gift_orders() -> None:
                     last_err: Optional[Exception] = None
                     for attempt in range(3):
                         try:
-                            await userbot.send_gift(chat_id=recipient, gift_id=match.id)
+                            # Anonim yuborish: hide_my_name=True bo'lsa
+                            # sovg'a egasida yuboruvchi profili KO'RINMAYDI.
+                            await userbot.send_gift(
+                                chat_id=recipient,
+                                gift_id=match.id,
+                                hide_my_name=bool(order.get("hide_my_name")),
+                            )
                             sent = True
                             break
                         except Exception as exc:  # noqa: BLE001
@@ -3157,7 +3257,10 @@ async def process_gift_orders() -> None:
                         f"🎁 <b>Sovg'a yuborildi!</b>\n\n"
                         f"🎉 {esc(str(order.get('title', gift_key)))}\n"
                         f"👤 Qabul qiluvchi: <b>@{esc(recipient)}</b>\n"
-                        f"🆔 Buyurtma: <code>{order['id']}</code>",
+                        + ("🕶️ Yuborish: <b>anonim</b>"
+                           if order.get("hide_my_name")
+                           else "👤 Yuboruvchi: <b>profil ko'rinadi</b>") + "\n"
+                        + f"🆔 Buyurtma: <code>{order['id']}</code>",
                     )
                     await notify_admins(
                         f"🎁 Gift <code>#{order['id']}</code> ({gift_key}) @{esc(recipient)} ga yuborildi."
@@ -3426,6 +3529,11 @@ async def userbot_supervisor() -> None:
 
 def pending_topups() -> list[dict]:
     return [t for t in db.data["topups"].values() if t["status"] == "pending"]
+
+
+@router.message(F.text == BTN_GIFTS)
+async def gifts_text(message: Message, state: FSMContext):
+    await gifts_start(message, state)
 
 
 @router.message(F.text == BTN_TOPUP)
@@ -4543,6 +4651,183 @@ async def adm_ub_password_wait(message: Message, state: FSMContext):
 
 
 # =============================================================================
+# 15b. GIFT BO'LIMI (bot tomoni)
+# -----------------------------------------------------------------------------
+# Rasm 6: mijoz sovg'a yuborishda IKKITA tanlovga ega bo'lishi kerak:
+#   🕶️ Anonim            — yuboruvchining profili ko'rinmaydi
+#   👤 Profil ko'rinadi  — yuboruvchining ismi/profili ko'rinadi
+#
+# Bundan tashqari qabul qiluvchi botda ro'yxatdan o'tmagan bo'lsa ham
+# ismi va (ixtiyoriy) profil rasmi ko'rsatiladi.
+# =============================================================================
+
+
+class GiftStates(StatesGroup):
+    recipient = State()
+    confirm = State()
+
+
+def _gift_price(key: str) -> int:
+    g = GIFTS_BY_KEY.get(key)
+    return g[3] if g else 0
+
+
+async def gifts_start(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(GiftStates.recipient)
+    rows: list[list[InlineKeyboardButton]] = []
+    line: list[InlineKeyboardButton] = []
+    for key, title, stars, price in GIFTS:
+        line.append(
+            InlineKeyboardButton(text=f"{title}\n{fmt(price)} so'm",
+                                 callback_data=f"gift_pick:{key}", style="primary")
+        )
+        if len(line) == 2:
+            rows.append(line)
+            line = []
+    if line:
+        rows.append(line)
+    rows.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel", style="danger")])
+    await message.answer(
+        "🎁 <b>Giftlar</b>\n\n"
+        "🧸 Sovg'a turini tanlang (Telegram Stars orqali):\n\n"
+        "🕶️ Yuborish <b>anonim</b> bo'ladi — profilingiz ko'rinmaydi.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@common_router.callback_query(F.data.startswith("gift_pick:"))
+async def gift_pick(call: CallbackQuery, state: FSMContext, db_user: dict):
+    await call.answer()
+    key = call.data.split(":", 1)[1]
+    g = GIFTS_BY_KEY.get(key)
+    if not g:
+        await call.message.answer("❌ Sovg'a topilmadi.")
+        return
+    balance = int(db_user.get("balance", 0))
+    price = g[3]
+    if balance < price:
+        await call.message.answer(
+            f"❌ Balans yetarli emas.\\n"
+            f"💰 Kerak: <b>{fmt(price)} so'm</b>\\n"
+            f"💳 Balansingiz: <b>{fmt(balance)} so'm</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Balans to'ldirish", callback_data="m:topup", style="success")],
+                [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:gifts", style="danger")],
+            ]),
+        )
+        return
+    await state.set_state(GiftStates.recipient)
+    await state.update_data(gift_key=key)
+    await call.message.answer(
+        f"{g[1]} — <b>{fmt(price)} so'm</b>\n\n"
+        "👤 Qabul qiluvchining Telegram <b>@username</b> ni yuboring:",
+        reply_markup=cancel_inline_kb(),
+    )
+
+
+@router.message(StateFilter(GiftStates.recipient), F.text)
+async def gift_recipient(message: Message, state: FSMContext, db_user: dict):
+    username = re.sub(r"[^A-Za-z0-9_]", "", (message.text or "").lstrip("@"))
+    if len(username) < 4:
+        await message.answer("❌ Username noto'g'ri. Masalan: <code>@username</code>")
+        return
+    key = (await state.get_data()).get("gift_key", "bear")
+    g = GIFTS_BY_KEY.get(key)
+    if not g:
+        await state.clear()
+        await message.answer("❌ Sovg'ani topib bo'lmadi. Qayta boshlang.")
+        return
+
+    # Botda ro'yxatdan o'tmagan bo'lsa ham ism/rasmni ko'rsatamiz
+    prof = await resolve_recipient_profile(username)
+    who = esc(str(prof["name"])) if prof and prof.get("name") else f"@{esc(username)}"
+    note = ""
+    if prof and prof.get("from_bot") is False:
+        note = "\n<i>(botda ro'yxatdan o'tmagan — ma'lumot Telegram'dan olindi)</i>"
+
+    await state.set_state(GiftStates.confirm)
+    await state.update_data(gift_recipient=username)
+    await message.answer(
+        f"{g[1]} <b>{g[2]} ⭐</b> — <b>{fmt(g[3])} so'm</b>\n"
+        f"👤 Qabul qiluvchi: <b>{who}</b>\n{note}\n\n"
+        "🕶️ Sovg'a <b>anonim</b> tarzda yuboriladi (profilingiz ko'rinmaydi).",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Tasdiqlash", callback_data="gift_ok:1", style="success"),
+                InlineKeyboardButton(text="👤 Ko'rinish bilan", callback_data="gift_ok:0", style="primary"),
+            ],
+            [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:gifts", style="danger")],
+        ]),
+    )
+
+
+@common_router.callback_query(F.data.startswith("gift_ok:"))
+async def gift_confirm(call: CallbackQuery, state: FSMContext, db_user: dict):
+    anon = call.data.split(":", 1)[1] == "1"
+    # f-string ichida apostrof ishlatmamlik uchun qiymatni oldindan olamiz
+    anon_label = "ANONIM" if anon else "profil korinadi"
+    data = await state.get_data()
+    key = data.get("gift_key", "")
+    username = data.get("gift_recipient", "")
+    g = GIFTS_BY_KEY.get(key)
+    if not g or not username:
+        await call.answer("Ma'lumot topilmadi", show_alert=True)
+        await state.clear()
+        return
+
+    price = g[3]
+    if int(db_user.get("balance", 0)) < price:
+        await call.answer("Balans yetarli emas", show_alert=True)
+        await state.clear()
+        return
+
+    order_id = "ord_" + now_iso().replace("-", "").replace(":", "").replace(".", "")[-10:]
+    db_user["balance"] = int(db_user.get("balance", 0)) - price
+    db_user["total_spent"] = int(db_user.get("total_spent", 0)) + price
+    db.data["orders"][order_id] = {
+        "id": order_id,
+        "user_id": db_user["id"],
+        "kind": "gift",
+        "gift": key,
+        "stars": g[2],
+        "title": g[1],
+        "recipient": username,
+        "price": price,
+        "price_uzs": price,
+        "amount": g[2],
+        "status": "completed",
+        "source": "bot",
+        # Rasm 6: anonim tanlangan bo'lsa, yuboruvchi profili KO'RINMAYDI
+        "hide_my_name": anon,
+        "created_at": now_iso(),
+    }
+    db.add_history(db_user, "gift", -price, f"Gift: {g[1]} → @{username}")
+    db.save()
+    await state.clear()
+    await call.answer("Buyurtma qabul qilindi", show_alert=True)
+    try:
+        await call.message.edit_text(
+            "✅ <b>Gift buyurtmasi qabul qilindi!</b>\n\n"
+            f"🎁 {g[1]} ({g[2]} ⭐)\n"
+            f"👤 Qabul qiluvchi: <b>@{esc(username)}</b>\n"
+            f"🕶️ Yuborish: <b>{anon_label}</b>\n"
+            f"💳 Yechildi: <b>{fmt(price)} so'm</b>\n\n"
+            "📦 Sovg'a avtomatik yuborilmoqda — 1–5 daqiqa ichida tushadi."
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    await notify_admins(
+        f"🎁 <b>Gift buyurtmasi (bot)</b>\\n\\n"
+        f"📦 <code>#{order_id}</code>\\n"
+        f"👤 Mijoz: @{db_user.get('username') or db_user['id']}\\n"
+        f"🎯 Qabul qiluvchi: <b>@{esc(username)}</b>\\n"
+            f"🕶️ Yuborish: <b>{anon_label}</b>\n"
+        f"💳 <b>{fmt(price)} so'm</b>"
+    )
+
+
+# =============================================================================
 # 16b. ASOSIY MENYU CALLBACK
 # =============================================================================
 @router.callback_query(F.data.startswith("m:"))
@@ -4553,7 +4838,7 @@ async def main_menu_callback(call: CallbackQuery, state: FSMContext, bot: Bot, d
         "buy": lambda: buy_start(msg, state, db_user),
         "sell": lambda: sell_start(msg, state),
         "premium": lambda: msg.answer("💎 Premium bo'limi"),
-        "gifts": lambda: msg.answer("🎁 Giftlar bo'limi"),
+        "gifts": lambda: gifts_start(msg, state),
         "topup": lambda: topup_start(msg, state, db_user),
         "ref": lambda: show_referral(msg, state, bot, db_user),
         "profile": lambda: show_profile(msg, state, db_user),

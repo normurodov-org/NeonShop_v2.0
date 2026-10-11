@@ -32,6 +32,8 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
   const [recipient, setRecipient] = useState<string>(user?.username || '');
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // Rasm 6: anonim yuborish (true) yoki yuboruvchi profili ko'rinadi (false)
+  const [hideMyName, setHideMyName] = useState<boolean>(true);
 
   const userBalance = user?.balance || 0;
   const isEnough = userBalance >= selectedGift.priceUzs;
@@ -61,6 +63,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
           kind: 'gift',
           gift: selectedGift.key,
           username: cleanUser,
+          hide_my_name: hideMyName,
         }),
       });
       const data = await res.json();
@@ -77,6 +80,41 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Yuborish turi: anonim yoki profil ko'rinadi */}
+      <div className="rounded-2xl bg-slate-900/80 border border-white/10 p-3.5 space-y-2.5">
+        <div className="text-[11px] font-semibold text-slate-300">
+          🕶️ Sovg'ani qanday yuboramiz?
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => setHideMyName(true)}
+            className={`py-2.5 rounded-xl text-[11px] font-semibold transition-colors cursor-pointer border ${
+              hideMyName
+                ? 'bg-white text-black border-white'
+                : 'bg-white/5 text-slate-300 border-white/10'
+            }`}
+          >
+            🕶️ Anonim
+            <span className="block text-[9px] font-normal opacity-70 mt-0.5">
+              Profilingiz ko'rinmaydi
+            </span>
+          </button>
+          <button
+            onClick={() => setHideMyName(false)}
+            className={`py-2.5 rounded-xl text-[11px] font-semibold transition-colors cursor-pointer border ${
+              !hideMyName
+                ? 'bg-white text-black border-white'
+                : 'bg-white/5 text-slate-300 border-white/10'
+            }`}
+          >
+            👤 Profil ko'rinadi
+            <span className="block text-[9px] font-normal opacity-70 mt-0.5">
+              Ismingiz ko'rinadi
+            </span>
+          </button>
+        </div>
+      </div>
+
       {/* Banner */}
       <div className="rounded-2xl bg-gradient-to-r from-pink-500/15 via-purple-500/15 to-indigo-500/15 border border-pink-500/20 p-5">
         <div className="flex items-center gap-3.5">

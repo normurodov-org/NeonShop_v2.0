@@ -109,10 +109,15 @@ const defaultData: DatabaseSchema = {
     star_sell_price: 125,
     support_username: 'normuzb',
     admin_id: 8307046273,
-    total_users: 14280,
-    total_orders: 8740,
-    total_volume_uzs: 485000000,
-    wallet_usdt_balance: 50.0,
+    // DIQQAT: bu qiymatlar HAQIQIY ma'lumot. Oldingi versiyalarda
+    // 14 280 / 8 740 / 485 000 000 kabi SOXTA raqamlar yozilgan edi va
+    // admin panelda ko'rsatilardi (shu bilan haqiqiy hisobga qo'shilib
+    // yana ikki barobar oshadi). Endi 0 dan boshlanadi va faqat
+    // haqiqiy buyurtmalar/topuplardan to'planadi.
+    total_users: 0,
+    total_orders: 0,
+    total_volume_uzs: 0,
+    wallet_usdt_balance: 0,
     star_usdt_rate: 0.015,
     wallet_address: 'UQCFJEP4WZ_mpdo0_kMEmsTgvrMHG7K_tWY16pQhKHwoOtFz',
   },

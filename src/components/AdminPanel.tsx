@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StoreSettings, Contest } from '../types';
-import { Shield, Lock, Power, Users, ShoppingBag, DollarSign, CheckCircle2, AlertCircle, ArrowRight, RefreshCw, Trophy } from 'lucide-react';
+import { Shield, Lock, Power, Users, ShoppingBag, DollarSign, CheckCircle2, AlertCircle, ArrowRight, RefreshCw, Trophy, ChevronUp, ChevronDown } from 'lucide-react';
 
 interface AdminPanelProps {
   onSettingsUpdated: (newSettings: StoreSettings) => void;
@@ -24,6 +24,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
   });
   const [ctLoading, setCtLoading] = useState(false);
   const [ctMsg, setCtMsg] = useState<string | null>(null);
+  // Ro'yxatni yopiq saqlash (12-rasm: uzoq ro'yxat asosiy ekranni bosib qo'yardi)
+  const [showAllOrders, setShowAllOrders] = useState<boolean>(false);
 
   const loadContest = async () => {
     try {
@@ -156,7 +158,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
           </div>
           <h2 className="text-lg font-bold text-white">Admin Paneliga Kirish</h2>
           <p className="text-xs text-slate-400">
-            Standart parol: <code className="text-purple-300 font-mono">neon2025</code> yoki <code className="text-purple-300 font-mono">admin</code>
+            Parol: Railway Variables dagi <code className="text-purple-300 font-mono">ADMIN_PASSWORD</code>
           </p>
         </div>
 
@@ -482,7 +484,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
         </div>
 
         <div className="space-y-2">
-          {adminData?.orders?.map((ord: any) => (
+          {(showAllOrders ? adminData?.orders : adminData?.orders?.slice(0, 5)).map((ord: any) => (
             <div
               key={ord.id}
               className="p-3 rounded-xl bg-slate-950/80 border border-white/5 flex items-center justify-between text-xs"
@@ -500,6 +502,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
             </div>
           ))}
         </div>
+
+        {/* Ro'yxat uzun bo'lmasligi uchun: bitta tugma bosilganda
+            to'liq ro'yxat ochiladi (5 ta birinchi ko'rsatiladi). */}
+        {(adminData?.orders?.length || 0) > 5 && (
+          <button
+            onClick={() => setShowAllOrders((v) => !v)}
+            className="w-full py-2.5 rounded-xl liquid-glass-pill text-xs font-semibold
+                       text-neutral-200 hover:text-white transition-colors cursor-pointer
+                       flex items-center justify-center gap-1.5"
+          >
+            {showAllOrders ? (
+              <>
+                <ChevronUp className="w-3.5 h-3.5" />
+                <span>Yopish</span>
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-3.5 h-3.5" />
+                <span>
+                  So&apos;nggi buyurtmalar ({adminData?.orders?.length} ta)
+                </span>
+              </>
+            )}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -49,8 +49,15 @@ export const BuyView: React.FC<BuyViewProps> = ({
   });
   const [isEditingRecipient, setIsEditingRecipient] = useState<boolean>(!user?.username);
   const [resolving, setResolving] = useState<boolean>(false);
+  // Profil rasmi 404 bo'ldimi? (Telegram'da rasm yo'q bo'lishi mumkin)
+  const [photoFailed, setPhotoFailed] = useState<boolean>(false);
+  // Sovg'a: anonim yuborish (true) yoki yuboruvchi profili ko'rinadi (false)
+  const [hideMyName, setHideMyName] = useState<boolean>(true);
 
   const [amount, setAmount] = useState<number>(100);
+  // Kirish maydoni uchun alohida holat: foydalanuvchi raqamni to'liq
+  // o'chira olishi kerak (eski kod Math.max(1, NaN) sababli "1" qolib ketardi).
+  const [amountInput, setAmountInput] = useState<string>('100');
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,6 +73,9 @@ export const BuyView: React.FC<BuyViewProps> = ({
 
   const starPrice = settings?.star_buy_price || 200;
   const starsPresets = [50, 100, 250, 500, 1000];
+  // Chegara: interfeysda ham "50 - 1 000 000" deb yozilgan
+  const MIN_STARS = 50;
+  const MAX_STARS = 1_000_000;
 
   const usdtRate = rate?.usdt_uzs || settings?.usdt_rate_uzs || 0;
   const usdtForStars = +(amount * (settings?.star_usdt_rate || 0.015)).toFixed(3);
@@ -116,6 +126,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
         const data = await res.json();
         if (data.ok && data.user) {
           setResolvedProfile(data.user);
+          setPhotoFailed(false);
         }
       } catch (e) {
         console.error('Resolve user error:', e);
@@ -187,7 +198,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
       } else if (subTab === 'premium') {
         body = { ...body, kind: 'premium', mode: premMode, months: premMonths };
       } else if (subTab === 'gifts') {
-        body = { ...body, kind: 'gift', gift: selectedGift };
+        body = { ...body, kind: 'gift', gift: selectedGift, hide_my_name: hideMyName };
       }
 
       const res = await fetch('/api/order', {
@@ -220,38 +231,6 @@ export const BuyView: React.FC<BuyViewProps> = ({
         </span>
       </div>
 
-      {/* USDT (TON) to'lov nishoni — Stars FAQAT USDT bilan Fragment'dan xarid qilinadi */}
-      {subTab === 'stars' && (
-        <div className="flex items-center justify-between gap-2 px-4 py-3 rounded-[22px] liquid-glass apple-view-animate">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div
-              className={`w-8 h-8 rounded-[12px] flex items-center justify-center shrink-0 ${
-                isDark ? 'bg-emerald-400/15 text-emerald-300' : 'bg-emerald-500/10 text-emerald-600'
-              }`}
-            >
-              <Wallet className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <div className={`text-[11px] font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                {t.paidWithUsdtTon}
-              </div>
-              <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
-                {t.fragmentDelivery}
-              </div>
-            </div>
-          </div>
-          <div className="text-right shrink-0">
-            <div className={`text-[11px] font-bold font-mono ${isDark ? 'text-emerald-300' : 'text-emerald-600'}`}>
-              ≈ {usdtForStars.toFixed(3)} USDT
-            </div>
-            {showRate && (
-              <div className="text-[9px] text-neutral-400 font-mono">
-                1 USDT ≈ {usdtRate.toLocaleString()} UZS
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Apple Segmented Control Bar */}
       <div className="flex items-center gap-1 p-1 rounded-full liquid-glass">
@@ -333,11 +312,14 @@ export const BuyView: React.FC<BuyViewProps> = ({
           >
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-full p-[1.5px] bg-gradient-to-tr from-amber-400 to-yellow-500 overflow-hidden shadow-sm shrink-0">
-                {resolvedProfile.photo_url ? (
+                {resolvedProfile.photo_url && !photoFailed ? (
                   <img
                     src={resolvedProfile.photo_url}
                     alt={resolvedProfile.display_name}
                     className="w-full h-full rounded-full object-cover"
+                    // Rasm 404 bo'lsa (profil rasmi yo'q foydalanuvchilar)
+                    // bo'sh sariq doira emas — initial harf chiqadi.
+                    onError={() => setPhotoFailed(true)}
                   />
                 ) : (
                   <div className="w-full h-full rounded-full bg-neutral-900 text-amber-300 flex items-center justify-center font-bold text-sm">
@@ -409,7 +391,9 @@ export const BuyView: React.FC<BuyViewProps> = ({
         <div className="rounded-[26px] liquid-glass-card p-4 space-y-3">
           <div className="flex items-center justify-between text-xs">
             <span className={`font-semibold ${isDark ? 'text-neutral-300' : 'text-neutral-700'}`}>{t.starsAmount}</span>
-            <span className="text-[10px] text-neutral-400 font-mono">50 - 1 000 000</span>
+            <span className="text-[10px] text-neutral-400 font-mono">
+              {MIN_STARS.toLocaleString()} - {MAX_STARS.toLocaleString()}
+            </span>
           </div>
 
           <div className="relative">
@@ -418,15 +402,31 @@ export const BuyView: React.FC<BuyViewProps> = ({
             </div>
             <input
               type="number"
-              value={amount}
+              inputMode="numeric"
+              value={amountInput}
               onChange={(e) => {
-                setAmount(Math.max(1, parseInt(e.target.value || '0', 10)));
-                setError(null);
-              }}
-              className={`w-full pl-11 pr-4 py-3 rounded-[16px] font-mono text-base font-bold focus:outline-none apple-spring liquid-glass-input ${
-                isDark ? 'text-white' : 'text-neutral-900'
-              }`}
-            />
+                    const raw = e.target.value;
+                    setAmountInput(raw);
+                    // Faqat raqam kiritilgan bo'lsa darhol narxni hisoblaymiz;
+                    // bo'sh yoki noto'g'ri qiymatda eski narx saqlanadi.
+                    const n = parseInt(raw, 10);
+                    if (Number.isFinite(n) && n > 0) setAmount(n);
+                    setError(null);
+                  }}
+                  onBlur={() => {
+                    // maydon bo'sh qoldirilgan bo'lsa — minimal qiymatga qaytaramiz
+                    const n = parseInt(amountInput, 10);
+                    const safe = Number.isFinite(n)
+                      ? Math.min(MAX_STARS, Math.max(MIN_STARS, n))
+                      : MIN_STARS;
+                    setAmount(safe);
+                    setAmountInput(String(safe));
+                    setError(null);
+                  }}
+                  className={`w-full pl-11 pr-4 py-3 rounded-[16px] font-mono text-base font-bold focus:outline-none apple-spring liquid-glass-input ${
+                    isDark ? 'text-white' : 'text-neutral-900'
+                  }`}
+                />
           </div>
 
           <div className="grid grid-cols-5 gap-1.5">
@@ -435,6 +435,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
                 key={val}
                 onClick={() => {
                   setAmount(val);
+                  setAmountInput(String(val));
                   setError(null);
                 }}
                 className={`py-2 rounded-[12px] text-xs font-semibold font-mono apple-spring cursor-pointer border ${
@@ -557,6 +558,43 @@ export const BuyView: React.FC<BuyViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Sovg'a uchun yuborish turi: anonim yoki profil ko'rinadi */}
+      {subTab === 'gifts' && (
+        <div className="rounded-[22px] liquid-glass-card p-3.5 space-y-2.5">
+          <div className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-300">
+            🕶️ Sovg'ani qanday yuboramiz?
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setHideMyName(true)}
+              className={`py-2.5 rounded-[16px] text-[11px] font-semibold apple-spring cursor-pointer border ${
+                hideMyName
+                  ? 'bg-white text-black border-white dark:bg-white dark:text-black'
+                  : 'liquid-glass-pill border-white/20 text-neutral-600 dark:text-neutral-300'
+              }`}
+            >
+              🕶️ Anonim
+              <span className="block text-[9px] font-normal opacity-70 mt-0.5">
+                Profilingiz ko'rinmaydi
+              </span>
+            </button>
+            <button
+              onClick={() => setHideMyName(false)}
+              className={`py-2.5 rounded-[16px] text-[11px] font-semibold apple-spring cursor-pointer border ${
+                !hideMyName
+                  ? 'bg-white text-black border-white dark:bg-white dark:text-black'
+                  : 'liquid-glass-pill border-white/20 text-neutral-600 dark:text-neutral-300'
+              }`}
+            >
+              👤 Profil ko'rinadi
+              <span className="block text-[9px] font-normal opacity-70 mt-0.5">
+                Ismingiz ko'rinadi
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Error display */}
       {error && (
