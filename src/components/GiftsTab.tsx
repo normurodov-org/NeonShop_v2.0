@@ -34,6 +34,8 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
   const [error, setError] = useState<string | null>(null);
   // Rasm 6: anonim yuborish (true) yoki yuboruvchi profili ko'rinadi (false)
   const [hideMyName, setHideMyName] = useState<boolean>(true);
+  // Sovg'a ostiga qo'yiladigan matn (Telegram "Add Message...")
+  const [giftText, setGiftText] = useState<string>('');
 
   const userBalance = user?.balance || 0;
   const isEnough = userBalance >= selectedGift.priceUzs;
@@ -64,6 +66,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
           gift: selectedGift.key,
           username: cleanUser,
           hide_my_name: hideMyName,
+          gift_text: giftText,
         }),
       });
       const data = await res.json();
@@ -107,11 +110,27 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                 : 'bg-white/5 text-slate-300 border-white/10'
             }`}
           >
-            👤 Profil ko'rinadi
+            👤 Do'kon profili
             <span className="block text-[9px] font-normal opacity-70 mt-0.5">
-              Ismingiz ko'rinadi
+              Do'kon akkaunti ko'rinadi
             </span>
           </button>
+        </div>
+
+        <div className="pt-2 border-t border-white/10">
+          <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
+            📝 Sovg'a ostiga matn qo'shish (ixtiyoriy)
+          </label>
+          <input
+            type="text"
+            value={giftText}
+            maxLength={200}
+            onChange={(e) => setGiftText(e.target.value)}
+            placeholder="Masalan: Sizga omad tilayman!"
+            className="w-full px-3.5 py-3 rounded-xl text-sm font-medium focus:outline-none
+                       apple-spring liquid-glass-input bg-slate-950/60 text-white
+                       placeholder:text-slate-500"
+          />
         </div>
       </div>
 

@@ -95,6 +95,69 @@ function migrateLegacyFakeStats() {
   }
 }
 
+/**
+ * ORDERS_CHANNEL kanaliga xabar yuboradi (Telegram Bot API orqali).
+ *
+ * MUHIM: avval `sendTelegramMessage` (grammy) ishlatilardi, lekin u
+ * faqat AUTO_START_TG_BOT=true bo'lganda ishlaydi. Bizda esa Python
+ * bot.py ishlaydi va AUTO_START_TG_BOT=false — shuning uchun barcha
+ * kanal xabarlari jimgina YO'QOLIB borardi.
+ * Shuning uchun to'g'ridan-to'g'ri Bot API chaqiramiz.
+ */
+async function postToOrdersChannel(text: string, buttonLabel = '📊 NeonShop') {
+  const token = (process.env.BOT_TOKEN || '').trim();
+  const chat = (process.env.ORDERS_CHANNEL || '@Shop_NeonOrders').trim();
+  if (!token || !chat) {
+    console.warn('[channel] BOT_TOKEN yoki ORDERS_CHANNEL yo‘q — xabar yuborilmadi');
+    return false;
+  }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chat,
+        text,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [[{ text: buttonLabel, url: process.env.WEBAPP_URL || 'https://t.me/' }]],
+        },
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data: any = await res.json();
+    if (!data?.ok) {
+      console.warn('[channel] yuborilmadi:', data?.description || res.status);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('[channel] xato:', e);
+    return false;
+  }
+}
+
+/** Rasmdagi kanal formati (3-rasm). */
+function channelOrderText(o: {
+  title: string;
+  username: string;
+  amountText: string;
+  price: number;
+  cashback?: number;
+  bonus?: number;
+}): string {
+  const lines = [
+    `⭐ <b>${o.title}</b> `,
+    `👤 <b>${o.username} </b>`,
+    '',
+    `📦 <b>${o.amountText}</b>`,
+    `💵 <b>Summasi:</b> ${o.price.toLocaleString()} so'm`,
+  ];
+  if (o.cashback) lines.push(`  <b>Keshbek:</b> +${o.cashback.toLocaleString()} so'm`);
+  return lines.join('\n');
+}
+
 export function syncAndSaveDb() {
   let fresh: any;
   try {
@@ -467,7 +530,7 @@ app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
 
 app.post('/api/order', async (req: Request, res: Response) => {
   const user = getUser(req);
-  const { kind, amount, months, gift, username, hide_my_name } = req.body;
+  const { kind, amount, months, gift, username, hide_my_name, gift_text } = req.body;
 
   let price = 0;
   let title = '';
@@ -569,6 +632,28 @@ app.post('/api/order', async (req: Request, res: Response) => {
         `💎 Taxminiy sarf: <b>${usdtNeeded} USDT (TON)</b>\n\n` +
         `🤖 <i>bot.py worker orqali USDT bilan Fragment'da avtomatik xarid qilinadi.</i>`
     );
+
+
+    // Rasmdagi formatda ORDERS_CHANNEL kanaliga
+    postToOrdersChannel(
+      channelOrderText({
+        title: 'Stars olindi',
+        username: `@${user.username || user.id}`,
+        amountText: `Miqdor: ${starCount} ⭐`,
+        price,
+        cashback,
+      }),
+    ).catch(() => undefined);
+
+    postToOrdersChannel(
+      channelOrderText({
+        title: 'Stars olindi',
+        username: `@${user.username || user.id}`,
+        amountText: `Miqdor: ${starCount} \u2B50`,
+        price,
+        cashback,
+      }),
+    ).catch(() => undefined);
   } else if (kind === 'gift') {
     // Gift userbot orqali ASINCHRON yuboriladi — darhol "yetkazildi" degani
     // NOTO'G'RI bo'lardi (mijoz pulini to'lab, hech narsa olmay qolardi).
@@ -605,8 +690,18 @@ app.post('/api/order', async (req: Request, res: Response) => {
     amount: amount || months || 1,
     stars: kind === 'stars' ? Number(amount) : undefined,
     gift: kind === 'gift' ? gift : undefined,
-    // Sovg'ani anonim yuborish: true -> yuboruvchining profili ko'rinmaydi
+    // Sovg'a maxfiyligi.
+    // UI "🕶️ Anonim" tanlangan bo'lsa true. Semantika:
+    //   true  -> Telegram hide_my_name=True  -> profil YASHIRILADI (anonim)
+    //   false -> Telegram hide_my_name=False -> do'kon profili KO'RINADI
+    // (Telegram MTProto: InputInvoiceStarGift.hide_name = flags.0?true)
+    anon: kind === 'gift' ? Boolean(hide_my_name) : undefined,
     hide_my_name: kind === 'gift' ? Boolean(hide_my_name) : undefined,
+    // Sovg'a ostiga qo'yiladigan matn (Telegram "Add Message...")
+    gift_text:
+      kind === 'gift' && typeof gift_text === 'string'
+        ? gift_text.replace(/[<>&]/g, '').trim().slice(0, 200) || undefined
+        : undefined,
     status: orderStatus,
     source: 'webapp',
     payment_method: 'usdt_ton',
@@ -854,6 +949,9 @@ app.get('/api/health', async (_req: Request, res: Response) => {
       api_id: Boolean(process.env.API_ID),
       api_hash: Boolean(process.env.API_HASH),
       session_string: Boolean(process.env.SESSION_STRING),
+      // Gift yuborish uchun ALOHIDA akkaunt. Bo'lmasa gift'lar
+      // SESSION_STRING (bank kuzatuvchisi) orqali yuboriladi.
+      gift_session_string: Boolean((process.env.GIFT_SESSION_STRING || '').trim()),
     },
     wallet_seed: Boolean(process.env.WALLET_SEED),
     fragment_cookies: Boolean(process.env.FRAGMENT_COOKIE_HEADER),
