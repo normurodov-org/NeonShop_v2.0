@@ -186,6 +186,12 @@ API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 TOPUP_SOURCE_CHAT = os.getenv("TOPUP_SOURCE_CHAT", "@humocardbot")
+# Gift worker tekshiruv oraliqi (soniya). Test uchun kichik qilinishi mumkin.
+GIFT_POLL_INTERVAL = float(os.getenv("GIFT_POLL_INTERVAL", "15"))
+# Necha sikldan keyin butunlay to'xtaymiz (cheksiz retry + admin spam bo'lmasligi uchun)
+GIFT_MAX_ATTEMPTS = int(os.getenv("GIFT_MAX_ATTEMPTS", "5"))
+# Urinishlar orasidagi tanaffus (s). Test uchun 0 qilinishi mumkin.
+GIFT_RETRY_DELAY = float(os.getenv("GIFT_RETRY_DELAY", "3"))
 
 # --- TON / Fragment ---
 WALLET_SEED = os.getenv("WALLET_SEED", "")
@@ -2572,18 +2578,104 @@ async def send_captcha(message: Message, db_user: dict) -> None:
 HUMO_AMOUNT_RX = re.compile(r"➕\s*([\d\s.,]+)\s*UZS")
 HUMO_CARD_RX = re.compile(r"HUMOCARD\s*\*(\d+)")
 
+# Bank xabaridagi summa — bir nechta ko'rinishda bo'lishi mumkin:
+#   "➕ 50 000 UZS", "💵 50,000 so'm", "💰 50000", "Summa: 50 000 so'm"
+HUMO_AMOUNT_ANY_RX = re.compile(
+    r"(?:➕|💵|💰|🆔)?\s*([\d][\d\s.,]*)\s*(?:UZS|uzs|so'm|som|soʻm|сум|сумма)?",
+    re.IGNORECASE,
+)
+HUMO_MONEY_RX = re.compile(
+    r"(?:➕|💵|💰|🆔|\*)\s*"
+    r"([\d][\d\s.,]*)\s*"
+    r"(UZS|uzs|so'?m|som|soʻm|сум)",
+    re.IGNORECASE,
+)
+HUMO_CARD_ANY_RX = re.compile(r"(?:HUMOCARD|HUMO)\s*\**\s*(\d{4,4})", re.IGNORECASE)
 
-def parse_humo_payment(text: str) -> Optional[tuple[int, Optional[str]]]:
-    """@humocardbot xabaridan summa va karta oxirgi raqamlarini ajratadi."""
-    m = HUMO_AMOUNT_RX.search(text or "")
-    if not m:
+
+def _normalize_amount(raw: str) -> Optional[int]:
+    """'50 000' / '50.000' / '50,000' / '50000' → 50000.
+
+    UZS da kasr son juda kam uchraydi, shuning uchun:
+      • bo'shliik va nuqta — minglik ajratuvchi hisoblanadi
+      • vergul — ham minglik, ham kasr bo'lishi mumkin
+    """
+    if raw is None:
         return None
-    raw = m.group(1).replace(" ", "").replace(".", "").replace(",", ".")
+    s = raw.strip()
+    if not s:
+        return None
+    s = s.replace("\u00a0", " ").replace("\u202f", " ")
+    digits = re.sub(r"[^\d.,]", "", s)
+    if not digits:
+        return None
+
+    # Vergul: agar undan keyin FAQAT 1-2 raqam bo'lsa — kasr (50,50 = 50.50 so'm)
+    # Aks holda vergul minglik ajratuvchi (50,000 = 50000)
+    if "," in digits:
+        tail = digits.split(",")[-1]
+        if len(tail) == 3 and digits.count(",") >= 1:
+            digits = digits.replace(",", "")           # 50,000 → 50000
+        elif len(tail) in (1, 2):
+            digits = digits.replace(",", ".")           # 50,5 → 50.5
+        else:
+            digits = digits.replace(",", "")
+    digits = digits.replace(" ", "")
+    if "." in digits:
+        whole, _, frac = digits.partition(".")
+        digits = whole + frac[:2] if len(frac) <= 2 else whole + frac
     try:
-        amount = int(Decimal(raw))
+        return int(Decimal(digits or "0"))
     except (InvalidOperation, ValueError):
         return None
-    cm = HUMO_CARD_RX.search(text or "")
+
+
+def parse_humo_payment(text: str) -> Optional[tuple[int, Optional[str]]]:
+    """@humocardbot xabaridan summa va karta oxirgi raqamlarini ajratadi.
+
+    Eski qatnoq faqat "➕ ... UZS" formatini qabul qilardi — bank formatini
+    o'zgartirsa butun avto-to'ldirish o'chardi. Endi bir nechta variant
+    qo'llab-quvvatlanadi.
+    """
+    text = text or ""
+    amount: Optional[int] = None
+
+    # 1) Eng aniq variant: pul birligi bilan
+    m = HUMO_MONEY_RX.search(text)
+    if m:
+        amount = _normalize_amount(m.group(1))
+
+    # 2) "+ ... UZS" (eskisidan)
+    if amount is None:
+        m = HUMO_AMOUNT_RX.search(text)
+        if m:
+            amount = _normalize_amount(m.group(1))
+
+    # 3) Boshqa hech narsa topilmasa — "Summa: 50 000" kabi qatorlar
+    if amount is None:
+        for line in text.splitlines():
+            if not re.search(r"summa|amount|to'lov|tolov|сумма|qabul", line, re.IGNORECASE):
+                continue
+            m = re.search(r"([\d][\d\s.,]*)", line)
+            if m:
+                amount = _normalize_amount(m.group(1))
+                if amount:
+                    break
+
+    # 4) Birligisiz, faqat belgi bilan: "💰 50000" / "➕ 50 000"
+    #    (karta raqami yoki tranzaksiya ID ni balans sifatida olishmaslik uchun
+    #     1000 dan kichik raqamlarni va karta raqamini chiqaramiz)
+    if amount is None:
+        m = re.search(r"[➕💵💰]\s*([\d][\d\s.,]*)", text)
+        if m:
+            cand = _normalize_amount(m.group(1))
+            if cand and cand >= 1000:
+                amount = cand
+
+    if not amount:
+        return None
+
+    cm = HUMO_CARD_ANY_RX.search(text) or HUMO_CARD_RX.search(text)
     card = cm.group(1) if cm else None
     return amount, card
 
@@ -2601,7 +2693,15 @@ async def notify_admins(text: str) -> None:
 async def on_humo_message(client: UserbotClient, message) -> None:
     try:
         text = message.text or ""
-        if "➕" not in text:
+        # AVVAL: faqat "➕" belgisi bo'lsa qayta ishlanardi — bank belgini
+        # o'zgartirsa (💵/💰/🆔) butun avto-to'ldirish o'chardi.
+        # Endi: pul birligi yoki "to'lov" so'zi bo'lsa yetarli.
+        has_marker = any(m in text for m in ("➕", "💵", "💰", "🆔"))
+        has_word = bool(re.search(r"to'lov|tolov|to‘lov|qabul|payme|оплата|сумма", text, re.IGNORECASE))
+        if not has_marker and not has_word:
+            return
+        # Balansga qo'shishni bildirmaydigan xabarlarni tashlab yuboramiz
+        if re.search(r"xarajat|chiqarish|withdraw|pullash|soldi", text, re.IGNORECASE):
             return
         parsed = parse_humo_payment(text)
         if parsed is None:
@@ -2707,17 +2807,53 @@ async def process_gift_orders() -> None:
     Xato bo'lsa 3 marta qayta urinadi, keyin adminga yuboriladi.
     """
     log.info("🎁 Gift avto-yetkazuv xizmati ishga tushdi...")
+    warned_no_userbot = False
+    last_pending = -1
+    last_written = False
     while True:
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(GIFT_POLL_INTERVAL)
             if userbot is None:
+                # AVVAL jimgina "continue" edi — admin hech narsani bilmasdi va
+                # gift buyurtmalari cheksiz kutib qolardi. Endi ogohlantiramiz.
+                pending = sum(
+                    1 for o in db.data.get("orders", {}).values()
+                    if o.get("kind") == "gift" and not o.get("gift_sent")
+                )
+                if not warned_no_userbot:
+                    warned_no_userbot = True
+                    log.error("🎁 Gift worker: userbot ulanmagan — gift yuborilmaydi")
+                    set_runtime_status(
+                        gift_worker="blocked_userbot_offline", gift_pending=pending
+                    )
+                    if pending:
+                        await notify_admins(
+                            "❌ <b>Gift yuborilmayapti</b>\n\n"
+                            f"📦 Kutayotgan gift buyurtmalari: <b>{pending}</b>\n"
+                            "👤 Sabab: userbot ulanmagan (SESSION_STRING muddati tuggan bo'lishi mumkin).\n"
+                            "🔧 <i>/admin → 📱 Raqam bilan ulash orqali yangi SESSION_STRING oling.</i>"
+                        )
+                elif pending != last_pending:
+                    set_runtime_status(gift_pending=pending)
+                last_pending = pending
                 continue
+            warned_no_userbot = False
             db.reload_if_changed()
             for order in list(db.data.get("orders", {}).values()):
                 if order.get("kind") != "gift":
                     continue
-                if order.get("gift_sent") or order.get("gift_processing"):
+                if order.get("gift_sent"):
                     continue
+                if order.get("gift_processing"):
+                    # Jarayon yuborish paytida to'xtab qolgan bo'lsa, buyurtma
+                    # butunlay tashlab qolinar edi — flag doim True qolib ketardi.
+                    # 5 daqiqadan eskirganini qayta urinishga qaytaramiz.
+                    if time.time() - float(order.get("gift_processing_at") or 0) > 300:
+                        order["gift_processing"] = False
+                        order["gift_error"] = "jarayon to'xtab qoldi, qayta urinish"
+                        log.warning("Gift %s: eskirgan flag to'g'rilandi", order.get("id"))
+                    else:
+                        continue
                 if order.get("status") not in ("completed", "pending_admin", "processing"):
                     continue
                 gift_key = order.get("gift") or order.get("gift_key") or ""
@@ -2728,8 +2864,14 @@ async def process_gift_orders() -> None:
                 recipient = (order.get("recipient") or "").lstrip("@")
                 if not recipient or not stars:
                     continue
+                # Cheksiz qayta urinishni oldini olish: bir necha urinishdan keyin
+                # to'xtaymiz (aks holda har 15 soniyada admin'ga xabar yuborilib,
+                # xato butun kanonni spam qilardi).
+                if int(order.get("gift_attempts", 0)) >= GIFT_MAX_ATTEMPTS:
+                    continue
 
                 order["gift_processing"] = True
+                order["gift_processing_at"] = time.time()
                 db.save()
                 try:
                     gifts = await userbot.get_available_gifts()
@@ -2756,7 +2898,7 @@ async def process_gift_orders() -> None:
                         except Exception as exc:  # noqa: BLE001
                             last_err = exc
                             log.warning("Gift yuborishda xato (%d/3): %s", attempt + 1, exc)
-                            await asyncio.sleep(3 + attempt * 3)
+                            await asyncio.sleep(GIFT_RETRY_DELAY * (1 + attempt))
 
                     if not sent:
                         raise last_err or RuntimeError("noma'lum xato")
@@ -2764,6 +2906,12 @@ async def process_gift_orders() -> None:
                     order["gift_sent"] = True
                     order["gift_processing"] = False
                     order["gift_sent_at"] = now_iso()
+                    order["gift_attempts"] = 0
+                    order.pop("gift_processing_at", None)
+                    order.pop("gift_error", None)
+                    order.pop("gift_failed", None)
+                    # WebApp buyurtmalar ro'yxatida "Yuborilmoqda…" deb qolmasligi uchun
+                    order["status"] = "completed"
                     db.save()
                     log.info("🎁 Gift %s @%s ga userbot orqali yuborildi", gift_key, recipient)
                     await _safe_send(
@@ -2779,9 +2927,41 @@ async def process_gift_orders() -> None:
                 except Exception as exc:  # noqa: BLE001
                     order["gift_processing"] = False
                     order["gift_error"] = str(exc)
+                    order["gift_attempts"] = int(order.get("gift_attempts", 0)) + 1
+                    order.pop("gift_processing_at", None)
+                    last_err = order["gift_attempts"]
                     db.save()
-                    log.error("Gift yuborishda xato: %s", exc)
-                    await notify_admins(f"❌ Gift <code>#{order['id']}</code> yuborishda xato: {exc}")
+                    log.error("Gift yuborishda xato (%d/%d): %s",
+                              last_err, GIFT_MAX_ATTEMPTS, exc)
+                    if last_err >= GIFT_MAX_ATTEMPTS:
+                        order["gift_failed"] = True
+                        db.save()
+                        await notify_admins(
+                            f"🛑 <b>Gift yuborilmadi — urinishlar tugadi</b>\n\n"
+                            f"📦 Buyurtma: <code>#{order['id']}</code>\n"
+                            f"🎁 Sovg'a: {esc(str(order.get('title', gift_key)))}\n"
+                            f"👤 Qabul qiluvchi: <b>@{esc(recipient)}</b>\n"
+                            f"🔍 Sabab: <code>{esc(str(exc)[:200])}</code>\n\n"
+                            f"<i>Qo'lda yuborishingiz yoki buyurtmani bekor qilishingiz kerak.</i>"
+                        )
+                    else:
+                        await notify_admins(
+                            f"❌ Gift <code>#{order['id']}</code> yuborishda xato "
+                            f"({last_err}/{GIFT_MAX_ATTEMPTS}): {esc(str(exc)[:150])}"
+                        )
+            # Holatni bazaga yozamiz — /api/health da ko'rinadi
+            pending_now = sum(
+                1 for o in db.data.get("orders", {}).values()
+                if o.get("kind") == "gift" and not o.get("gift_sent")
+            )
+            sent_now = sum(
+                1 for o in db.data.get("orders", {}).values() if o.get("gift_sent")
+            )
+            if pending_now != last_pending or not last_written:
+                set_runtime_status(
+                    gift_worker="running", gift_pending=pending_now, gift_sent=sent_now
+                )
+                last_pending, last_written = pending_now, True
         except Exception as exc:  # noqa: BLE001
             log.error("process_gift_orders xato: %s", exc)
             await asyncio.sleep(5)
@@ -2807,6 +2987,24 @@ def userbot_diagnose() -> list[str]:
     ub_ok = userbot is not None
     ub_txt = "ishlayapti" if ub_ok else "yo‘q (avto-start muvaffaqiyatsiz)"
     lines.append(f"{yes if ub_ok else no} Userbot obyekti: {ub_txt}")
+
+    # Xotiradagi so'nggi urinish natijasi — aniq sababni ko'rsatadi
+    rt = (db.data.get("settings", {}) or {}).get("runtime", {}) or {}
+    last_ub = rt.get("userbot")
+    if last_ub:
+        human = {
+            "connected": "ulangan",
+            "starting": "ulanmoqda…",
+            "reconnecting": "qayta ulanmoqda…",
+            "missing_env": "kalitlar yetishmaydi",
+            "error": "ULANMADI",
+        }.get(str(last_ub), str(last_ub))
+        mark = yes if last_ub == "connected" else no
+        lines.append(f"{mark} Oxirgi holat: {esc(human)}")
+        if rt.get("account"):
+            lines.append(f"ℹ️ Hisob: <code>{esc(str(rt['account']))}</code>")
+        if rt.get("error"):
+            lines.append(f"🔍 Xato: <code>{esc(str(rt['error'])[:250])}</code>")
     lines.append(f"ℹ️ Bank kuzatuv manzasi: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>")
 
     if not (API_ID and API_HASH and has_session):
@@ -2837,8 +3035,12 @@ def set_runtime_status(**kwargs: Any) -> None:
     """
     try:
         settings = db.data.setdefault("settings", {})
-        # DIQQAT: **str UNPACK qilinmaydi (TypeError). Vaqt alohida "at" kaliti ostida.
-        settings["runtime"] = {"at": datetime.now(TZ).isoformat(), **kwargs}
+        # DIQQAT 1: **str UNPACK qilinmaydi (TypeError).
+        # DIQQAT 2: runtime MELDAN qilinadi (merge), almashtirilmaydi — aks holda
+        # heartbeat (har 20 soniyada) userbot/gift holatlarini o'chirib qo'yadi
+        # va /api/health da ko'rinmaydi.
+        prev = settings.get("runtime") or {}
+        settings["runtime"] = {**prev, **kwargs, "at": datetime.now(TZ).isoformat()}
         db.save()
     except Exception as exc:  # noqa: BLE001
         log.debug("runtime holatini yozib bo'lmadi: %s", exc)
@@ -2933,6 +3135,53 @@ def maybe_start_userbot() -> None:
                 "<i>Odatda sabab: SESSION_STRING muddati tuggan. "
                 "/admin → 📱 Raqam bilan ulash orqali yangisini oling.</i>"
             )
+
+    asyncio.create_task(_start())
+
+
+async def userbot_supervisor() -> None:
+    """Userbot uzilib qolsa yoki ishga tushmasa — qayta ulash.
+
+    AVVAL: userbot bir marta ishga tushsa, uzilib qolsa ham butunlay
+    o'lib qolardi — avto to'ldirish va gift butunlay to'xtardi.
+    Endi: har 60 soniyada tekshiriladi va kerak bo'lsa qayta ulanadi.
+    """
+    log.info("🔄 Userbot supervisor ishga tushdi (avto qayta ulash)")
+    retries = 0
+    while True:
+        try:
+            await asyncio.sleep(60)
+            if userbot is not None and getattr(userbot, "is_connected", False):
+                retries = 0
+                continue
+            if not (API_ID and API_HASH and SESSION_STRING):
+                continue
+            retries += 1
+            if retries > 10:
+                if retries == 11:
+                    log.error("Userbot 10 marta urinishdan keyin ham ulanmadi — to'xtatildi")
+                    await notify_admins(
+                        "🛑 <b>Userbot umuman ulanmayapti</b>\n\n"
+                        "🔍 Sabab ehtimoli: <code>SESSION_STRING</code> muddati tuggan.\n"
+                        "🔧 <i>/admin → 📱 Raqam bilan ulash → telefon + kod → "
+                        "yangilan SESSION_STRING ni Railway ga qo'ying.</i>"
+                    )
+                continue
+            log.warning("Userbot ulanmagan — %d-urinish (avto qayta ulanmoqda)...", retries)
+            set_runtime_status(userbot="reconnecting", attempt=retries)
+            try:
+                maybe_start_userbot()
+                # ulanishga vaqt beramiz
+                for _ in range(20):
+                    await asyncio.sleep(3)
+                    if userbot is not None:
+                        break
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Qayta ulashda xato: %s", exc)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("userbot_supervisor xato: %s", exc)
 
     asyncio.create_task(_start())
 
@@ -3799,6 +4048,7 @@ async def main() -> None:
                 ("Stars worker", star_order_worker()),
                 ("USDT kursi", get_usdt_uzs_rate()),
                 ("Heartbeat", update_heartbeat()),
+                ("Userbot supervisor", userbot_supervisor()),
             ):
                 try:
                     asyncio.create_task(coro)

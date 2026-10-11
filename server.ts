@@ -515,6 +515,17 @@ app.post('/api/order', async (req: Request, res: Response) => {
         `🤖 <i>bot.py worker orqali USDT bilan Fragment'da avtomatik xarid qilinadi.</i>`
     );
   } else if (kind === 'gift') {
+    // Gift userbot orqali ASINCHRON yuboriladi — darhol "yetkazildi" degani
+    // NOTO'G'RI bo'lardi (mijoz pulini to'lab, hech narsa olmay qolardi).
+    orderStatus = 'processing';
+    orderMessage =
+      `\u23f3 <b>Buyurtmangiz qabul qilindi!</b>\n\n` +
+      `\ud83c\udf81 Sovg'a: <b>${title}</b>\n` +
+      `\ud83d\udc64 Qabul qiluvchi: <b>@${recipient}</b>\n` +
+      `\ud83d\udcb3 Yechildi: <b>${price.toLocaleString()} UZS</b>\n` +
+      `\ud83c\udd94 <code>${orderId}</code>\n\n` +
+      `\ud83d\udce6 Sovg'a <b>avtomatik yuborilmoqda</b> — 1\u20135 daqiqa ichida ` +
+      `Telegram hisobingizga tushadi.\n\u23f3 Sabr qiling, xabarni kuting.`;
     // Notify admin / userbot for automated gift dispatch
     sendTelegramMessage(
       store.settings.admin_id || 8307046273,
@@ -885,8 +896,37 @@ app.get('/api/health', async (_req: Request, res: Response) => {
   }
   const rt: any = out.python_bot;
   if (rt) {
-    if (rt.userbot === 'connected') out.checks.push('✅ Userbot ulangan');
-    else if (rt.userbot) out.checks.push(`⚠️ Userbot: ${rt.userbot}${rt.error ? ' — ' + String(rt.error).slice(0, 80) : ''}`);
+    if (rt.userbot === 'connected') {
+      out.checks.push(`✅ Userbot ulangan${rt.account ? ' (' + rt.account + ')' : ''}`);
+    } else if (rt.userbot === 'missing_env') {
+      out.checks.push('❌ Userbot kalitlari yetishmaydi: ' + [].concat(rt.missing || []).join(', '));
+      out.checks.push('   → Avto to‘ldirish va gift yuborish ishlamaydi');
+    } else if (rt.userbot === 'error') {
+      out.checks.push('❌ Userbot ULANMADI: ' + String(rt.error || 'noma‘lum sabab').slice(0, 160));
+      out.checks.push('   → /admin → 📱 Raqam bilan ulash orqali yangi SESSION_STRING oling');
+    } else if (rt.userbot) {
+      out.checks.push(`⚠️ Userbot: ${rt.userbot}${rt.error ? ' — ' + String(rt.error).slice(0, 80) : ''}`);
+    } else {
+      out.checks.push('⚠️ Userbot holati hali yozilmagan');
+    }
+
+    // Gift worker holati
+    if (rt.gift_worker === 'blocked_userbot_offline') {
+      out.checks.push(`❌ Gift worker to‘xtagan — userbot yo‘q (kutayotgan: ${rt.gift_pending ?? '?'})`);
+    } else if (rt.gift_worker === 'running') {
+      out.checks.push(`✅ Gift worker ishlayapti (yuborilgan: ${rt.gift_sent ?? 0}, kutilmoqda: ${rt.gift_pending ?? 0})`);
+    }
+
+    // Avto to'ldirish: qancha topup kutilmoqda
+    try {
+      const pend = Object.values(store.topups).filter(
+        (t: any) => t && t.status === 'pending'
+      ).length;
+      out.pending_topups = pend;
+      if (pend > 0) {
+        out.checks.push(`⏳ Balans to‘ldirish kutilmoqda: ${pend} ta so‘rov`);
+      }
+    } catch { /* topups o'qilmasa */ }
 
     if (rt.bot === 'conflict') {
       out.checks.push('❌ CONFLICT: boshqa jarayon shu token bilan polling qilmoqda!');
