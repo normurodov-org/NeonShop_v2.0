@@ -183,10 +183,103 @@ CASHBACK_RATE = 0.001
 CARD_NUMBER = os.getenv("CARD_NUMBER", "9860 1701 1569 3682")
 CARD_HOLDER = os.getenv("CARD_HOLDER", "O. N (HUMO)")
 
+# === SESSION_STRING yordamchilari (ENV dan yuqorida chaqiriladi) ===
+def normalize_env_session(name: str) -> str:
+    """ENV dan olgan session string'ni tozalaydi.
+
+    Railway'ga qo'ygan session Telegram xabaridan nusxa olingan bo'ladi —
+    u yerida qator uzilishi yoki qo'shtirnoq bo'lishi mumkin. Bu esa
+    base64 uzunligini buzadi va "unpack requires a buffer of 271 bytes"
+    xatosini keltiradi (bu xato hech qanday ma'no bermaydi va
+    administratorni chalkashtiradi).
+    """
+    raw = os.getenv(name, "")
+    if not raw:
+        return ""
+    cleaned = "".join(raw.split())
+    if cleaned != raw.strip():
+        log.warning(
+            "%s da qo'shimcha bo'sh joy topildi va tozalandi "
+            "(odatda Telegram'dan nusxa olganda qoladi).", name,
+        )
+    return cleaned
+
+
+# ---------------------------------------------------------------------------
+# SESSION_STRING tekshiruvi
+# ---------------------------------------------------------------------------
+# Pyrofork session string'i struct ">BI?256sQ?" formatida paketlanadi:
+#   dc_id(1) + api_id(4) + test_mode(1) + auth_key(256) + user_id(8) + is_bot(1)
+#   = 271 bayt  ->  base64 = 362 belgi
+# Eski formatlar: 351 belgi (263 bayt) va 356 belgi (267 bayt).
+#
+# Nima uchun bu muhim:
+#   Noto'g'ri uzunlikdagi session string'i ulanganda xato bo'ladi —
+#   "unpack requires a buffer of 271 bytes" — va bu xato NIMA uchun
+#   bo'lganini tushuntirmaydi, admin esa qayta-qayta urinib
+#   hayotdan bezor bo'ladi. Shu sababli startup'da tekshiramiz va
+#   aniq, tuzatiladigan xabar beramiz.
+SESSION_STRING_EXPECTED = 362
+SESSION_STRING_LEGACY = (351, 356)
+
+
+def normalize_session_string(raw: Any) -> str:
+    """Session string'ni tozalaydi.
+
+    Eng ko'p uchraydigan xato — Telegram'dan nusxa olganda satr oxirida
+    yoki boshida qolgan bo'sh joy / qator uzilishi / qo'shtirnoq.
+    Ular base64 uzunligini buzadi va "unpack requires a buffer of 271
+    bytes" xatosini keltiradi.
+    """
+    if not isinstance(raw, str):
+        return ""
+    s = raw.strip().strip("\"'")
+    # DIQQAT: base64 ichida BO'SH JOY BO'LMAYDI — shuning uchun uni
+    # qisqartirib (collapse) qilish emas, butunlay OLIB TASHLASH kerak.
+    # Aks holda Telegram'dan nusxa olganda qolgan bo'sh joy yoki qator
+    # uzilishi base64 uzunligini buzadi va "unpack requires a buffer of
+    # 271 bytes" xatosi chiqadi.
+    return "".join(s.split())
+
+
+def diagnose_session_string(raw: Any) -> tuple[bool, str]:
+    """(to'g'rimi?, tushuntirish) — admin uchun o'zbekcha."""
+    s = normalize_session_string(raw)
+    if not s:
+        return False, "bo'sh"
+    n = len(s)
+    if n == SESSION_STRING_EXPECTED:
+        return True, f"to'g'ri ({n} belgi)"
+    if n in SESSION_STRING_LEGACY:
+        return True, f"eski format ({n} belgi) — ishlaydi, yangilashni tavsiya qilamiz"
+    # Texnik ma'lumotni (base64 xatosi va h.k.) yashiramiz — u
+    # administratorga hech nima bermaydi. Faqat: nechta belgi, nechta
+    # bayt, va QANDAY tuzatish kerakligi.
+    try:
+        import base64 as _b64
+        decoded = _b64.urlsafe_b64decode(s + "=" * (-n % 4))
+        got = f"{len(decoded)} bayt"
+    except Exception:  # noqa: BLE001
+        got = "tabiiy base64 satri emas"
+    return False, (
+        f"Siz kiritgan qiymat <b>{n} belgi</b> ({got}), "
+        f"lekin to'g'ri session <b>{SESSION_STRING_EXPECTED} belgi</b> bo'lishi kerak.\n\n"
+        "🔧 <b>Qanday tuzatiladi:</b>\n"
+        "1) <code>/admin → 🎁 Gift akkaunt (QR)</code> yoki "
+        "<code>📱 (raqam)</code> — akkauntni shu bot orqali ulang\n"
+        "2) <code>/admin → 📤 Session zaxirasi → 🎁 Gift akkaunti sessionini olish</code>\n"
+        "3) O'sha qiymatni Railway ENV ga <b>GIFT_SESSION_STRING</b> nomi bilan qo'ying\n\n"
+        "⚠️ <i>Tashqi saytlardan (telethon, online generator) yoki eski "
+        "backupdan olingan session <b>ishlamaydi</b> — format boshqa. "
+        "Session faqat shu bot orqali olinadi.</i>"
+    )
+
+
+
 # --- Userbot (pyrofork) ---
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
-SESSION_STRING = os.getenv("SESSION_STRING", "")
+SESSION_STRING = normalize_env_session("SESSION_STRING")
 # Gift yuborish uchun ALOHIDA akkaunt (ixtiyoriy).
 #
 # Nima uchun alohida:
@@ -197,7 +290,7 @@ SESSION_STRING = os.getenv("SESSION_STRING", "")
 # chalkash) akkaunt bo'lib qoladi. Ajratilganda esa gift "Do'kon profili"
 # ko'rinishida aynan DO'KON akkaunti chiqadi.
 # GIFT_SESSION_STRING yo'q bo'lsa — eski tartib (SESSION_STRING) ishlatiladi.
-GIFT_SESSION_STRING = os.getenv("GIFT_SESSION_STRING", "").strip()
+GIFT_SESSION_STRING = normalize_env_session("GIFT_SESSION_STRING")
 TOPUP_SOURCE_CHAT = os.getenv("TOPUP_SOURCE_CHAT", "@humocardbot")
 # Gift worker tekshiruv oraliqi (soniya). Test uchun kichik qilinishi mumkin.
 GIFT_POLL_INTERVAL = float(os.getenv("GIFT_POLL_INTERVAL", "15"))
@@ -3706,6 +3799,22 @@ async def _start_gift_userbot() -> None:
         set_runtime_status(gift_userbot="same_as_userbot")
         log.info("🎁 Gift akkaunti: alohida emas — asosiy userbot ishlatiladi")
         return
+
+    # OLDINDAN TEKSHIRAMIZ: noto'g'ri session Pyrofork ichida
+    # "unpack requires a buffer of 271 bytes" degan ma'nosiz xatoni beradi.
+    # Bu xatoni oldindan aniqlab, aniq va tuzatiladigan xabar beramiz.
+    valid, why = diagnose_session_string(GIFT_SESSION_STRING)
+    if not valid:
+        gift_userbot = None
+        log.error("GIFT_SESSION_STRING noto'g'ri: %s", why.splitlines()[0])
+        set_runtime_status(gift_userbot="invalid_session", gift_error=why[:300])
+        await notify_admins(
+            "❌ <b>GIFT_SESSION_STRING noto'g'ri</b>\n\n"
+            f"🔍 Sabab: {why}\n\n"
+            "🤖 Sovg'alar vaqtincha asosiy akkaunt orqali yuboriladi."
+        )
+        return
+
     set_runtime_status(gift_userbot="starting")
     try:
         gb = UserbotClient(
@@ -3737,6 +3846,19 @@ async def _start_gift_userbot() -> None:
         )
 
 
+async def _notify_bad_session(why: str) -> None:
+    """Noto'g'ri SESSION_STRING haqida admin'ga aniq xabar."""
+    try:
+        await notify_admins(
+            "🛑 <b>SESSION_STRING noto'g'ri — userbot ishlamayapti</b>\n\n"
+            f"🔍 Sabab: {why}\n\n"
+            "🔧 <i>/admin → 📤 Session zaxirasi orqali to'g'risini oling "
+            "va Railway ENV ga qo'ying.</i>"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def maybe_start_userbot() -> None:
     global userbot, gift_userbot
     missing = []
@@ -3753,6 +3875,19 @@ def maybe_start_userbot() -> None:
             ", ".join(missing),
         )
         set_runtime_status(userbot="missing_env", missing=missing)
+        return
+
+    # Session formatini oldindan tekshiramiz — Pyrofork ichidagi
+    # "unpack requires a buffer of 271 bytes" xatosi o'rniga aniq
+    # va tuzatiladigan xabar beramiz.
+    bank_valid, bank_why = diagnose_session_string(SESSION_STRING)
+    if not bank_valid:
+        log.error("SESSION_STRING noto'g'ri: %s", bank_why.splitlines()[0])
+        set_runtime_status(userbot="invalid_session", userbot_error=bank_why[:300])
+        try:
+            asyncio.get_running_loop().create_task(_notify_bad_session(bank_why))
+        except RuntimeError:
+            pass  # loop yo'q (import payti) — xabarsiz o'tamiz
         return
 
     async def _start() -> None:
@@ -4803,10 +4938,15 @@ async def adm_gift_export(call: CallbackQuery):
         await call.message.answer(
             "ℹ️ Hozircha <b>gift akkaunti ulanmagan</b> — sovg'alar "
             "hozir bank akkaunti orqali yuborilmoqda.\n\n"
-            "🔗 Alohida akkaunt ulash uchun quyidagilarni qiling:\n"
-            "1) Boshqa Telegram akkaunti bilan «📱 Raqam bilan ulash»ni oching\n"
-            "2) Telefon + kod kiritib shu akkauntni ulang\n"
-            "3) Railway ENV ga <code>GIFT_SESSION_STRING</code> qo'ying\n\n"
+            "🔗 Alohida akkaunt ulash uchun:\n"
+            "1) <b>«🎁 Gift akkaunt (QR)»</b> yoki <b>«🎁 Gift akkaunt (raqam)»</b>\n"
+            "2) Telegram'da tasdiqlang\n"
+            "3) <b>«🎁 Gift akkaunti sessionini olish»</b> — shu yerda chiqadigan "
+            f"<code>GIFT_SESSION_STRING</code> ni Railway ENV ga qo'ying.\n\n"
+            f"⚠️ <b>Muhim:</b> to'g'ri session <b>{SESSION_STRING_EXPECTED} belgi</b> "
+            "bo'lishi kerak. Boshqa saytlardan (telethon / online generator) "
+            "olingan session <b>ishlamaydi</b> — format farq qiladi va "
+            f"<code>unpack requires a buffer of 271 bytes</code> xatosi chiqadi.\n\n"
             "<i>Ikkalasi bir xil bo'lsa, sovg'a yuboruvchisi bank akkaunti bo'lib qoladi.</i>",
             reply_markup=admin_back_kb(),
         )

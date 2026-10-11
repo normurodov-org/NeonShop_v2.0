@@ -68,7 +68,19 @@ check(B.gift_client() is None, "Ikkalasi ham ulanmagan -> None (worker ogohlanti
 
 print()
 print("=" * 66)
-print("2) _start_gift_userbot — GIFT_SESSION_STRING qarorlari")
+print("2) SESSION_STRING validatsiyasi")
+print("=" * 66)
+for bad, label in (("", "bo'sh"), ("x" * 100, "100 belgi"), ("A" * 362, "362 belgi"),
+                   ("A" * 351, "351 belgi (eski format)")):
+    v, m = B.diagnose_session_string(bad)
+    print(f"    {label:26} -> {'✅' if v else '❌'} {m.splitlines()[0]}")
+check(B.diagnose_session_string("A" * 362)[0], "362 belgi = to'g'ri format")
+check(not B.diagnose_session_string("x" * 100)[0], "100 belgi = noto'g'ri")
+check(B.normalize_session_string("  ab\ncd  ") == "abcd", "bo'sh joy/qator uzilishi tozalanadi")
+
+print()
+print("=" * 66)
+print("3) _start_gift_userbot — GIFT_SESSION_STRING qarorlari")
 print("=" * 66)
 
 
@@ -77,7 +89,7 @@ async def t_start():
 
     # (a) GIFT_SESSION_STRING yo'q -> eski tartib
     B.gift_userbot = None
-    B.SESSION_STRING = "x" * 40
+    B.SESSION_STRING = "A" * B.SESSION_STRING_EXPECTED
     B.GIFT_SESSION_STRING = ""
     await B._start_gift_userbot()
     check(B.gift_userbot is None, "GIFT_SESSION_STRING yo'q -> gift akkaunti yaratilmaydi")
@@ -90,7 +102,7 @@ async def t_start():
 
     # (c) turli akkaunt -> alohida client yaratilishi kerak
     B.gift_userbot = None
-    B.GIFT_SESSION_STRING = "y" * 40
+    B.GIFT_SESSION_STRING = "B" * B.SESSION_STRING_EXPECTED
     started = {}
 
     class UB(B.UserbotClient):
@@ -121,7 +133,7 @@ asyncio.run(t_start())
 
 print()
 print("=" * 66)
-print("3) ub_finish_login — rolega qarab to'g'ri joyga o'tadi")
+print("4) ub_finish_login — rolega qarab to'g'ri joyga o'tadi")
 print("=" * 66)
 
 
@@ -180,7 +192,7 @@ asyncio.run(t_finish())
 
 print()
 print("=" * 66)
-print("4) ORDERS_CHANNEL xabari formati (mijoz rasmidagi)")
+print("5) ORDERS_CHANNEL xabari formati (mijoz rasmidagi)")
 print("=" * 66)
 txt = B.format_order_channel_text(
     title="Stars olindi", who="@odilbek",
@@ -207,7 +219,7 @@ check("Sovg'a: 🧸 Ayiqcha" in plain2, "esc() apostrofni buzmaydi")
 
 print()
 print("=" * 66)
-print("5) server.ts bilan format BIR XILMI?")
+print("6) server.ts bilan format BIR XILMI?")
 print("=" * 66)
 srv = open("server.ts", encoding="utf-8").read()
 fn = re.search(r"function channelOrderText\(.*?\n}\n", srv, re.S)
