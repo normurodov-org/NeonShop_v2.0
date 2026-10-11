@@ -152,16 +152,9 @@ def build_svg(gradient: bool = True) -> str:
     )
 
 
-def build_preview(bg: tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
-    """Tasvirni tekshirish uchun (oq fon ustidagi qora logo).
-
-    Telegram'da orqa fon shaffof bo'ladi — shuning uchun preview ham
-    faqat oq fon ustidagi qora belgini ko'rsatadi.
-    """
-    _, _, k = _tf()
-    im = Image.new("RGB", (CANVAS, CANVAS), bg)
-    d = ImageDraw.Draw(im)
-    ink = (0, 0, 0)
+def _draw_logo(d: ImageDraw.ImageDraw, ink) -> None:
+    """Logoni chizadi (qora rang, foni yo'q)."""
+    ox, oy, k = _tf()
     for b in (LEFT, RIGHT):
         (ax, ay), (bx, by) = place(b[0], b[1]), place(b[2], b[3])
         d.rounded_rectangle([ax, ay, bx, by], radius=BAR_R * k, fill=ink)
@@ -171,6 +164,18 @@ def build_preview(bg: tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
                place(dx1, dy1), place(dx0, dy1 - dsk)], fill=ink)
     d.polygon([place(x, y) for x, y in
                star_points(STAR_CX, STAR_CY, STAR_OUT, STAR_IN)], fill=ink)
+
+
+def build_preview(bg=None) -> Image.Image:
+    """Tekshirish rasmi.
+
+    DIQQAT: avvalgi versiya RGB (oq fonli) edi — shuning uchun "fon bor"
+    deb ko'rinyapti, garchi splash.svg da fon YO'Q edi.
+    Endi default: RGBA + shaffof fon (alpha=0) — ya'ni orqa fonsiz.
+    """
+    mode = "RGBA" if bg is None else "RGB"
+    im = Image.new(mode, (CANVAS, CANVAS), (0, 0, 0, 0) if bg is None else bg)
+    _draw_logo(ImageDraw.Draw(im), (0, 0, 0, 255) if bg is None else (0, 0, 0))
     return im
 
 
@@ -180,11 +185,15 @@ if __name__ == "__main__":
     svg = build_svg()
     (OUT_DIR / "splash.svg").write_text(svg, encoding="utf-8")
 
+    # 1) shaffof fonli (asl ko'rinish — orqa fon YO'Q)
     build_preview().save(OUT_DIR / "splash-preview.png", "PNG")
+    # 2) Telegram TUNG rejimida qanday ko'rinishini ko'rsatish uchun
+    build_preview(bg=(11, 14, 20)).save(OUT_DIR / "splash-preview-dark.png", "PNG")
 
     n_paths = svg.count("<path")
     print(f"✅ public/splash.svg        ({n_paths} ta <path>, {len(svg)} belgi)")
-    print("✅ public/splash-preview.png (tekshirish uchun)")
+    print("✅ public/splash-preview.png       (shaffof fon — orqa fon YO'Q)")
+    print("✅ public/splash-preview-dark.png  (Telegram tun rejimi)")
 
     assert n_paths == 1, f"FAQAT BITTA <path> bo'lishi kerak, topildi: {n_paths}"
     print("   Telegram talabi: bitta <path> ✅")
