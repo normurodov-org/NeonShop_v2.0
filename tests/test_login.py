@@ -56,8 +56,12 @@ print("=" * 70)
 
 
 class FakeSent:
-    phone_code_hash = "HASH123"
+    n = 0
     type = "App"
+
+    @property
+    def phone_code_hash(self):
+        return f"HASH{self.n}"
 
 
 class FakeClient:
@@ -77,13 +81,23 @@ class FakeClient:
 
     async def send_code(self, phone_number):
         FakeClient.calls.append(f"send_code({phone_number})")
+        FakeSent.n += 1
         return FakeSent()
+
+    async def disconnect(self):
+        FakeClient.calls.append("disconnect")
 
     async def sign_in(self, **kw):
         FakeClient.calls.append("sign_in(" + ",".join(sorted(kw)) + ")")
         if "phone_code" in kw:
             if kw["phone_code"] == "11111":
                 raise type("SessionPasswordNeeded", (Exception,), {})("2FA required")
+            # eskirgan hash -> PHONE_CODE_EXPIRED
+            if not kw.get("phone_code_hash", "").endswith(str(FakeSent.n)):
+                raise type("PhoneCodeExpired", (Exception,), {})(
+                    "[400 PHONE_CODE_EXPIRED] The confirmation code has expired")
+            if kw["phone_code"] == "00000":
+                raise type("PhoneCodeInvalid", (Exception,), {})("invalid code")
             if kw["phone_code"] != "12345":
                 raise type("PhoneCodeInvalid", (Exception,), {})("invalid code")
             return types.SimpleNamespace(id=1, username="aliy")
@@ -154,7 +168,7 @@ B.ub_idle = lambda: asyncio.sleep(3600)
 
 async def flow(phone, code, password=None):
     FakeClient.calls.clear()
-    B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0})
+    B.UB_LOGIN.clear(); B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0})
     st = FakeState()
     m1 = FakeMsg(phone)
     await B.adm_ub_phone_wait(m1, st)
@@ -194,8 +208,7 @@ async def run():
     print()
     print("  — noto'g'ri kodda —")
     st, out, calls = await flow("+998976756546", "99999")
-    good = any("Kod qabul qilinmadi" in o for o in out) and not any(
-        "SESSION_STRING=" in o for o in out)
+    good = any("noto" in o.lower() and "g" in o.lower() and "SESSION_STRING=" not in o for o in out)
     ok &= good
     print(" ", "✅ xato to'g'ri xabar berildi" if good else "❌")
 
@@ -210,12 +223,57 @@ async def run():
 
     print()
     print("  — jarayon eskirgan bo'lsa —")
+    B.UB_LOGIN.clear()
+    B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0})
     st = FakeState()
     m = FakeMsg("12345")
     await B.adm_ub_code_wait(m, st)
     good = any("eskirgan" in o for o in m.out)
     ok &= good
     print(" ", "✅ tushunarli xabar" if good else "❌")
+
+    print()
+    print("  — eskirgan kod (PHONE_CODE_EXPIRED) —")
+    FakeClient.calls.clear()
+    FakeSent.n = 1
+    B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0})
+    st = FakeState()
+    await B.adm_ub_phone_wait(FakeMsg("+998976756546"), st)   # HASH1
+    # Endi eski hash bilan urinish (muddat o'tgan holat)
+    B.UB_LOGIN["hash"] = "HASH0"
+    m2 = FakeMsg("66726")
+    await B.adm_ub_code_wait(m2, st)
+    good = any("yangi kod yuborildi" in o for o in m2.out) and not any(
+        "SESSION_STRING=" in o for o in m2.out)
+    ok &= good
+    print("   ", "✅ avtomatik yangi kod yuborildi (qayta boshlash kerak emas)" if good
+          else "❌ " + str(m2.out[-1][:120]))
+    print("    send_code chaqirilgan soni:",
+          len([c for c in FakeClient.calls if "send_code" in c]), "(kerak 2)")
+
+    # yangi hash bilan muvaffaqiyatli kirish
+    m3 = FakeMsg("12345")
+    await B.adm_ub_code_wait(m3, st)
+    good = any("SESSION_STRING=" in o for o in m3.out)
+    ok &= good
+    print("   ", "✅ yangi kod bilan ulandi" if good else "❌ " + str(m3.out[-1][:150]))
+
+    print()
+    print("  — 3 marta ishlatilmagan kod —")
+    FakeClient.calls.clear()
+    FakeSent.n = 1
+    B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0})
+    st = FakeState()
+    await B.adm_ub_phone_wait(FakeMsg("+998976756546"), st)
+    last = ""
+    for _ in range(4):
+        B.UB_LOGIN["hash"] = "HASH0"
+        m = FakeMsg("12345")
+        await B.adm_ub_code_wait(m, st)
+        last = " ".join(m.out)
+    good = "Devices" in last or "tozalang" in last
+    ok &= good
+    print("   ", "✅ to'xtadi va tozalashni tavsiya qildi" if good else "❌ " + last[:150])
 
     print()
     print("NATIJA:", "✅ BARCHASI TO'G'RI" if ok else "❌ MUAMMO BOR")

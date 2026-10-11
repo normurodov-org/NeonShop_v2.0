@@ -3994,7 +3994,7 @@ async def adm_ub_phone(call: CallbackQuery, state: FSMContext):
 
 # Telefon bilan ulash vaqtinchalik ma'lumotlari.
 # FSM ichida saqlanmaydi — Client obyekti JSON'ga sig'maydi.
-UB_LOGIN = {"client": None, "phone": "", "hash": "", "admin_id": 0}
+UB_LOGIN = {"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0}
 
 
 async def ub_finish_login(client, admin_msg: Message, state: FSMContext) -> None:
@@ -4066,13 +4066,17 @@ async def adm_ub_phone_wait(message: Message, state: FSMContext):
             "phone": phone,
             "hash": getattr(sent, "phone_code_hash", ""),
             "admin_id": message.from_user.id,
+            "tries": 0,
         })
         code_type = str(getattr(sent, "type", "") or "")
         extra = ""
         if "CALL" in code_type.upper():
             extra = "\n\n📞 Telegram <b>qo‘ng‘iroq qiladi</b> — kodni eshitib kiriting."
         await message.answer(
-            "🔐 Telegram yuborgan <b>tasdiqlash kodi</b>ni kiriting:" + extra,
+            "🔐 Telegram yuborgan <b>tasdiqlash kodi</b>ni kiriting:" + extra
+            + "\n\n⏱ Kod bir necha daqiqa amal qiladi — iloji boricha tez yuboring.\n"
+            "<i>Kodni olmagan bo'lsangiz, Telegram'dagi xabarni ochib "
+            "«🔔 qayta yuborish» ni bosing.</i>",
             reply_markup=admin_back_kb(),
         )
     except Exception as exc:  # noqa: BLE001
@@ -4126,6 +4130,68 @@ async def adm_ub_code_wait(message: Message, state: FSMContext):
                 "🔑 Telegram parolingizni yuboring:" + hint
             )
             return
+        msg_text = str(exc)
+
+        # Kod MUDDATI TUGGAN — foydalanuvchidan butun oqimni qayta
+        # boshlashini so'ramasdan, o'zimiz yangi kod yuboramiz.
+        # Faqat muddati TUGGAN holatda yangi kod kerak.
+        # PhoneCodeInvalid (noto'g'ri raqam) da hash hali yaroqli —
+        # qayta kod yuborish faqat chalkashlantiradi.
+        if ("PhoneCodeExpired" in name or "PHONE_CODE_EXPIRED" in msg_text
+                or "PhoneCodeEmpty" in name):
+            tries = int(UB_LOGIN.get("tries", 0))
+            if tries < 3:
+                try:
+                    sent = await client.send_code(phone)
+                    UB_LOGIN["hash"] = getattr(sent, "phone_code_hash", "")
+                    UB_LOGIN["tries"] = tries + 1
+                except Exception as send_exc:  # noqa: BLE001
+                    log.warning("Yangi kod yuborilmadi: %s", send_exc)
+                    await client.disconnect()
+                    UB_LOGIN["client"] = None
+                    await state.clear()
+                    await message.answer(
+                        f"❌ Yangi kod ham yuborilmadi:\n<code>{esc(str(send_exc)[:200])}</code>\n\n"
+                        "<i>«📱 Raqam bilan ulash» dan qayta boshlang.</i>"
+                    )
+                    return
+
+                why = ("muddati tugdi" if "Expired" in name or "EXPIRED" in msg_text
+                       else "noto'g'ri bo'lib chiqdi")
+                await message.answer(
+                    f"⏳ Oldingi kod {why} — <b>yangi kod yuborildi</b>.\n\n"
+                    f"🔐 Telegram'dagi <b>eng so'nggi</b> xabarni ochib, "
+                    f"uning kodini shu yerga yuboring.\n\n"
+                    f"<i>Urinish {UB_LOGIN['tries']}/3. Kodni iloji boricha tezroq yuboring.</i>",
+                    reply_markup=admin_back_kb(),
+                )
+                return
+            await client.disconnect()
+            UB_LOGIN["client"] = None
+            await state.clear()
+            await message.answer(
+                "❌ Kod bir necha marta ishlatilmadi.\n\n"
+                "ℹ️ Telegram <b>Settings → Devices</b> dan esk sessiyalarni "
+                "tozalang, keyin <i>«📱 Raqam bilan ulash»</i> dan qayta boshlang."
+            )
+            return
+
+        # Noto'g'ri raqamli kod — hash yaroqli, shuning uchun qayta
+        # so'ramasdan, xatoni aniq aytib beramiz.
+        if "PhoneCodeInvalid" in name or "PHONE_CODE_INVALID" in msg_text:
+            tries = int(UB_LOGIN.get("tries", 0))
+            if tries < 5:
+                UB_LOGIN["tries"] = tries + 1
+                await message.answer(
+                    "❌ Kod <b>noto'g'ri</b>.\n\n"
+                    "🔐 Telegram'dagi xabar bilan solishtirib, "
+                    "<b>faqat 5 ta raqamni</b> yuboring (bo'sh joysiz).\n"
+                    f"<i>Urinish {UB_LOGIN['tries']}/5.</i>",
+                    reply_markup=admin_back_kb(),
+                )
+                return
+
+        # Boshqa xatolar (raqam band, flood limit va h.k.)
         try:
             await client.disconnect()
         except Exception:  # noqa: BLE001
@@ -4133,8 +4199,10 @@ async def adm_ub_code_wait(message: Message, state: FSMContext):
         UB_LOGIN["client"] = None
         await state.clear()
         log.warning("Kod bilan ulash xatosi: %s", exc)
+        friendly = ("Flood limit — ko'p urinish. 1 soat kutib turing."
+                    if "FLOOD" in msg_text.upper() else str(exc)[:250])
         await message.answer(
-            f"❌ Kod qabul qilinmadi:\n<code>{esc(str(exc)[:250])}</code>\n\n"
+            f"❌ Kod qabul qilinmadi:\n<code>{esc(friendly)}</code>\n\n"
             "<i>«📱 Raqam bilan ulash» dan qayta boshlang.</i>"
         )
         return
