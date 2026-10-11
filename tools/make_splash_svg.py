@@ -29,7 +29,7 @@ CANVAS = 512
 OUT_DIR = Path(__file__).resolve().parent.parent / "public"
 
 # --- Geometriya (512x512 maydon) ---------------------------------------------
-BG_R = 118                     # fon burchagi
+BG_R = 118                     # (fon olib tashlandi — saqlanib qoldi)
 LEFT = (165, 150, 225, 370)    # chap ustun  x0,y0,x1,y1
 RIGHT = (287, 205, 347, 360)   # o'ng ustun
 BAR_R = 30                     # ustun burchagi
@@ -45,7 +45,11 @@ DIAG_W = 60                    # diagonal kengligi
 STAR_CX, STAR_CY = 322, 155    # yulduz markazi
 STAR_OUT, STAR_IN = 55, 23     # yulduz radiusi
 
-PURPLE_A, PURPLE_B = "#7C3AED", "#DB2777"
+# Telegram splash: fon yo‘q, faqat qora logo (rasmdagi namunaga o‘xshash)
+LOGO_COLOR = "#000000"
+# Telegram splash belgisini o'z o'lchamida chizadi — shuning uchun logo
+# 512x512 maydonni imkon bo'lganicha to'ldirishi kerak.
+ART_SCALE = 1.38
 
 
 # ---------------------------------------------------------------- yordamchilar
@@ -74,82 +78,112 @@ def star_points(cx: float, cy: float, r_out: float, r_in: float,
     return pts
 
 
+def content_bounds() -> tuple[float, float, float, float]:
+    """Logo chegaralari (markazga tekislash uchun)."""
+    xs: list[float] = []
+    ys: list[float] = []
+    for x0, y0, x1, y1 in (LEFT, RIGHT):
+        xs += [x0, x1]
+        ys += [y0, y1]
+    dx0, dy0, dx1, dy1 = DIAG
+    xs += [dx0, dx1]
+    ys += [dy0, dy1]
+    for x, y in star_points(STAR_CX, STAR_CY, STAR_OUT, STAR_IN):
+        xs.append(x)
+        ys.append(y)
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def content_center() -> tuple[float, float]:
+    """Logo geometriyasining markazi (chizilgan koordinatalarda)."""
+    x0, y0, x1, y1 = content_bounds()
+    return (x0 + x1) / 2, (y0 + y1) / 2
+
+
+def _tf() -> tuple[float, float, float]:
+    """(siljitma x, siljitma y, masshtab) — markazga tekislash uchun."""
+    cx, cy = content_center()
+    return (CANVAS / 2 - cx * ART_SCALE, CANVAS / 2 - cy * ART_SCALE, ART_SCALE)
+
+
+def place(x: float, y: float) -> tuple[float, float]:
+    """Logo koordinatasini kadr markaziga keltiradi va kattalashtiradi."""
+    ox, oy, s = _tf()
+    return (x * s + ox, y * s + oy)
+
+
 def build_subpaths() -> list[str]:
     """Fon + N + yulduz: bitta <path> ichidagi subpath'lar."""
-    subs: list[str] = [rounded_rect(0, 0, CANVAS, CANVAS, BG_R)]
+    # DIQQAT: fon (yumaloq kvadrat) QO'SHILMAYDI — Telegram splash'da
+    # faqat logo ko'rsatiladi, orqa foni shaffof qoladi.
+    _, _, k = _tf()
+    subs: list[str] = []
+
+    def box(b):
+        x0, y0 = place(b[0], b[1])
+        x1, y1 = place(b[2], b[3])
+        return [x0, y0, x1, y1]
 
     # N — chap ustun
-    subs.append(rounded_rect(*LEFT, r=BAR_R))
+    subs.append(rounded_rect(*box(LEFT), r=BAR_R * k))
     # N — o'ng ustun
-    subs.append(rounded_rect(*RIGHT, r=BAR_R))
+    subs.append(rounded_rect(*box(RIGHT), r=BAR_R * k))
 
     # N — diagonal (parallelogram)
     dx0, dy0, dx1, dy1 = DIAG
-    subs.append(
-        f"M {dx0} {dy0} L {dx1} {dy0 + (dy1 - dy0 - DIAG_W)} "
-        f"L {dx1} {dy1} L {dx0} {dy1 - (dy1 - dy0 - DIAG_W)} Z"
-    )
+    dsk = dy1 - dy0 - DIAG_W
+    pts = [place(dx0, dy0), place(dx1, dy0 + dsk), place(dx1, dy1), place(dx0, dy1 - dsk)]
+    subs.append("M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in pts) + " Z")
 
     # Yulduz
-    pts = star_points(STAR_CX, STAR_CY, STAR_OUT, STAR_IN)
-    star_d = "M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in pts) + " Z"
-    subs.append(star_d)
+    star_pts = [place(x, y) for x, y in star_points(STAR_CX, STAR_CY, STAR_OUT, STAR_IN)]
+    subs.append("M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in star_pts) + " Z")
 
     return subs
 
 
 def build_svg(gradient: bool = True) -> str:
     d = " ".join(build_subpaths())
-    if gradient:
-        return (
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" '
-            'width="512" height="512">'
-            "<defs>"
-            f'<linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
-            f'<stop offset="0" stop-color="{PURPLE_A}"/>'
-            f'<stop offset="0.55" stop-color="#9333EA"/>'
-            f'<stop offset="1" stop-color="{PURPLE_B}"/>'
-            "</linearGradient>"
-            "</defs>"
-            f'<path fill-rule="evenodd" clip-rule="evenodd" fill="url(#g)" d="{d}"/>'
-            "</svg>"
-        )
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" '
         'width="512" height="512">'
-        f'<path fill-rule="evenodd" clip-rule="evenodd" fill="#9333EA" d="{d}"/>'
+        f'<path fill="{LOGO_COLOR}" d="{d}"/>'
         "</svg>"
     )
 
 
 def build_preview(bg: tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
-    """Tasvirni tekshirish uchun PNG ko'rinishi (teshiklar fon rangida)."""
+    """Tasvirni tekshirish uchun (oq fon ustidagi qora logo).
+
+    Telegram'da orqa fon shaffof bo'ladi — shuning uchun preview ham
+    faqat oq fon ustidagi qora belgini ko'rsatadi.
+    """
+    _, _, k = _tf()
     im = Image.new("RGB", (CANVAS, CANVAS), bg)
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle([0, 0, CANVAS - 1, CANVAS - 1], radius=BG_R, fill=(0x93, 0x33, 0xEA))
-    d.rounded_rectangle(LEFT, radius=BAR_R, fill=bg)
-    d.rounded_rectangle(RIGHT, radius=BAR_R, fill=bg)
-
+    ink = (0, 0, 0)
+    for b in (LEFT, RIGHT):
+        (ax, ay), (bx, by) = place(b[0], b[1]), place(b[2], b[3])
+        d.rounded_rectangle([ax, ay, bx, by], radius=BAR_R * k, fill=ink)
     dx0, dy0, dx1, dy1 = DIAG
-    d.polygon([(dx0, dy0), (dx1, dy0 + (dy1 - dy0 - DIAG_W)),
-               (dx1, dy1), (dx0, dy1 - (dy1 - dy0 - DIAG_W))], fill=bg)
-    d.polygon(star_points(STAR_CX, STAR_CY, STAR_OUT, STAR_IN), fill=bg)
+    dsk = dy1 - dy0 - DIAG_W
+    d.polygon([place(dx0, dy0), place(dx1, dy0 + dsk),
+               place(dx1, dy1), place(dx0, dy1 - dsk)], fill=ink)
+    d.polygon([place(x, y) for x, y in
+               star_points(STAR_CX, STAR_CY, STAR_OUT, STAR_IN)], fill=ink)
     return im
 
 
 if __name__ == "__main__":
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    svg = build_svg(gradient=True)
+    svg = build_svg()
     (OUT_DIR / "splash.svg").write_text(svg, encoding="utf-8")
-
-    (OUT_DIR / "splash-solid.svg").write_text(build_svg(gradient=False), encoding="utf-8")
 
     build_preview().save(OUT_DIR / "splash-preview.png", "PNG")
 
     n_paths = svg.count("<path")
     print(f"✅ public/splash.svg        ({n_paths} ta <path>, {len(svg)} belgi)")
-    print("✅ public/splash-solid.svg  (faqat bitta rang — zaxira variant)")
     print("✅ public/splash-preview.png (tekshirish uchun)")
 
     assert n_paths == 1, f"FAQAT BITTA <path> bo'lishi kerak, topildi: {n_paths}"
