@@ -34,12 +34,13 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (!this.state.error) return this.props.children;
 
     return (
-      <div className="max-w-md mx-auto mt-6 p-5 rounded-[26px] liquid-glass-card text-center space-y-3">
+      <div className="max-w-md mx-auto mt-6 p-5 rounded-[26px] bg-[#12151d] border border-white/10
+                    text-center space-y-3 shadow-xl">
         <div className="text-3xl">😕</div>
-        <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
+        <h3 className="text-sm font-bold text-white">
           Bu bo&apos;limda xatolik yuz berdi
         </h3>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+        <p className="text-xs text-neutral-300 leading-relaxed">
           {this.props.label ? `"${this.props.label}" ` : ''}
           bo‘limi vaqtincha to‘xtadi. Boshqa bo‘limlardan foydalanishingiz mumkin.
         </p>
@@ -49,7 +50,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
         <button
           onClick={() => this.setState({ error: null })}
           className="w-full py-3 rounded-[16px] text-xs font-bold apple-spring cursor-pointer
-                     bg-black text-white dark:bg-white dark:text-black"
+                     bg-white text-black"
         >
           Qayta urinish
         </button>

@@ -105,9 +105,16 @@ async def run():
     print("=" * 72)
     ok &= await scenario("begona karta", "✅ To'lov\n💳 HUMOCARD *1111\n➕ 50 000 UZS",
                          mid=2001, expect=False)
-    ok &= await scenario("boshqa summa (30k kutilmoqda)",
+    # Yangi xatti-harakat: faqat BITTA so'rov bo'lsa, kelgan haqiqiy
+    # summa qisman to'ldirish sifatida qo'shiladi (avval "bog'lanmaydi" edi).
+    ok &= await scenario("boshqa summa -> qisman to'ldirish",
                          "✅ To'lov\n💳 HUMOCARD *3682\n➕ 50 000 UZS",
-                         amount=30000, mid=2002, expect=False)
+                         amount=30000, mid=2002, expect=True)
+
+    # Ikkita so'rov bo'lsa esa chalkashtirilmaydi (xavfsizlik uchun)
+    ok &= await scenario("begona karta (qisman emas)", 
+                         "✅ To'lov\n💳 HUMOCARD *1111\n➕ 50 000 UZS",
+                         mid=2003, expect=False)
 
     print()
     print("=" * 72)

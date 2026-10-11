@@ -324,7 +324,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
         {resolvedProfile && !isEditingRecipient ? (
           <div
             onClick={() => setIsEditingRecipient(true)}
-            className="flex items-center justify-between p-3 rounded-[20px] bg-white/[0.05] dark:bg-white/[0.08] border border-white/15 hover:border-white/30 apple-spring cursor-pointer shadow-sm group"
+            className="flex items-center justify-between p-3 rounded-[20px] bg-white/[0.05] border border-white/15 hover:border-white/30 apple-spring cursor-pointer shadow-sm group"
             title="O'zgartirish uchun bosing"
           >
             <div className="flex items-center gap-3">
@@ -579,7 +579,9 @@ export const BuyView: React.FC<BuyViewProps> = ({
       {/* Sovg'a uchun yuborish turi: anonim yoki profil ko'rinadi */}
       {subTab === 'gifts' && (
         <div className="rounded-[22px] liquid-glass-card p-3.5 space-y-2.5">
-          <div className="text-[11px] font-semibold text-neutral-600 dark:text-neutral-300">
+          <div className={`text-[11px] font-semibold ${
+            isDark ? 'text-neutral-300' : 'text-neutral-600'
+          }`}>
             🕶️ Sovg'ani qanday yuboramiz?
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -587,8 +589,10 @@ export const BuyView: React.FC<BuyViewProps> = ({
               onClick={() => setHideMyName(true)}
               className={`py-2.5 rounded-[16px] text-[11px] font-semibold apple-spring cursor-pointer border ${
                 hideMyName
-                  ? 'bg-white text-black border-white dark:bg-white dark:text-black'
-                  : 'liquid-glass-pill border-white/20 text-neutral-600 dark:text-neutral-300'
+                  ? 'bg-white text-black border-white'
+                  : `liquid-glass-pill border-white/20 ${
+                      isDark ? 'text-neutral-300' : 'text-neutral-600'
+                    }`
               }`}
             >
               🕶️ Anonim
@@ -600,8 +604,10 @@ export const BuyView: React.FC<BuyViewProps> = ({
               onClick={() => setHideMyName(false)}
               className={`py-2.5 rounded-[16px] text-[11px] font-semibold apple-spring cursor-pointer border ${
                 !hideMyName
-                  ? 'bg-white text-black border-white dark:bg-white dark:text-black'
-                  : 'liquid-glass-pill border-white/20 text-neutral-600 dark:text-neutral-300'
+                  ? 'bg-white text-black border-white'
+                  : `liquid-glass-pill border-white/20 ${
+                      isDark ? 'text-neutral-300' : 'text-neutral-600'
+                    }`
               }`}
             >
               👤 Profil ko'rinadi
@@ -660,10 +666,14 @@ export const BuyView: React.FC<BuyViewProps> = ({
               🎭
             </div>
             <div>
-              <h2 className="text-base font-bold text-neutral-900 dark:text-white">
+              <h2 className={`text-base font-bold ${
+                isDark ? 'text-white' : 'text-neutral-900'
+              }`}>
                 NFT Gift Ijarasi
               </h2>
-              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
+              <p className={`text-[11px] mt-1 leading-relaxed ${
+                isDark ? 'text-neutral-400' : 'text-neutral-500'
+              }`}>
                 NFT sovg&apos;a vaqtincha ijara qilish. Rasmiy xizmat
                 <b> @rentnftlarr </b> kanalida.
               </p>

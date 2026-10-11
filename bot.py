@@ -2988,6 +2988,21 @@ async def on_humo_message(client: UserbotClient, message) -> None:
             and (card_ok or not card)
         ]
 
+        # Aniq moslik topilmasa: kartamizga kelgan to'lov bo'lsa va
+        # faqat BITTA kutilayotgan so'rov bo'lsa — mijoz to'lagan
+        # HAQIQIY summani to'ldiramiz (qisman to'ldirish).
+        # Masalan: mijoz 10 000 so'rov qilgan, 5 000 yuborgan.
+        # Bunday holda balansga 5 000 qo'shiladi — mijoz pulini
+        # yo'qotmaydi, xato tuzatiladi.
+        # Bank xabaridan to'lovni yuborgan shaxsni aniqlab bo'lmaydi
+        # (faqat summa + karta ma'lum). Shuning uchun to'lov faqat BITTA
+        # kutilayotgan so'rov bo'lganda avtomatik bog'lanadi — aks
+        # holda chalkashlikni oldi olish uchun admin hal qiladi.
+        partial = False
+        if not matches and card_ok and len(pending) == 1:
+            matches = pending
+            partial = True
+
         if matches:
             # Eng eski so'rovni birinchi yopamiz
             t = min(matches, key=lambda x: x.get("created_at", ""))
@@ -2995,18 +3010,38 @@ async def on_humo_message(client: UserbotClient, message) -> None:
             t["completed_at"] = now_iso()
             t["auto_verified"] = True
             t["payment_method"] = "humocard"
+            # Balansga MIJOZ TO'LAGAN haqiqiy summa qo'shiladi
+            # (qisman to'ldirishda so'ralgan summa emas).
+            credit = amount if partial else int(t["amount"])
+            t["requested_amount"] = int(t.get("amount", 0))
+            t["amount"] = credit
+            t["partial"] = partial
+
             u = db.data["users"].get(str(t["user_id"]))
             if u:
-                u["balance"] = int(u.get("balance", 0)) + t["amount"]
-                u["total_topup"] = int(u.get("total_topup", 0)) + t["amount"]
-                db.add_history(u, "topup", int(t["amount"]), f"Auto: HUMOCARD *{card or '????'}")
+                u["balance"] = int(u.get("balance", 0)) + credit
+                u["total_topup"] = int(u.get("total_topup", 0)) + credit
+                note = f"Auto: HUMOCARD *{card or '????'}"
+                if partial:
+                    note += f" (qisman: so'ralgan {fmt(t['requested_amount'])} so'm)"
+                db.add_history(u, "topup", credit, note)
                 try:
-                    await bot.send_message(
-                        u["id"],
-                        f"✅ <b>{fmt(t['amount'])} UZS</b> balansingizga qo'shildi!\n\n"
-                        f"💳 To'lov avtomatik aniqlanildi.\n"
-                        f"💰 Balans: <b>{fmt(u['balance'])} so'm</b>",
-                    )
+                    if partial:
+                        txt = (
+                            f"✅ <b>{fmt(credit)} UZS</b> balansingizga qo'shildi!\n\n"
+                            f"💳 To'lov avtomatik aniqlanildi.\n"
+                            f"ℹ️ Siz so'rovingizni <b>{fmt(t['requested_amount'])} so'm</b> qilib "
+                            f"yaratgan edingiz, lekin <b>{fmt(credit)} so'm</b> yubordingiz — "
+                            f"kelgan summa qo'shildi.\n"
+                            f"💰 Balans: <b>{fmt(u['balance'])} so'm</b>"
+                        )
+                    else:
+                        txt = (
+                            f"✅ <b>{fmt(credit)} UZS</b> balansingizga qo'shildi!\n\n"
+                            f"💳 To'lov avtomatik aniqlanildi.\n"
+                            f"💰 Balans: <b>{fmt(u['balance'])} so'm</b>"
+                        )
+                    await bot.send_message(u["id"], txt)
                 except Exception:  # noqa: BLE001
                     pass
             db.data["settings"]["total_volume_uzs"] = int(db.data["settings"].get("total_volume_uzs", 0)) + t["amount"]
@@ -3037,8 +3072,10 @@ async def on_humo_message(client: UserbotClient, message) -> None:
                 f"💵 Kelgan summa: <b>{fmt(amount)} UZS</b>\n"
                 f"💳 Karta: <code>*{card or '????'}</code>\n"
                 f"📋 Kutayotgan so'rovlar: {waiting or 'yo‘q'}\n\n"
-                f"<i>Mijoz boshqa summa to'lagan bo'lishi mumkin. Zarur bo'lsa qo'lda "
-                f"tasdiqlang: /api/admin/adjust-balance</i>"
+                f"<i>Bir nechta so'rov kutayotgan bo'lgani uchun avtomatik "
+                f"aniqlab bo'lmadi. To'lovni to'g'ri mijozga biriktirish uchun: "
+                f"<b>/admin → ➕ Balans qo'shish</b> orqali shu mijozning ID siga "
+                f"so'rov ro'yxatidan topib, <b>+{fmt(amount)}</b> qo'shing.</i>"
             )
     except Exception as exc:  # noqa: BLE001
         log.exception("Humo xabarini qayta ishlashda xato")

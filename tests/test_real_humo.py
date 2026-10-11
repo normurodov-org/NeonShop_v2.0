@@ -141,12 +141,15 @@ async def run():
 
     print()
     print("=" * 70)
-    print("6) NOTO'G'RI SUMMA — topishirilMASligi kerak")
+    print("6) BOSHQA SUMMA keldi — qisman to'ldirish (kelgan summa qo'shiladi)")
     print("=" * 70)
     st, bal = await full_flow(REAL, 30000, 9001)   # 30 000 so'ralgan, 2 000 keldi
-    good = st == "pending" and bal == 0
+    good = st == "completed" and bal == 2000
     ok &= good
-    print(f"  so'ralgan 30 000, keldi 2 000 → status={st}, balans={bal} {'✅' if good else '❌'}")
+    ok &= good
+    res = "kelgan summa qo'shildi" if good else "xato"
+    print("  so'ralgan 30 000, keldi 2 000 -> status=%s, balans=%s [%s]"
+          % (st, bal, res))
 
     print()
     print("=" * 70)
