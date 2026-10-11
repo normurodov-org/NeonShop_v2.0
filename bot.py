@@ -30,6 +30,8 @@ Ishga tushirish:
 # 0. EVENT LOOP PATCH
 # =============================================================================
 import asyncio
+import contextvars
+import traceback
 import sys
 import warnings
 
@@ -1736,6 +1738,7 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="🎁 Gift akkaunt (raqam)", callback_data="adm:gift_phone")],
             [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status"),
              InlineKeyboardButton(text="📤 Session zaxirasi", callback_data="adm:ub_export")],
+            [InlineKeyboardButton(text="🎁 Gift qayta yuborish", callback_data="adm:gift_retry")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
         ]
     )
@@ -3378,7 +3381,9 @@ async def process_gift_orders() -> None:
                 order["gift_processing_at"] = time.time()
                 db.save()
                 try:
+                    _stage("1) sovg'alar ro'yxatini olish (get_available_gifts)")
                     gifts = await gclient.get_available_gifts()
+                    _stage("2) sovg'ani tanlash (find_gift)")
                     match = find_gift(gifts, gift_key, stars)
                     if match is None:
                         log.warning("Gift (%s / %s) uchun mos sovg'a topilmadi",
@@ -3407,6 +3412,7 @@ async def process_gift_orders() -> None:
                     sent = False
                     last_err: Optional[Exception] = None
                     for attempt in range(3):
+                        _stage(f"3) send_gift (urinish {attempt + 1}/3)")
                         try:
                             # Sovg'a ostiga mijoz qoldirgan matn (ixtiyoriy)
                             gift_text = str(order.get("gift_text") or "").strip()
@@ -3429,6 +3435,7 @@ async def process_gift_orders() -> None:
                     if not sent:
                         raise last_err or RuntimeError("noma'lum xato")
 
+                    _stage("4) bazaga yozish va xabar yuborish")
                     order["gift_sent"] = True
                     order["gift_processing"] = False
                     order["gift_sent_at"] = now_iso()
@@ -3454,15 +3461,64 @@ async def process_gift_orders() -> None:
                         f"🎁 Gift <code>#{order['id']}</code> ({gift_key}) @{esc(recipient)} ga yuborildi."
                     )
                 except Exception as exc:  # noqa: BLE001
+                    internal = is_internal_gift_error(exc)
                     order["gift_processing"] = False
                     order["gift_error"] = str(exc)
-                    order["gift_attempts"] = int(order.get("gift_attempts", 0)) + 1
+                    # DIQQAT: urinishlar soni faqat DOIMIY xatolarda oshiriladi.
+                    # ICHKI xato (masalan "NoneType has no len()") mijozning
+                    # gunohi emas — 5 urinishdan keyin ham mijoz pulini to'lab
+                    # giftini olmay qolmasligi kerak.
+                    if internal:
+                        order["gift_internal_errors"] = int(
+                            order.get("gift_internal_errors", 0)) + 1
+                    else:
+                        order["gift_attempts"] = int(order.get("gift_attempts", 0)) + 1
                     order.pop("gift_processing_at", None)
-                    last_err = order["gift_attempts"]
+                    # Eslatma: ichki xatodan keyin "gift_attempts" o'zgarmaydi,
+                    # shuning uchun uni `.get()` bilan olamiz (KeyError bo'lmasin).
+                    last_err = int(order.get("gift_attempts", 0))
+                    # QAYERDA xatolashganini aniq bilish uchun traceback.
+                    # AVVAL faqat str(exc) yuborilardi ("object of type
+                    # 'NoneType' has no len()") — qaysi qatorda sodir bo'lishi
+                    # aniq bo'lmaydi, shuning uchun topish imkoni yo'q edi.
+                    tb = "".join(traceback.format_exception(exc, limit=8))
+                    stage = _gift_stage.get() or "?"
+                    order["gift_error_stage"] = stage
+                    order["gift_error_trace"] = tb[-1200:]
                     db.save()
-                    log.error("Gift yuborishda xato (%d/%d): %s",
-                              last_err, GIFT_MAX_ATTEMPTS, exc)
-                    if last_err >= GIFT_MAX_ATTEMPTS:
+                    log.error(
+                        "Gift yuborishda xato (%d/%d) [bosqich: %s]: %s\n%s",
+                        last_err, GIFT_MAX_ATTEMPTS, stage, exc, tb,
+                    )
+                    diag = (
+                        f"\n🧩 <b>Bosqich:</b> <code>{esc(stage)}</code>"
+                        f"\n📍 <code>{esc(_shortest_frame(tb))}</code>"
+                        f"\n<code>{esc(tb[-500:])}</code>"
+                    )
+                    if internal:
+                        # Ichki xato: buyurtma YOPILMAYDI — keyingi siklda
+                        # qayta urinishiladi. Eng ko'p uchraydigan sabab —
+                        # mijozning (yoki Telegram'ning) holati vaqtincha
+                        # noto'g'ri; keyingi urinishda o'zi tuziladi.
+                        order["gift_needs_review"] = True
+                        INTERNAL_GIFT_ERRORS_SEEN["n"] += 1
+                        # Har 5 ta ichki xatodan keyin ro'yxatni yangilaymiz
+                        # (eskirgan ma'lumot bo'lib qolmasin)
+                        if INTERNAL_GIFT_ERRORS_SEEN["n"] % 5 == 1:
+                            try:
+                                await gclient.get_available_gifts()
+                            except Exception:  # noqa: BLE001
+                                pass
+                        db.save()
+                        if last_err == 1:
+                            await notify_admins(
+                                f"⚠️ Gift <code>#{order['id']}</code> yuborishda "
+                                f"<b>dasturiy xato</b> (mijozning gunohi emas).\n"
+                                f"🔍 Sabab: <code>{esc(str(exc)[:180])}</code>{diag}\n\n"
+                                f"🤖 Avtomatik qayta urinish davom etadi. "
+                                f"Agar takrorlansa — <code>/admin → 🎁 Gift qayta yuborish</code>."
+                            )
+                    elif last_err >= GIFT_MAX_ATTEMPTS:
                         order["gift_failed"] = True
                         db.save()
                         await notify_admins(
@@ -3470,13 +3526,14 @@ async def process_gift_orders() -> None:
                             f"📦 Buyurtma: <code>#{order['id']}</code>\n"
                             f"🎁 Sovg'a: {esc(str(order.get('title', gift_key)))}\n"
                             f"👤 Qabul qiluvchi: <b>@{esc(recipient)}</b>\n"
-                            f"🔍 Sabab: <code>{esc(str(exc)[:200])}</code>\n\n"
+                            f"🔍 Sabab: <code>{esc(str(exc)[:200])}</code>{diag}\n\n"
                             f"<i>Qo'lda yuborishingiz yoki buyurtmani bekor qilishingiz kerak.</i>"
                         )
                     else:
                         await notify_admins(
                             f"❌ Gift <code>#{order['id']}</code> yuborishda xato "
                             f"({last_err}/{GIFT_MAX_ATTEMPTS}): {esc(str(exc)[:150])}"
+                            + (diag if last_err >= 2 else "")
                         )
             # Holatni bazaga yozamiz — /api/health da ko'rinadi
             pending_now = sum(
@@ -3811,6 +3868,62 @@ def order_is_anonymous(order: dict) -> bool:
     return bool(order.get("hide_my_name", True))
 
 
+# Gift yuborishning qaysi bosqichi xatolashganini kuzatish uchun.
+# "object of type 'NoneType' has no len()" kabi xatolar QAYERDA sodir
+# bo'lganini aytmaydi — shuning uchun har bosqichga nom qo'yamiz va
+# xatoni ushlaganimizda shu nomni xabarda ko'rsatamiz.
+# ContextVar kerak: worker bitta task da yuradi, lekin .get() argumentisiz
+# chaqirilishi uchun an'lanadi (oddiy dict.is() TypeError berardi).
+_gift_stage = contextvars.ContextVar("gift_stage", default="")
+
+
+def _stage(name: str) -> None:
+    _gift_stage.set(name)
+
+
+def _shortest_frame(tb: str) -> str:
+    """Traceback'dan ENG QISQA fayl/qator ko'rsatadi (odatda asil sabab)."""
+    lines = [ln.strip() for ln in tb.splitlines() if ln.strip().startswith("File ")]
+    return lines[-1] if lines else "noma'lum"
+
+
+# Gift yuborishdagi xatolarni ikki turga ajratamiz:
+#
+#  DOIMIY (mijozga bog'liq) — qayta urinish foyda bermaydi:
+#    - username topilmadi / noto'g'ri
+#    - Stars yetarli emas
+#    - Telegram "gift is not available"
+#  Bu xatolar bilan urinishlar SONLANADI (mijozga darhol xabar beriladi).
+#
+#  ICHKI (dasturiy/tarmoq) — qayta urinish foyda BO'LADI:
+#    - TypeError, AttributeError (masalan "NoneType has no len()")
+#    - Timeout, ConnectionError, flood kutish
+#  Bu xatolar mijozning gunohi emas — ular avtomatik tiklanadi va
+#  buyurtma "muvaffaqiyatsiz" deb YOPILMAYDI (faqat urinishlar soni
+#  chiqib ketsa, maxsus "gift_needs_review" belgisi qo'yiladi).
+INTERNAL_GIFT_ERRORS = (
+    TypeError, AttributeError, IndexError, KeyError, ValueError,
+    TimeoutError, ConnectionError, OSError,
+)
+
+
+# Ichki xatolar sanaladi (diagnostika uchun /api/health da ko'rinadi)
+INTERNAL_GIFT_ERRORS_SEEN = {"n": 0}
+
+
+def is_internal_gift_error(exc: BaseException) -> bool:
+    """Xato dasturiy/tarmoq xarakterida mi?"""
+    if isinstance(exc, INTERNAL_GIFT_ERRORS):
+        return True
+    name = type(exc).__name__
+    return any(
+        k in name for k in (
+            "Timeout", "Connection", "Network", "Flood", "Server", "Timeout",
+            "Internal", "ServiceUnavailable",
+        )
+    )
+
+
 def gift_sticker_emoji(g: Any) -> str:
     """Telegram Gift obyektidan sticker emojisini oladi."""
     return str(getattr(getattr(g, "sticker", None), "emoji", "") or "")
@@ -4036,6 +4149,95 @@ async def adm_ub_status(call: CallbackQuery):
 
     await call.message.answer(
         f"🩺 Userbot holati: <b>{status}</b>\n\n" + "\n".join(lines),
+        reply_markup=admin_back_kb(),
+    )
+
+
+# =============================================================================
+# ADMIN: qurilmagan gift buyurtmalarini qayta yuborish
+# =============================================================================
+@admin_router.callback_query(F.data == "adm:gift_retry")
+async def adm_gift_retry(call: CallbackQuery):
+    """Yuborilmagan / muvaffaqiyatsiz bo'lgan gift'larni ro'yxatlaydi.
+
+    Ichiyki xato (masalan "NoneType has no len()") bo'lsa, buyurtma
+    avtomatik yopilMAYdi — shu yerda ko'rib, qayta urinishni
+    qo'lda ham boshlash mumkin.
+    """
+    if not await _admin_guard(call):
+        return
+    await call.answer("🔎 Qidirilyapti...")
+    db.reload_if_changed()
+    stuck = [
+        o for o in db.data.get("orders", {}).values()
+        if o.get("kind") == "gift"
+        and not o.get("gift_sent")
+        and (o.get("gift_failed") or o.get("gift_error") or o.get("gift_needs_review"))
+    ]
+    if not stuck:
+        await call.message.answer(
+            "✅ <b>Muammo yo'q</b> — yuborilmagan gift buyurtmasi topilmadi.",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    lines = [
+        "🎁 <b>Yuborilmagan gift'lar</b>\n",
+    ]
+    buttons: list[list[Any]] = []
+    row: list[Any] = []
+    for o in stuck[-12:]:
+        st = ("🛑 urishlar tugagan" if o.get("gift_failed")
+              else "🧩 ichki xato" if o.get("gift_needs_review")
+              else "⏳ kutilmoqda")
+        lines.append(
+            f"\n📦 <code>{esc(str(o.get('id')))}</code> — "
+            f"{esc(str(o.get('title') or o.get('gift')))} "
+            f"→ <b>@{esc(str(o.get('recipient')))}</b>\n"
+            f"   holat: {st} · urinish: {o.get('gift_attempts', 0)}/"
+            f"{GIFT_MAX_ATTEMPTS}\n"
+            f"   xato: <code>{esc(str(o.get('gift_error') or '—')[:120])}</code>"
+        )
+        row.append(InlineKeyboardButton(
+            text=f"♻️ {str(o.get('id'))[-6:]}",
+            callback_data=f"adm:gift_retry_one:{o.get('id')}",
+        ))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="adm:home")])
+
+    await call.message.answer(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),  # type: ignore[arg-type]
+    )
+
+
+@admin_router.callback_query(F.data.startswith("adm:gift_retry_one:"))
+async def adm_gift_retry_one(call: CallbackQuery):
+    """Bitta buyurtmaning urinishlarini tozalaydi — worker qayta yuboradi."""
+    if not await _admin_guard(call):
+        return
+    order_id = call.data.split(":", 1)[1]
+    db.reload_if_changed()
+    o = db.data.get("orders", {}).get(order_id)
+    if not o:
+        await call.answer("Topilmadi", show_alert=True)
+        return
+    o["gift_attempts"] = 0
+    o["gift_failed"] = False
+    o["gift_processing"] = False
+    o.pop("gift_error", None)
+    o.pop("gift_needs_review", None)
+    o.pop("gift_error_trace", None)
+    o.pop("gift_processing_at", None)
+    db.save()
+    await call.answer("♻️ Qayta urinishga qo'shildi", show_alert=True)
+    await call.message.answer(
+        f"♻️ <code>{esc(order_id)}</code> qayta urinishga qo'shildi.\n"
+        f"⏳ Gift worker <b>{int(GIFT_POLL_INTERVAL)} soniya</b> ichida yana urinishadi.",
         reply_markup=admin_back_kb(),
     )
 
