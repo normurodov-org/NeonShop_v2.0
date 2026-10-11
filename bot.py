@@ -1692,7 +1692,8 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="🔎 Fragment test", callback_data="adm:diag")],
             [InlineKeyboardButton(text="🔑 Userbot ulash (QR)", callback_data="adm:ub_qr"),
              InlineKeyboardButton(text="📱 Raqam bilan ulash", callback_data="adm:ub_phone")],
-            [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status")],
+            [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status"),
+             InlineKeyboardButton(text="📤 Session zaxirasi", callback_data="adm:ub_export")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
         ]
     )
@@ -2888,7 +2889,20 @@ async def process_gift_orders() -> None:
                     set_runtime_status(gift_pending=pending)
                 last_pending = pending
                 continue
-            warned_no_userbot = False
+            if warned_no_userbot:
+                # Userbot qayta ulandi — kutayotgan buyurtmalar borligini xabar beramiz
+                warned_no_userbot = False
+                waiting = sum(
+                    1 for o in db.data.get("orders", {}).values()
+                    if o.get("kind") == "gift" and not o.get("gift_sent")
+                )
+                log.info("🎁 Gift worker: userbot ulandi, kutayotgan %d ta gift", waiting)
+                if waiting:
+                    await notify_admins(
+                        "✅ <b>Gift yuborish qayta boshlandi</b>\n\n"
+                        f"📦 Kutayotgan: <b>{waiting}</b> ta gift\n"
+                        "🤖 Endi avtomatik yuboriladi."
+                    )
             db.reload_if_changed()
             for order in list(db.data.get("orders", {}).values()):
                 if order.get("kind") != "gift":
@@ -3889,6 +3903,43 @@ async def adm_contest_stop(call: CallbackQuery):
 
 
 # ------------------------------------------------------------------ userbot login
+@admin_router.callback_query(F.data == "adm:ub_export")
+async def adm_ub_export(call: CallbackQuery, state: FSMContext):
+    """Ishlayotgan userbotdan SESSION_STRING ni darhol oladi.
+
+    Bu — telefon/kod umuman KERAKMASDIGAN usul. Agar userbot allaqachon
+    ulangan bo'lsa (masalan Railway da SESSION_STRING to'g'ri qo'yilgan),
+    shu zahoti zaxira sessiyani olamiz. Kod muddati bilan bog'liq muammo
+    butunlay chiqadi.
+    """
+    if not await _admin_guard(call):
+        return
+    await call.answer("📤 Olinmoqda...")
+    if userbot is None:
+        await call.message.answer(
+            "❌ Userbot ulanmagan — olish mumkin emas.\n\n"
+            "Avval «📱 Raqam bilan ulash» yoki «🔑 QR» orqali ulashing."
+        )
+        return
+    try:
+        session = await userbot.export_session_string()
+        me = await userbot.get_me()
+        who = f"@{me.username}" if getattr(me, "username", None) else str(me.id)
+    except Exception as exc:  # noqa: BLE001
+        await call.message.answer(f"❌ Olib bo'lmadi:\n<code>{esc(str(exc)[:200])}</code>")
+        return
+    await call.message.answer(
+        f"✅ <b>Session zaxirasi olindi</b> ({esc(who)})\n\n"
+        f"🔑 <b>Railway ENV ga saqlang</b> (kalit — hech kimga bermang):\n\n"
+        f"<code>SESSION_STRING={esc(session)}</code>\n\n"
+        "<i>Ishlayotgan sessiyani olish uchun kod umuman kerak emas. "
+        "Uni xotirangizda saqlang — kelajakda shu bilan darhal "
+        "qo'ya boshlay olasiz.</i>",
+        reply_markup=admin_back_kb(),
+        disable_web_page_preview=True,
+    )
+
+
 @admin_router.callback_query(F.data == "adm:ub_qr")
 async def adm_ub_qr(call: CallbackQuery, state: FSMContext):
     """QR orqali ulash.
@@ -4053,6 +4104,18 @@ async def adm_ub_phone_wait(message: Message, state: FSMContext):
 
     await state.set_state(AdminStates.ub_code)
     await state.update_data(ub_phone=phone)
+
+    # Eslatma: agar userbot ALLAQACHON ulangan bo'lsa, telefon umuman
+    # kerak emas — "📤 Session zaxirasi" tugmasi bilan sessiyani darhol
+    # olish mumkin (muddatsiz, kod umuman kerak emas).
+    if userbot is not None:
+        await message.answer(
+            "ℹ️ Userbot allaqachon ulangan.\n\n"
+            "🔑 Telefon va kod kerak emas —\n"
+            "<i>/admin → 📤 Session zaxirasi</i> orqali joriy sessiyani "
+            "bir zumda olib, zaxiraga saqlang."
+        )
+        return
 
     try:
         client = UserbotClient(

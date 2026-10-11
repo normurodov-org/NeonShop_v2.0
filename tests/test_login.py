@@ -168,6 +168,7 @@ B.ub_idle = lambda: asyncio.sleep(3600)
 
 async def flow(phone, code, password=None):
     FakeClient.calls.clear()
+    B.userbot = None
     B.UB_LOGIN.clear(); B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0})
     st = FakeState()
     m1 = FakeMsg(phone)
@@ -223,6 +224,7 @@ async def run():
 
     print()
     print("  — jarayon eskirgan bo'lsa —")
+    B.userbot = None
     B.UB_LOGIN.clear()
     B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0})
     st = FakeState()
@@ -236,6 +238,7 @@ async def run():
     print("  — eskirgan kod (PHONE_CODE_EXPIRED) —")
     FakeClient.calls.clear()
     FakeSent.n = 1
+    B.userbot = None
     B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0})
     st = FakeState()
     await B.adm_ub_phone_wait(FakeMsg("+998976756546"), st)   # HASH1
@@ -262,6 +265,7 @@ async def run():
     print("  — 3 marta ishlatilmagan kod —")
     FakeClient.calls.clear()
     FakeSent.n = 1
+    B.userbot = None
     B.UB_LOGIN.update({"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0})
     st = FakeState()
     await B.adm_ub_phone_wait(FakeMsg("+998976756546"), st)
@@ -274,6 +278,21 @@ async def run():
     good = "Devices" in last or "tozalang" in last
     ok &= good
     print("   ", "✅ to'xtadi va tozalashni tavsiya qildi" if good else "❌ " + last[:150])
+
+    B.userbot = None
+    print()
+    print("  — userbot allaqachon ulangan bo'lsa —")
+    B.userbot = FakeClient()
+    FakeClient.calls.clear()
+    B.UB_LOGIN.clear()
+    st = FakeState()
+    m = FakeMsg("+998976756546")
+    await B.adm_ub_phone_wait(m, st)
+    good = any("allaqachon ulangan" in o for o in m.out) and not FakeClient.calls
+    ok &= good
+    print("   ", "✅ kod so'ramadi (muddatsiz usul ko'rsatildi)" if good
+          else "❌ " + str(m.out[-1][:120]))
+    B.userbot = None
 
     print()
     print("NATIJA:", "✅ BARCHASI TO'G'RI" if ok else "❌ MUAMMO BOR")
