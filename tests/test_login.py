@@ -96,9 +96,8 @@ class FakeClient:
             if not kw.get("phone_code_hash", "").endswith(str(FakeSent.n)):
                 raise type("PhoneCodeExpired", (Exception,), {})(
                     "[400 PHONE_CODE_EXPIRED] The confirmation code has expired")
-            if kw["phone_code"] == "00000":
-                raise type("PhoneCodeInvalid", (Exception,), {})("invalid code")
-            if kw["phone_code"] != "12345":
+            # Telegram kodi = aniq 5 raqam. "00000" — noto'g'ri.
+            if len(kw["phone_code"]) != 5 or kw["phone_code"] == "00000":
                 raise type("PhoneCodeInvalid", (Exception,), {})("invalid code")
             return types.SimpleNamespace(id=1, username="aliy")
         return types.SimpleNamespace(id=1, username="aliy")
@@ -208,7 +207,7 @@ async def run():
 
     print()
     print("  — noto'g'ri kodda —")
-    st, out, calls = await flow("+998976756546", "99999")
+    st, out, calls = await flow("+998976756546", "00000")
     good = any("noto" in o.lower() and "g" in o.lower() and "SESSION_STRING=" not in o for o in out)
     ok &= good
     print(" ", "✅ xato to'g'ri xabar berildi" if good else "❌")
@@ -292,6 +291,56 @@ async def run():
     ok &= good
     print("   ", "✅ kod so'ramadi (muddatsiz usul ko'rsatildi)" if good
           else "❌ " + str(m.out[-1][:120]))
+    B.userbot = None
+
+    print()
+    print("  — noto'g'ri UZUNLIKDAGI kod Telegram'ga YUBORILMASIN —")
+    B.userbot = None
+    FakeClient.calls.clear()
+    FakeSent.n = 1
+    B.UB_LOGIN.clear()
+    st = FakeState()
+    await B.adm_ub_phone_wait(FakeMsg("+998976756546"), st)
+    m = FakeMsg("123456")          # 6 raqam
+    await B.adm_ub_code_wait(m, st)
+    sent = [c for c in FakeClient.calls if "sign_in" in c]
+    good = (not sent) and any("topib bo'lmadi" in o for o in m.out)
+    ok &= good
+    print("   ", "✅ Telegram'ga yuborilmadi (hash saqlandi)" if good
+          else "❌ " + str(sent))
+
+    print()
+    print("  — nuqtali kod (12.355) to'g'ri o'qiladi —")
+    B.userbot = None
+    FakeClient.calls.clear()
+    FakeSent.n = 1
+    B.UB_LOGIN.clear()
+    st = FakeState()
+    await B.adm_ub_phone_wait(FakeMsg("+998976756546"), st)
+    m = FakeMsg("12.355")
+    await B.adm_ub_code_wait(m, st)
+    sent = [c for c in FakeClient.calls if "sign_in" in c]
+    good = bool(sent) and any("SESSION_STRING=" in o for o in m.out)
+    ok &= good
+    print("   ", "✅ 12.355 → 12355 → ulandi" if good else "❌ " + str(m.out[-1][:150]))
+
+    print()
+    print("  — 2 xato koddan keyin yangi kod beriladi —")
+    B.userbot = None
+    FakeClient.calls.clear()
+    FakeSent.n = 1
+    B.UB_LOGIN.clear()
+    st = FakeState()
+    await B.adm_ub_phone_wait(FakeMsg("+998976756546"), st)
+    msgs = []
+    for _ in range(3):
+        m = FakeMsg("00000")
+        await B.adm_ub_code_wait(m, st)   # xato kod
+        msgs += m.out
+    sent = [c for c in FakeClient.calls if "send_code" in c]
+    good = len(sent) >= 2 and any("yangi kod yuborildi" in o for o in msgs)
+    ok &= good
+    print("   ", f"✅ yangi kod yuborildi (send_code={len(sent)})" if good else "❌")
     B.userbot = None
 
     print()

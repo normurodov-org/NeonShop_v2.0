@@ -4045,6 +4045,52 @@ async def adm_ub_phone(call: CallbackQuery, state: FSMContext):
 
 # Telefon bilan ulash vaqtinchalik ma'lumotlari.
 # FSM ichida saqlanmaydi — Client obyekti JSON'ga sig'maydi.
+def extract_login_code(text: str) -> tuple[Optional[str], str]:
+    """Telegram kirish kodi = ANIQ 5 ta raqam.
+
+    Nima uchun bu muhim:
+      Telegram noto'g'ri kod yuborilsa urinishni yoqadi. 2-3 urinishdan
+      keyin u phone_code_hash'ni butunlay o'ldiradi va keyingi urinishda
+      PHONE_CODE_EXPIRED qaytadi — ya'ni foydalanuvchi "muddati tugdi"
+      deb o'ylaydi, aslida esa kod NOTO'G'RI edi.
+
+      Shuning uchun:
+        1) turli yozishlarni qabul qilamiz  (12.355 / 12 355 / 12355)
+        2) lekin Telegram'ga FAQAT aniq 5 raqamli kodni yuboramiz
+        3) noto'g'ri uzunlikni umuman yubormaymiz (hash jon qoladi)
+
+    Qaytaradi: (kod | None, tushuntirish)
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None, "Bo‘sh xabar"
+
+    # 1) Butun xabar faqat raqam + ajratuvchilardan iborat
+    #    (12.355 / 12 355 / 12355 / 12,355) — Telegram kodni shakllantiradi
+    if re.fullmatch(r"[\d\s.,  .\-]+", raw):
+        digits = re.sub(r"\D", "", raw)
+        if len(digits) == 5:
+            return digits, ""
+        if not digits:
+            return None, "Raqam topilmadi"
+        return None, f"{len(digits)} ta raqam keldi, 5 ta kerak"
+
+    # 2) Xabar matni ichidan aynan 5 ketma-ket raqam qidiramiz
+    #    ("Your login code is 12345", "15:16 — 12345")
+    found = re.findall(r"(?<!\d)(\d{5})(?!\d)", raw)
+    if found:
+        return found[0], ""
+    if re.search(r"\d", raw):
+        # raqam bor, lekin 5 ketma-ket emas (masalan sana/aralashgan)
+        groups = [g for g in re.findall(r"\d+", raw)]
+        joined = "".join(groups)
+        if len(joined) == 5:
+            return joined, ""
+        return None, "5 ketma-ket raqam topilmadi"
+
+    return None, "Raqam yo‘q"
+
+
 UB_LOGIN = {"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0}
 
 
@@ -4167,9 +4213,17 @@ async def adm_ub_code_wait(message: Message, state: FSMContext):
         )
         return
 
-    code = re.sub(r"[^\d]", "", message.text or "")
+    code, why = extract_login_code(message.text or "")
     if not code:
-        await message.answer("❌ Kodni to‘g‘ri kiriting (faqat raqamlar).")
+        # Telegram'ga YUBORMAYMIZ — noto'g'ri urinish phone_code_hash'ni
+        # o'ldiradi va keyin "muddati tugdi" xatosi chiqadi.
+        await message.answer(
+            "❌ Kodni topib bo'lmadi.\n\n"
+            f"🔍 Sabab: {why}\n\n"
+            "🔐 Telegram xabaridagi <b>5 ta raqamni</b> yuboring.\n"
+            "<i>Nuqta/bo'shliq bo'lsa ham bo'ladi — 12.355 deb yozsangiz "
+            "biz 12355 ni o'qiymiz.</i>"
+        )
         return
 
     try:
@@ -4243,13 +4297,31 @@ async def adm_ub_code_wait(message: Message, state: FSMContext):
         # so'ramasdan, xatoni aniq aytib beramiz.
         if "PhoneCodeInvalid" in name or "PHONE_CODE_INVALID" in msg_text:
             tries = int(UB_LOGIN.get("tries", 0))
-            if tries < 5:
+            if tries >= 2:
+                # Hash ham jihatdan o'lishi mumkin — yangi kod beramiz
+                try:
+                    sent = await client.send_code(phone)
+                    UB_LOGIN["hash"] = getattr(sent, "phone_code_hash", "")
+                    UB_LOGIN["tries"] = 0
+                    await message.answer(
+                        "⚠️ Bir necha marta xato bo'ldi — <b>yangi kod yuborildi</b>.\n\n"
+                        "🔐 Telegram'dagi <b>eng so'nggi</b> xabarni ochib, "
+                        "uning <b>5 ta raqamini</b> yuboring.\n"
+                        "<i>Nuqtali yozsangiz bo'ladi (12.355) — biz to'g'ri o'qiymiz.</i>",
+                        reply_markup=admin_back_kb(),
+                    )
+                    return
+                except Exception:  # noqa: BLE001
+                    pass
+            if tries < 2:
                 UB_LOGIN["tries"] = tries + 1
                 await message.answer(
                     "❌ Kod <b>noto'g'ri</b>.\n\n"
                     "🔐 Telegram'dagi xabar bilan solishtirib, "
                     "<b>faqat 5 ta raqamni</b> yuboring (bo'sh joysiz).\n"
-                    f"<i>Urinish {UB_LOGIN['tries']}/5.</i>",
+                    f"<i>Urinish {UB_LOGIN['tries']}/2.</i>\n"
+                    "<i>⚠️ Telegram 3 marta xato urinishdan keyin kodni "
+                    "bekor qiladi — shuning uchun ehtiyot bo'ling.</i>",
                     reply_markup=admin_back_kb(),
                 )
                 return
