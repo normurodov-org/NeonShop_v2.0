@@ -1480,6 +1480,7 @@ class AdminStates(StatesGroup):
     contest_days = State()
     ub_phone = State()
     ub_code = State()
+    ub_password = State()
 
 
 # =============================================================================
@@ -3889,42 +3890,93 @@ async def adm_contest_stop(call: CallbackQuery):
 
 # ------------------------------------------------------------------ userbot login
 @admin_router.callback_query(F.data == "adm:ub_qr")
-async def adm_ub_qr(call: CallbackQuery):
+async def adm_ub_qr(call: CallbackQuery, state: FSMContext):
+    """QR orqali ulash.
+
+    ESKI KOD: client.export_login_token() / client.import_login_token() —
+    bu Pyrogram 1.x metodlari, 2.x da UMUMAN yo'q (AttributeError berardi).
+    Endi: raw funksiyalar (auth.ExportLoginToken / auth.ImportLoginToken) va
+    Telegram tasdiqlashini kutib olish (30 soniya davomida har 2 sekundda).
+    """
     if not await _admin_guard(call):
         return
     await call.answer("🔑 QR tayyorlanmoqda...")
     if not (API_ID and API_HASH):
         await call.message.answer("❌ API_ID va API_HASH o'zgaruvchilari yo'q.")
         return
+
+    import base64 as _b64
+    from pyrogram import raw as _raw
+
+    client = None
     try:
-        client = UserbotClient("qr_login", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-        await client.start()
-        token = await client.export_login_token()
-        payload = f"tg://login?token={token}"
-        import base64 as _b64
-        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={_b64.urlsafe_b64encode(payload.encode()).decode()}"
+        client = UserbotClient(
+            "qr_login", api_id=API_ID, api_hash=API_HASH,
+            in_memory=True, no_updates=True,
+        )
+        await client.connect()
+
+        r = await client.invoke(
+            _raw.functions.auth.ExportLoginToken(
+                api_id=API_ID, api_hash=API_HASH, except_ids=[],
+            )
+        )
+        token_bytes = r.token
+        token_urlsafe = token_bytes.hex()
+        payload = f"tg://login?token={token_urlsafe}"
+        qr_b64 = _b64.urlsafe_b64encode(payload.encode()).decode()
+        qr_url = (
+            "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" + qr_b64
+        )
+
         await call.message.answer(
             "🔑 <b>Userbot QR bilan ulash</b>\n\n"
-            "Quyidagi QR kodni <b>Telegra</b>ram (Settings → Devices → Link Desktop Device) orqali skanerlang:\n\n"
+            "Telefonda <b>Telegra</b>ramni oching:\n"
+            "<b>Settings → Devices → Link Desktop Device</b>\n\n"
+            "Quyidagi QR kodni skanerlang:\n"
             f"<a href=\"{qr_url}\">🖼 QR kodni ochish</a>\n\n"
-            "⏱ Kod 30 soniya ichida amal qiladi.",
+            "⏱ Kod <b>60 soniya</b> amal qiladi. Skanerlagandan keyin avtomatik "
+            "ulanadi — bu yerga xabar yuborishingiz shart emas.",
             reply_markup=admin_back_kb(),
             disable_web_page_preview=False,
         )
-        await asyncio.sleep(30)
-        try:
-            me = await client.import_login_token(token)
-            await call.message.answer(f"✅ <b>Userbot ulandi!</b>\n👤 {esc(me.first_name or '')} (@{esc(me.username or '—')})")
-            global userbot
-            if userbot is not None:
-                await userbot.stop()
-            userbot = client
-            await client.add_handler(UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT)))
-            asyncio.create_task(ub_idle())
-        except Exception as exc:  # noqa: BLE001
-            await call.message.answer(f"⏱ Vaqt tugadi yoki tasdiqlanmadi: {exc}")
+
+        # Telegram foydalanuvchi tasdiqlaguncha kutamiz
+        deadline = time.time() + 60
+        me = None
+        last_err = ""
+        while time.time() < deadline:
+            await asyncio.sleep(2)
+            try:
+                res = await client.invoke(
+                    _raw.functions.auth.ImportLoginToken(token=token_bytes)
+                )
+                me = await client.get_me()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_err = type(exc).__name__
+                continue
+
+        if me is None:
+            await call.message.answer(
+                f"⏱ Vaqt tugadi yoki tasdiqlanmadi{f' ({last_err})' if last_err else ''}."
+                "\n<i>«📱 Raqam bilan ulash» dan foydalanishingiz mumkin.</i>"
+            )
+            return
+
+        await ub_finish_login(client, call.message, state)
     except Exception as exc:  # noqa: BLE001
-        await call.message.answer(f"❌ QR login xatosi: {exc}")
+        log.exception("QR login xatosi")
+        await call.message.answer(
+            f"❌ QR login xatosi:\n<code>{esc(str(exc)[:250])}</code>\n\n"
+            "<i>«📱 Raqam bilan ulash» dan foydalanishingiz mumkin.</i>"
+        )
+    finally:
+        try:
+            if client is not None and client is not B.userbot:
+                await client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @admin_router.callback_query(F.data == "adm:ub_phone")
@@ -3940,59 +3992,178 @@ async def adm_ub_phone(call: CallbackQuery, state: FSMContext):
                               reply_markup=admin_back_kb())
 
 
+# Telefon bilan ulash vaqtinchalik ma'lumotlari.
+# FSM ichida saqlanmaydi — Client obyekti JSON'ga sig'maydi.
+UB_LOGIN = {"client": None, "phone": "", "hash": "", "admin_id": 0}
+
+
+async def ub_finish_login(client, admin_msg: Message, state: FSMContext) -> None:
+    """Ulangan client'ni userbot qilib o'rnatadi va SESSION_STRING beradi."""
+    global userbot
+    try:
+        me = await client.get_me()
+        who = f"@{me.username}" if getattr(me, "username", None) else str(me.id)
+    except Exception:  # noqa: BLE001
+        who = "noma'lum"
+
+    if userbot is not None:
+        try:
+            await userbot.stop()
+        except Exception:  # noqa: BLE001
+            pass
+    userbot = client
+    await client.add_handler(
+        UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
+    )
+    asyncio.create_task(ub_idle())
+    set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
+
+    session = await client.export_session_string()
+    await state.clear()
+    await admin_msg.answer(
+        f"✅ <b>Userbot ulandi!</b>\n\n"
+        f"👤 Hisob: <code>{esc(who)}</code>\n"
+        f"🏦 Bank xabarlari: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>\n\n"
+        f"🔑 <b>Railway ENV ga qo'ying</b> (sessiya kaliti — hech kimga bermang):\n\n"
+        f"<code>SESSION_STRING={esc(session)}</code>\n\n"
+        "<i>Keyin Railway da Redeploy bosing.</i>",
+        reply_markup=admin_back_kb(),
+        disable_web_page_preview=True,
+    )
+
+
 @admin_router.message(StateFilter(AdminStates.ub_phone), F.text)
 async def adm_ub_phone_wait(message: Message, state: FSMContext):
+    """Telefonni qabul qiladi va Telegram'dan tasdiqlash kodi so'raydi.
+
+    ESKI KOD: client.start(phone=...) — bu Pyrogram 1.x API edi.
+    Pyrogram 2.x da start() argument qabul qilmaydi va
+    "unexpected keyword argument 'phone'" xatosi berardi.
+    (Yana: ikkinchi handler'da `await UserbotClient(...)` — konstruktorni
+     await qilish, ham xato edi.)
+
+    TO'G'RI OQIM:  connect() -> send_code() -> (kod) -> sign_in()
+    """
     if not is_admin_authed(message.from_user.id):
         return
-    phone = re.sub(r"[^\d+]", "", message.text or "")
+    phone = re.sub(r"[\s()\-]", "", message.text or "")
     if not re.fullmatch(r"\+\d{9,15}", phone):
         await message.answer("❌ Format noto'g'ri. Masalan: <code>+998901234567</code>")
         return
+
     await state.set_state(AdminStates.ub_code)
     await state.update_data(ub_phone=phone)
+
     try:
-        client = UserbotClient("phone_login", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-        await client.start(phone=phone)
-        await state.update_data(ub_client_id="phone_login")
+        client = UserbotClient(
+            "phone_login", api_id=API_ID, api_hash=API_HASH,
+            in_memory=True, no_updates=True,
+        )
+        await client.connect()
+        sent = await client.send_code(phone)
+        UB_LOGIN.update({
+            "client": client,
+            "phone": phone,
+            "hash": getattr(sent, "phone_code_hash", ""),
+            "admin_id": message.from_user.id,
+        })
+        code_type = str(getattr(sent, "type", "") or "")
+        extra = ""
+        if "CALL" in code_type.upper():
+            extra = "\n\n📞 Telegram <b>qo‘ng‘iroq qiladi</b> — kodni eshitib kiriting."
+        await message.answer(
+            "🔐 Telegram yuborgan <b>tasdiqlash kodi</b>ni kiriting:" + extra,
+            reply_markup=admin_back_kb(),
+        )
     except Exception as exc:  # noqa: BLE001
+        UB_LOGIN["client"] = None
         await state.clear()
-        await message.answer(f"❌ Xato: {exc}")
-        return
-    await message.answer("🔐 Telegram yuborgan <b>tasdiqlash kodi</b>ni kiriting:")
+        log.exception("Telefon orqali ulash: kod yuborilmadi")
+        await message.answer(
+            f"❌ Kod yuborilmadi:\n<code>{esc(str(exc)[:300])}</code>\n\n"
+            "ℹ️ Raqam to‘g‘ri ekanini va Telegram'dan kelgan xabarni tekshiring."
+        )
 
 
 @admin_router.message(StateFilter(AdminStates.ub_code), F.text)
 async def adm_ub_code_wait(message: Message, state: FSMContext):
     if not is_admin_authed(message.from_user.id):
         return
-    code = re.sub(r"[^\d]", "", message.text or "")[:5]
-    if not code:
-        await message.answer("❌ Kodni to'g'ri kiriting.")
-        return
-    try:
-        client = await UserbotClient("phone_login", api_id=API_ID, api_hash=API_HASH, in_memory=True)
-        await client.start(phone=(await state.get_data()).get("ub_phone"), code=code)
-        global userbot
-        if userbot is not None:
-            try:
-                await userbot.stop()
-            except Exception:  # noqa: BLE001
-                pass
-        userbot = client
-        await client.add_handler(UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT)))
-        asyncio.create_task(ub_idle())
-        session = await client.export_session_string()
+    client = UB_LOGIN.get("client")
+    phone = UB_LOGIN.get("phone", "")
+    code_hash = UB_LOGIN.get("hash", "")
+    if client is None or not phone or not code_hash:
         await state.clear()
         await message.answer(
-            f"✅ <b>Userbot ulandi!</b>\n\n"
-            f"🔑 <b>Railway ENV ga qo'ying</b> (bu sessiya kaliti — uni hech kimga bermang):\n\n"
-            f"<code>SESSION_STRING={esc(session)}</code>",
-            reply_markup=admin_back_kb(),
-            disable_web_page_preview=True,
+            "⚠️ Ulash jarayoni eskirgan.\n"
+            "<i>/admin → 📱 Raqam bilan ulash</i> dan qayta boshlang."
+        )
+        return
+
+    code = re.sub(r"[^\d]", "", message.text or "")
+    if not code:
+        await message.answer("❌ Kodni to‘g‘ri kiriting (faqat raqamlar).")
+        return
+
+    try:
+        await client.sign_in(
+            phone_number=phone, phone_code_hash=code_hash, phone_code=code
         )
     except Exception as exc:  # noqa: BLE001
+        name = type(exc).__name__
+        # 2FA paroli talab qilinsa — alohida qadamga o'tamiz
+        if "SessionPasswordNeeded" in name:
+            await state.set_state(AdminStates.ub_password)
+            hint = ""
+            try:
+                h = await client.get_password_hint()
+                if h:
+                    hint = f"\n\n💡 Parol ishorasi: <code>{esc(str(h))}</code>"
+            except Exception:  # noqa: BLE001
+                pass
+            await message.answer(
+                "🔐 Bu akkauntda <b>ikki bosqichli tasdiqlash</b> yoqiq.\n\n"
+                "🔑 Telegram parolingizni yuboring:" + hint
+            )
+            return
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+        UB_LOGIN["client"] = None
         await state.clear()
-        await message.answer(f"❌ Kod noto'g'ri: {exc}")
+        log.warning("Kod bilan ulash xatosi: %s", exc)
+        await message.answer(
+            f"❌ Kod qabul qilinmadi:\n<code>{esc(str(exc)[:250])}</code>\n\n"
+            "<i>«📱 Raqam bilan ulash» dan qayta boshlang.</i>"
+        )
+        return
+
+    await ub_finish_login(client, message, state)
+
+
+@admin_router.message(StateFilter(AdminStates.ub_password), F.text)
+async def adm_ub_password_wait(message: Message, state: FSMContext):
+    """2FA paroli (Telegram ikki bosqichli tasdiqlash)."""
+    if not is_admin_authed(message.from_user.id):
+        return
+    client = UB_LOGIN.get("client")
+    if client is None:
+        await state.clear()
+        await message.answer("⚠️ Jarayon eskirgan. Qayta boshlang.")
+        return
+    password = (message.text or "").strip()
+    # DIQQAT: Pyrogram 2.x da sign_in() "password" argumentini qabul qilmaydi.
+    # 2FA uchun alohida check_password() metodi bor.
+    try:
+        await client.check_password(password)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("2FA parol xatosi: %s", exc)
+        await message.answer(
+            f"❌ Parol noto‘g‘ri:\n<code>{esc(str(exc)[:200])}</code>"
+        )
+        return
+    await ub_finish_login(client, message, state)
 
 
 # =============================================================================
