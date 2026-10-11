@@ -2575,109 +2575,153 @@ async def send_captcha(message: Message, db_user: dict) -> None:
 # =============================================================================
 # 15. BALANS TO'LDIRISH
 # =============================================================================
-HUMO_AMOUNT_RX = re.compile(r"➕\s*([\d\s.,]+)\s*UZS")
-HUMO_CARD_RX = re.compile(r"HUMOCARD\s*\*(\d+)")
+# =============================================================================
+# Bank xabarini tahlil qilish (HAQIQIY HUMO formati)
+# -----------------------------------------------------------------------------
+# @humocardbot xabari shakli:
+#
+#     💸 To'lov
+#     ➖ 2.000,00 UZS          ← TO'LOV summasi  (2 000 so'm)
+#     📍 TRANSPORT TOLOV>TOS    ← izoh
+#     💳 HUMOCARD *3682        ← karta
+#     🕓 15:16 11.10.2026      ← vaqt
+#     💰 19.587,36 UZS         ← QOLDIQ BALANS (buni ALMASHMASLIK KERAK!)
+#
+# DIQQAT: 💰 — qoldiq balans, ➖ — to'lov. Ularni aralashtirish butun
+# avto to'ldirishni buzadi. Quyidagi parser avval ➖/➕ ni, keyin boshqani
+# qidiradi va 💰/Balans qatorlarini BUTUNLAY tashlab yuboradi.
+# =============================================================================
 
-# Bank xabaridagi summa — bir nechta ko'rinishda bo'lishi mumkin:
-#   "➕ 50 000 UZS", "💵 50,000 so'm", "💰 50000", "Summa: 50 000 so'm"
-HUMO_AMOUNT_ANY_RX = re.compile(
-    r"(?:➕|💵|💰|🆔)?\s*([\d][\d\s.,]*)\s*(?:UZS|uzs|so'm|som|soʻm|сум|сумма)?",
+# To'lov qatori belgilari (yuqori ustuvorlik)
+PAY_MARKERS = ("➖", "➕", "➗", "➤")
+# Qoldiq balans belgilari — BU QATORLAR SUMMA EMAS
+BALANCE_MARKERS = ("💰", "🏦", "💳💰", "balance", "balans", "qoldiq", "остаток", "kirim")
+CURRENCY_WORDS = r"(?:UZS|uzs|so'?m|som|soʻm|сум|сумма|tinyin)"
+
+HUMO_CARD_RX = re.compile(r"HUMOCARD\s*\*(\d+)")
+HUMO_CARD_ANY_RX = re.compile(r"(?:HUMOCARD|HUMO)\s*\**\s*(\d{4})", re.IGNORECASE)
+
+# Bir qatorda: belgi + raqam + pul birligi
+HUMO_LINE_MONEY_RX = re.compile(
+    r"(?P<mark>[^\w\s])?\s*(?P<num>\d[\d.,\s]*\d|\d)\s*(?P<cur>" + CURRENCY_WORDS + r")?",
     re.IGNORECASE,
 )
-HUMO_MONEY_RX = re.compile(
-    r"(?:➕|💵|💰|🆔|\*)\s*"
-    r"([\d][\d\s.,]*)\s*"
-    r"(UZS|uzs|so'?m|som|soʻm|сум)",
-    re.IGNORECASE,
-)
-HUMO_CARD_ANY_RX = re.compile(r"(?:HUMOCARD|HUMO)\s*\**\s*(\d{4,4})", re.IGNORECASE)
 
 
 def _normalize_amount(raw: str) -> Optional[int]:
-    """'50 000' / '50.000' / '50,000' / '50000' → 50000.
+    """Bank formatidagi raqamni butun songa aylantiradi.
 
-    UZS da kasr son juda kam uchraydi, shuning uchun:
-      • bo'shliik va nuqta — minglik ajratuvchi hisoblanadi
-      • vergul — ham minglik, ham kasr bo'lishi mumkin
+    HUMO Yevropa usulini ishlatadi:  nuqta = minglik ajratuvchi,
+                                     vergul = kasr belgisi.
+        "2.000,00"  -> 2000
+        "19.587,36" -> 19587
+        "50 000"    -> 50000
+        "1.234.567" -> 1234567
     """
     if raw is None:
         return None
-    s = raw.strip()
+    s = str(raw).strip().replace("\u00a0", " ").replace("\u202f", " ")
+    s = re.sub(r"[^\d.,]", "", s)
     if not s:
         return None
-    s = s.replace("\u00a0", " ").replace("\u202f", " ")
-    digits = re.sub(r"[^\d.,]", "", s)
-    if not digits:
-        return None
 
-    # Vergul: agar undan keyin FAQAT 1-2 raqam bo'lsa — kasr (50,50 = 50.50 so'm)
-    # Aks holda vergul minglik ajratuvchi (50,000 = 50000)
-    if "," in digits:
-        tail = digits.split(",")[-1]
-        if len(tail) == 3 and digits.count(",") >= 1:
-            digits = digits.replace(",", "")           # 50,000 → 50000
-        elif len(tail) in (1, 2):
-            digits = digits.replace(",", ".")           # 50,5 → 50.5
+    has_dot, has_comma = "." in s, "," in s
+
+    if has_dot and has_comma:
+        # Oxirgi ajratuvchi — kasr belgisi, qolgani — minglik
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
         else:
-            digits = digits.replace(",", "")
-    digits = digits.replace(" ", "")
-    if "." in digits:
-        whole, _, frac = digits.partition(".")
-        digits = whole + frac[:2] if len(frac) <= 2 else whole + frac
+            s = s.replace(",", "").replace(".", ".")
+    elif has_comma:
+        tail = s.split(",")[-1]
+        s = s.replace(",", ".") if len(tail) in (1, 2) else s.replace(",", "")
+    elif has_dot:
+        # "2.000" / "50.000" / "1.234.567" — minglik ajratuvchi
+        parts = s.split(".")
+        if len(parts) > 1 and all(len(x) == 3 for x in parts[1:]) and len(parts[0]) <= 3:
+            s = "".join(parts)
+        else:
+            tail = parts[-1]
+            s = s if len(tail) == 3 else "".join(parts)
+
     try:
-        return int(Decimal(digits or "0"))
+        return int(Decimal(s or "0"))
     except (InvalidOperation, ValueError):
         return None
 
 
-def parse_humo_payment(text: str) -> Optional[tuple[int, Optional[str]]]:
-    """@humocardbot xabaridan summa va karta oxirgi raqamlarini ajratadi.
+def _is_balance_line(line: str) -> bool:
+    """Bu qator qoldiq balansmi? (💰 19.587,36 UZS)"""
+    low = line.lower()
+    return any(m in low or m in line for m in BALANCE_MARKERS)
 
-    Eski qatnoq faqat "➕ ... UZS" formatini qabul qilardi — bank formatini
-    o'zgartirsa butun avto-to'ldirish o'chardi. Endi bir nechta variant
-    qo'llab-quvvatlanadi.
+
+def parse_humo_payment(text: str) -> Optional[tuple[int, Optional[str]]]:
+    """@humocardbot xabaridan TO'LOV summasi va karta raqamini ajratadi.
+
+    DIQQAT: xabar ichida ikki raqam bo'ladi — to'lov (➖) va qoldiq
+    balans (💰). Biz har doim TO'LOVNI olamiz, qoldiqni esa butunlay
+    e'tiborsiz qoldiramiz (aks holda mijozga 19 587 qo'shilirdi).
     """
     text = text or ""
-    amount: Optional[int] = None
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
-    # 1) Eng aniq variant: pul birligi bilan
-    m = HUMO_MONEY_RX.search(text)
-    if m:
-        amount = _normalize_amount(m.group(1))
+    # 1) Eng ishonchli: ➖ / ➕ bilan boshlanadigan qator (to'lov deltasi)
+    for line in lines:
+        if _is_balance_line(line):
+            continue
+        if not any(m in line for m in PAY_MARKERS):
+            continue
+        m = HUMO_LINE_MONEY_RX.search(line)
+        if m:
+            amount = _normalize_amount(m.group("num"))
+            if amount:
+                card = _extract_card(text)
+                return amount, card
 
-    # 2) "+ ... UZS" (eskisidan)
-    if amount is None:
-        m = HUMO_AMOUNT_RX.search(text)
+    # 2) "To'lov: 2.000,00" / "Summa: ..." kabi yozilgan qatorlar
+    for line in lines:
+        if _is_balance_line(line):
+            continue
+        if not re.search(r"to'lov|tolov|to‘lov|сумма|summa|amount|оплата",
+                         line, re.IGNORECASE):
+            continue
+        m = HUMO_LINE_MONEY_RX.search(line)
+        if m:
+            amount = _normalize_amount(m.group("num"))
+            if amount:
+                return amount, _extract_card(text)
+
+    # 3) Pul birligi bor qator — lekin balans qatorlari emas
+    for line in lines:
+        if _is_balance_line(line):
+            continue
+        if not re.search(CURRENCY_WORDS, line, re.IGNORECASE):
+            continue
+        m = HUMO_LINE_MONEY_RX.search(line)
+        if m:
+            amount = _normalize_amount(m.group("num"))
+            if amount:
+                return amount, _extract_card(text)
+
+    # 4) So'nggi chora: belgisiz, faqat son (kartadan keyingi bo'sh qatorlar)
+    for line in lines:
+        if _is_balance_line(line) or re.search(r"HUMOCARD|\d{2}:\d{2}|\d{4}\.\d{2}\.\d{4}",
+                                              line, re.IGNORECASE):
+            continue
+        m = re.fullmatch(r"\s*(\d[\d.,\s]*)\s*", line)
         if m:
             amount = _normalize_amount(m.group(1))
+            if amount:
+                return amount, _extract_card(text)
 
-    # 3) Boshqa hech narsa topilmasa — "Summa: 50 000" kabi qatorlar
-    if amount is None:
-        for line in text.splitlines():
-            if not re.search(r"summa|amount|to'lov|tolov|сумма|qabul", line, re.IGNORECASE):
-                continue
-            m = re.search(r"([\d][\d\s.,]*)", line)
-            if m:
-                amount = _normalize_amount(m.group(1))
-                if amount:
-                    break
+    return None
 
-    # 4) Birligisiz, faqat belgi bilan: "💰 50000" / "➕ 50 000"
-    #    (karta raqami yoki tranzaksiya ID ni balans sifatida olishmaslik uchun
-    #     1000 dan kichik raqamlarni va karta raqamini chiqaramiz)
-    if amount is None:
-        m = re.search(r"[➕💵💰]\s*([\d][\d\s.,]*)", text)
-        if m:
-            cand = _normalize_amount(m.group(1))
-            if cand and cand >= 1000:
-                amount = cand
 
-    if not amount:
-        return None
-
-    cm = HUMO_CARD_ANY_RX.search(text) or HUMO_CARD_RX.search(text)
-    card = cm.group(1) if cm else None
-    return amount, card
+def _extract_card(text: str) -> Optional[str]:
+    m = HUMO_CARD_ANY_RX.search(text) or HUMO_CARD_RX.search(text)
+    return m.group(1) if m else None
 
 
 async def notify_admins(text: str) -> None:
@@ -2693,12 +2737,18 @@ async def notify_admins(text: str) -> None:
 async def on_humo_message(client: UserbotClient, message) -> None:
     try:
         text = message.text or ""
-        # AVVAL: faqat "➕" belgisi bo'lsa qayta ishlanardi — bank belgini
-        # o'zgartirsa (💵/💰/🆔) butun avto-to'ldirish o'chardi.
-        # Endi: pul birligi yoki "to'lov" so'zi bo'lsa yetarli.
-        has_marker = any(m in text for m in ("➕", "💵", "💰", "🆔"))
-        has_word = bool(re.search(r"to'lov|tolov|to‘lov|qabul|payme|оплата|сумма", text, re.IGNORECASE))
-        if not has_marker and not has_word:
+        # AVVAL: faqat "➕" belgisi bo'lsa qayta ishlanardi. Haqiqiy HUMO
+        # xabarida esa "➖" (to'lov) va "💰" (qoldiq balans) ishlatiladi —
+        # ya'ni eski filtr xabarni BUTUNLAY tashlab yuborardi.
+        # Endi: to'lov belgisi, karta yoki "to'lov" so'zi bo'lsa yetarli.
+        has_marker = any(m in text for m in PAY_MARKERS + ("💸", "💵"))
+        has_word = bool(re.search(r"to'lov|tolov|to‘lov|qabul|payme|оплата|сумма",
+                                  text, re.IGNORECASE))
+        has_card = bool(re.search(r"HUMOCARD", text, re.IGNORECASE))
+        if not has_marker and not has_word and not has_card:
+            return
+        # Balansga qo'shishni bildirmaydigan xabarlarni tashlab yuboramiz
+        if re.search(r"xarajat|chiqarish|withdraw|pullash|soldi", text, re.IGNORECASE):
             return
         # Balansga qo'shishni bildirmaydigan xabarlarni tashlab yuboramiz
         if re.search(r"xarajat|chiqarish|withdraw|pullash|soldi", text, re.IGNORECASE):

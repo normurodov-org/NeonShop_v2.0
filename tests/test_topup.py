@@ -71,8 +71,7 @@ async def run():
         "✅ To'lov qabul qilindi\n💳 HUMOCARD *3682\n➕ 50 000 UZS",
         "✅ To'lov qabul qilindi\n💳 HUMOCARD *3682\n➕ 50000 UZS",
         "✅ To'lov\n💳 HUMOCARD *3682\n💵 50 000 so'm",
-        "✅ To'lov\n💳 HUMOCARD *3682\n💰 50000",
-        "✅ To'lov qabul qilindi\n💳 HUMOCARD *3682\n🆔 50 000 UZS",
+                "✅ To'lov qabul qilindi\n💳 HUMOCARD *3682\n🆔 50 000 UZS",
         "✅ To'lov\n💳 HUMOCARD *3682\nSumma: 50 000",
         "✅ Платёж\n💳 HUMOCARD *3682\n➕ 50 000 сум",
         "✅ To'lov\n💳 HUMOCARD *3682\n➕ 50.000 UZS",
@@ -83,6 +82,15 @@ async def run():
         good = p and p[0] == 50000 and p[1] == "3682"
         print(f"  {head:32} → {p}  {'✅' if good else '❌'}")
         ok &= bool(good)
+
+    # 💰 — qoldiq balans belgisi. U HECH QACHON to'lov summasi bo'lmasligi kerak
+    # (haqiqiy bank xabarida "💰 19.587,36" — bu balans, to'lov emas).
+    balance_only = "✅ To'lov\n💳 HUMOCARD *3682\n💰 19.587,36 UZS"
+    got = B.parse_humo_payment(balance_only)
+    good = got is None
+    print(f"  {'💰 19.587,36 (qoldiq balans)':32} → {got}  "
+          f"{'✅ (summaga aylantirilmedi)' if good else '❌ BALANS summaga aylandi!'}")
+    ok &= good
 
     print()
     print("=" * 72)
