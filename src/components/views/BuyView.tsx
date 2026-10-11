@@ -616,20 +616,35 @@ export const BuyView: React.FC<BuyViewProps> = ({
       {/* NFT Gift ijarasi — alohida xizmat (boshqa menejer boshqaradi) */}
       {subTab === 'nft' && (
         <div className="space-y-4">
-          {/* professionally yozilgan ogohlantirish */}
-          <div className="rounded-[26px] bg-gradient-to-br from-amber-500/10 via-orange-500/10
-                          to-rose-500/10 border border-amber-500/25 p-5 space-y-3">
+          {/* Xizmat haqida — kontrast uchun KO'K rang ishlatildi:
+              sariq rang yorug' rejimda deyarli ko'rinmasdi.
+              DIQQAT: ilovada `dark:` variant ishlamaydi (index.html da
+              <html class="dark"> doim turadi) — shuning uchun `isDark`
+              orqali rang beriladi, boshqa bo'limlardagi kabi. */}
+          <div className={`rounded-[26px] border p-5 space-y-3 ${
+            isDark
+              ? 'bg-blue-500/[0.10] border-blue-400/30'
+              : 'bg-blue-500/[0.08] border-blue-500/25'
+          }`}>
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-[14px] bg-amber-500/20 border border-amber-500/30
-                              flex items-center justify-center shrink-0 text-xl">
+              <div className={`w-10 h-10 rounded-[14px] border flex items-center
+                              justify-center shrink-0 text-xl ${
+                                isDark
+                                  ? 'bg-blue-400/20 border-blue-400/30'
+                                  : 'bg-blue-500/15 border-blue-500/25'
+                              }`}>
                 ⚠️
               </div>
               <div className="min-w-0">
-                <h3 className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                <h3 className={`text-xs font-bold ${
+                  isDark ? 'text-blue-200' : 'text-blue-800'
+                }`}>
                   Xizmat haqida
                 </h3>
-                <p className="text-[11px] leading-relaxed text-amber-700/90 dark:text-amber-200/80 mt-1">
-                  🔹 Bu xizmat <b>boshqa @saidovManajer</b> ga tegishli.
+                <p className={`text-[11px] leading-relaxed mt-1 ${
+                  isDark ? 'text-slate-200' : 'text-slate-700'
+                }`}>
+                  🔹 Bu xizmat <b>@saidovManajer</b> ga tegishli.
                   <br />🔹 Bu xizmat bo&apos;yicha biror muammo yuz bersa,
                   <b> @saidovManajer</b> bilan bog&apos;laning.
                 </p>

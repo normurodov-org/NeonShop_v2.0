@@ -4844,8 +4844,7 @@ def nft_notice() -> str:
     """NFT xizmati haqidagi professional ogohlantirish matni."""
     return (
         "⚠️ <b>Xizmat haqida</b>\n\n"
-        "🔹 Bu xizmat <b>boshqa "
-        f"{esc(NFT_MANAGER)}</b> ga tegishli.\n"
+        f"🔹 Bu xizmat <b>{esc(NFT_MANAGER)}</b> ga tegishli.\n"
         "🔹 Bu xizmat bo'yicha biror muammo yuz bersa, "
         f"<b>{esc(NFT_MANAGER)}</b> bilan bog'laning.\n\n"
         f"🎁 Rasmiy kanal: <b>{esc(NFT_CHANNEL)}</b>"
