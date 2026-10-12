@@ -35,7 +35,8 @@ class UB:
             raise TypeError("object of type 'NoneType' has no len()")
         return TELEGRAM
 
-    async def send_gift(self, chat_id, gift_id, text=None, hide_my_name=None):
+    async def send_gift(self, chat_id, gift_id, text=None,
+                        hide_my_name=None, parse_mode=None):
         if MODE["v"] == "send_error":
             raise TypeError("object of type 'NoneType' has no len()")
         if MODE["v"] == "permanent":

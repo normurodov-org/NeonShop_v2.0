@@ -42,7 +42,8 @@ class UB:
     async def get_available_gifts(self):
         return TELEGRAM
 
-    async def send_gift(self, chat_id, gift_id, text=None, hide_my_name=None):
+    async def send_gift(self, chat_id, gift_id, text=None,
+                        hide_my_name=None, parse_mode=None):
         calls.append({"chat": chat_id, "gift": gift_id,
                       "text": text, "anon": hide_my_name})
         return True

@@ -137,6 +137,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 from pyrogram import Client as UserbotClient
+from pyrogram.enums import ParseMode as UbParseMode
 from pyrogram import idle as ub_idle
 from pyrogram import filters as ub_filters
 from pyrogram import raw as ub_raw
@@ -3429,6 +3430,7 @@ async def process_gift_orders() -> None:
     warned_no_userbot = False
     last_pending = -1
     last_written = False
+    stuck_notified_at = 0.0  # qisqarib qolgan gift'lar haqida eslatma
     while True:
         try:
             await asyncio.sleep(GIFT_POLL_INTERVAL)
@@ -3496,8 +3498,16 @@ async def process_gift_orders() -> None:
                 stars = gift_def[2] if gift_def else (order.get("stars") or order.get("amount"))
                 gift_emoji = GIFT_EMOJI.get(gift_key, "") or str(
                     (gift_def[4] if gift_def and len(gift_def) > 4 else "") or "")
-                recipient = (order.get("recipient") or "").lstrip("@")
+                recipient = normalize_gift_recipient(order.get("recipient"))
                 if not recipient or not stars:
+                    # Noto'g'ri qabul qiluvchi — cheksiz urinish ham
+                    # yordam bermaydi, lekin mijozga xabar beramiz.
+                    order["gift_error"] = (
+                        f"Qabul qiluvchi topilmadi: {str(order.get('recipient'))[:40]!r}"
+                    )
+                    order["gift_failed"] = True
+                    continue
+                if not stars:
                     continue
                 # Cheksiz qayta urinishni oldini olish: bir necha urinishdan keyin
                 # to'xtaymiz (aks holda har 15 soniyada admin'ga xabar yuborilib,
@@ -3543,7 +3553,7 @@ async def process_gift_orders() -> None:
                         _stage(f"3) send_gift (urinish {attempt + 1}/3)")
                         try:
                             # Sovg'a ostiga mijoz qoldirgan matn (ixtiyoriy)
-                            gift_text = str(order.get("gift_text") or "").strip()
+                            gift_text = clean_gift_text(order.get("gift_text"))
                             # Telegram: hide_my_name=True -> anonim
                             # (InputInvoiceStarGift.hide_name = flags.0?true)
                             anon = order_is_anonymous(order)
@@ -3551,6 +3561,14 @@ async def process_gift_orders() -> None:
                                 chat_id=recipient,
                                 gift_id=match.id,
                                 text=gift_text or None,
+                                # DIQQAT: mijoz matni ODDIY matn bo'lib
+                                # yuboriladi. Aks holda Pyrogram undagi
+                                # _ * [ ] < > belgilarini markdown/HTML deb
+                                # talqin qilib entity yaratadi va sovg'a
+                                # "parse failed" bilan umuman yuborilmaydi.
+                                parse_mode=(
+                                    UbParseMode.DISABLED if gift_text else None
+                                ),
                                 hide_my_name=anon,
                             )
                             sent = True
@@ -3663,6 +3681,45 @@ async def process_gift_orders() -> None:
                             f"({last_err}/{GIFT_MAX_ATTEMPTS}): {esc(str(exc)[:150])}"
                             + (diag if last_err >= 2 else "")
                         )
+            # --- QISQARIB QOLGAN gift'lar: mijozni kutayotiriz, u bilmaydi ---
+            # Sabablari: urinish limiti (5), noto'g'ri qabul qiluvchi,
+            # yoki status "completed" emas. Bu holda xabar YUBORILMAYDI va
+            # mijoz hech narsani bilmaydi — biz esa "ishlayapti" deb o'ylaymiz.
+            stuck = [
+                o for o in db.data.get("orders", {}).values()
+                if o.get("kind") == "gift"
+                and not o.get("gift_sent")
+                and not o.get("gift_processing")
+            ]
+            n_stuck = len(stuck)
+            now = time.time()
+            if n_stuck and now - stuck_notified_at > 300:
+                stuck_notified_at = now
+                reasons: dict[str, int] = {}
+                for o in stuck:
+                    if o.get("gift_failed"):
+                        r = "urishlar tugagan"
+                    elif int(o.get("gift_attempts", 0)) >= GIFT_MAX_ATTEMPTS:
+                        r = "urish limiti"
+                    elif not normalize_gift_recipient(o.get("recipient")):
+                        r = "noto'g'ri qabul qiluvchi"
+                    elif o.get("status") not in ("completed", "pending_admin", "processing"):
+                        r = f"holat={o.get('status')}"
+                    else:
+                        r = "kutilmoqda"
+                    reasons[r] = reasons.get(r, 0) + 1
+                set_runtime_status(gift_stuck=n_stuck)
+                log.warning("🎁 Yuborilmagan gift buyurtmalari: %d (%s)",
+                            n_stuck, ", ".join(f"{k}: {v}" for k, v in reasons.items()))
+                await notify_admins(
+                    f"⏳ <b>{n_stuck} ta gift buyurtmasi yuborilmayapti</b>\n\n"
+                    + "\n".join(f"• {esc(k)}: <b>{v}</b>" for k, v in reasons.items())
+                    + "\n\n🔧 <i>/admin → 🎁 Gift qayta yuborish — ro'yxat va "
+                    "qayta urinish tugmasi.</i>"
+                )
+            elif not n_stuck:
+                set_runtime_status(gift_stuck=0)
+
             # Holatni bazaga yozamiz — /api/health da ko'rinadi
             pending_now = sum(
                 1 for o in db.data.get("orders", {}).values()
@@ -3765,6 +3822,51 @@ class UpdateCounterMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
+def recover_stuck_gifts() -> int:
+    """Bizning xatomiz tufayli yutilgan gift buyurtmalarini tiklaydi.
+
+    MUAMMO: avvalgi versiyalarda ichki (dasturiy) xatolar — masalan
+    "object of type 'NoneType' has no len()" — urinishlar limitiga
+    yetib buyurtmani "muvaffaqiyatsiz" deb YOPARDI. Mijoz pulini
+    to'lab giftini olmay qolardi va hech kim sababni ko'rmaydi.
+
+    Endi: userbot ulanganda bunday buyurtmalar avtomatik qayta
+    urinishga qo'yiladi. Mijozning GUNAOHI bo'lmagan xatolar uchun
+    urinish limiti qo'llanilmasligi to'g'ri.
+
+    Qaytaradi: tiklangan buyurtmalar soni.
+    """
+    recovered = 0
+    for o in db.data.get("orders", {}).values():
+        if o.get("kind") != "gift" or o.get("gift_sent"):
+            continue
+        internal = bool(o.get("gift_needs_review"))
+        if not internal:
+            # Eski yozuvlar: xato matni ichki xatoga ishora qiladi
+            err = str(o.get("gift_error") or "")
+            internal = any(
+                k in err for k in (
+                    "NoneType", "TypeError", "AttributeError", "has no len",
+                    "not subscriptable", "unhashable", "object of type",
+                )
+            )
+        if not internal:
+            continue
+        o["gift_attempts"] = 0
+        o["gift_failed"] = False
+        o["gift_processing"] = False
+        o.pop("gift_processing_at", None)
+        o.pop("gift_needs_review", None)
+        o.pop("gift_error", None)
+        o.pop("gift_error_stage", None)
+        o.pop("gift_error_trace", None)
+        recovered += 1
+    if recovered:
+        db.save()
+        log.info("🎁 %d ta yutilgan gift buyurtmasi tiklandi (ichki xato sababli)", recovered)
+    return recovered
+
+
 def maybe_start_userbot() -> None:
     global userbot
     missing = []
@@ -3818,6 +3920,15 @@ def maybe_start_userbot() -> None:
             log.info("👤 Userbot ishga tushdi (%s), bank xabarlari kuzatilmoqda...", who)
             set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
             asyncio.create_task(ub_idle())
+            # Bizning xatomiz tufayli yutilgan gift'larni tikla
+            n_rec = recover_stuck_gifts()
+            if n_rec:
+                await notify_admins(
+                    f"♻️ <b>{n_rec} ta gift buyurtmasi tiklandi</b>\n\n"
+                    "🔍 Ularga noto'g'ri ravishda \"muvaffaqiyatsiz\" deb belgi "
+                    "qo'yilgan edi (dasturiy xato sababli, mijozning gunohi emas).\n"
+                    "🤖 Endi ular avtomatik qayta yuboriladi."
+                )
         except Exception as exc:  # noqa: BLE001
             log.error("Userbot ishga tushmadi: %s", exc)
             set_runtime_status(userbot="error", error=str(exc)[:300])
@@ -3949,6 +4060,38 @@ def is_internal_gift_error(exc: BaseException) -> bool:
             "Internal", "ServiceUnavailable",
         )
     )
+
+
+def clean_gift_text(raw: Any) -> str:
+    """Mijoz yozgan matnni xavfsiz tozalaydi.
+
+    Muhim: matn Telegram'ga ODDIY matn sifatida (verbatim) yuboriladi.
+    `parse_mode=ParseMode.DISABLED` — aks holda Pyrogram matn ichidagi
+    _ * [ ] < > belgilarini markdown/HTML deb talqin qilib entity yaratadi
+    va noto'g'ri yoki buzilgan entity Telegram tomonidan rad qilinadi
+    ("MESSAGE_PARSE_FAILED") — ya'ni mijoz oddiy "<b>salom" deb yozsa,
+    sovg'a umuman yuborilmay qoladi.
+    """
+    t = str(raw or "")
+    # Boshqaruv belgilarini olib tashlaymiz (Telegram ularni rad qiladi)
+    t = "".join(ch for ch in t if ch == "\n" or ch == "\t" or ord(ch) >= 32)
+    return re.sub(r"\s+", " ", t).strip()[:200]
+
+
+def normalize_gift_recipient(raw: Any) -> str:
+    """Qabul qiluvchini tozalaydi.
+
+    Mijoz kiritgan shakl bo'lishi mumkin:
+        @bobur | bobur | https://t.me/bobur | t.me/bobur | t.me/bobur/
+        "bobur " (ortida bo'sh joy)
+    Hammasi bir xil ishlashi uchun bitta ko'rinishga keltiramiz —
+    aks holda "https://t.me/bobur" Telegram'da topilib olmaydi.
+    """
+    t = str(raw or "").strip()
+    t = re.sub(r"^(?:https?://)?(?:t|telegram)\.(?:me|dog)/", "", t, flags=re.I)
+    t = re.sub(r"^@+", "", t).strip().rstrip("/")
+    t = "".join(ch for ch in t if ch.isalnum() or ch == "_")
+    return t[:32]
 
 
 def gift_sticker_emoji(g: Any) -> str:

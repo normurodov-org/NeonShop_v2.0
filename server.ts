@@ -534,7 +534,17 @@ app.post('/api/order', async (req: Request, res: Response) => {
 
   let price = 0;
   let title = '';
-  let recipient = (username || user.username || '').replace('@', '').trim();
+  // Qabul qiluvchini tozalaydi — mijoz shunday shakllarda kiritishi mumkin:
+  //   @bobur | bobur | https://t.me/bobur | t.me/bobur/ | "bobur "
+  // Avval faqat bitta "@" olib tashlanardi va t.me havolalari to'liq
+  // saqlanardi -> Telegram'da qabul qiluvchi topilmasdi va gift yuborilmasdi.
+  let recipient = (username || '')
+    .trim()
+    .replace(/^(?:https?:\/\/)?(?:t|telegram)\.(?:me|dog)\//i, '')
+    .replace(/^@+/, '')
+    .replace(/\/+$/, '')
+    .replace(/[^A-Za-z0-9_]/g, '')
+    .slice(0, 32);
 
   if (!recipient) {
     return res.status(400).json({ ok: false, error: "Qabul qiluvchi Telegram username'ni kiriting." });
@@ -698,9 +708,15 @@ app.post('/api/order', async (req: Request, res: Response) => {
     anon: kind === 'gift' ? Boolean(hide_my_name) : undefined,
     hide_my_name: kind === 'gift' ? Boolean(hide_my_name) : undefined,
     // Sovg'a ostiga qo'yiladigan matn (Telegram "Add Message...")
+    // MIJOZ MATNI ODDIY MATN ("verbatim") bo'lib yuboriladi —
+    // parse_mode DISABLED. Shu sababli teglarni olib tashlamaymiz:
+    // mijoz "<b>salom" deb yozsa, aynan shu yoziladi.
     gift_text:
       kind === 'gift' && typeof gift_text === 'string'
-        ? gift_text.replace(/[<>&]/g, '').trim().slice(0, 200) || undefined
+        ? gift_text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+               .replace(/\s+/g, ' ')
+               .trim()
+               .slice(0, 200) || undefined
         : undefined,
     status: orderStatus,
     source: 'webapp',
