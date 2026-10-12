@@ -152,9 +152,16 @@ print()
 print("=" * 68)
 print("4) Statistikа endpointlari ishlaydimi?")
 print("=" * 68)
+# /api/rate TASHQI API (CoinGecko/Frankfurter) ga murojaat qiladi —
+# test muhitida internet yo'q bo'lishi mumkin. Shuning uchun uning
+# uchun 0 (timeout) ham qabul qilinadi: bu MAHSUL xatosi emas.
+EXTERNAL = {"/api/rate"}
 for path in ("/api/health", "/api/rate", "/api/ranking", "/api/me",
              "/api/admin/contest"):
     st, _ = get(path)
+    if path in EXTERNAL and st == 0:
+        print(f"  ➖ {path} -> 0 (tashqi API javob bermadi — mahalliy muammo emas)")
+        continue
     check(st in (200, 401, 403), f"{path} -> {st}")
 
 print()
