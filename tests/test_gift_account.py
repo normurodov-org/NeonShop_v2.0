@@ -1,41 +1,24 @@
-"""Gift akkauntining bank akkauntidan AJRATILISHI va kanal xabari formati."""
-import asyncio
+"""BITTA userbot rejimi: gift yuborish + bank xabarlarini tekshirish.
+
+Sovg'a yuborish va balansni avtomatik to'ldirish BITTA akkaunt orqali
+amalga oshiriladi (SESSION_STRING). Alohida GIFT_SESSION_STRING yo'q.
+
+Shu test quyidagilarni kafolatlaydi:
+  - ortiqcha akkaunt qoldig'i (gift_userbot, gift_client, alohida ENV)
+    kodda QOLMAGAN
+  - sovg'a aynan `userbot` orqali yuboriladi
+  - sovg'a xabari matni va anonimlik saqlanadi
+  - ORDERS_CHANNEL formati server.ts bilan bir xil
+  - SESSION_STRING validatsiyasi ishlaydi
+"""
 import re
 import sys
 
 sys.path.insert(0, '.')
 import bot as B  # noqa: E402
 
-
-class FakeMe:
-    def __init__(self, uid, username):
-        self.id, self.username = uid, username
-
-
-class FakeClient:
-    """Minimal Pyrogram client namunasi."""
-
-    def __init__(self, uid, username, on_stop=None):
-        self._me = FakeMe(uid, username)
-        self.stopped = False
-        self._on_stop = on_stop
-        self.handlers = []
-        self.session = f"SESSION_FOR_{username}"
-
-    async def get_me(self):
-        return self._me
-
-    async def stop(self):
-        self.stopped = True
-        if self._on_stop:
-            self._on_stop(self)
-
-    async def add_handler(self, h):
-        self.handlers.append(h)
-
-    async def export_session_string(self):
-        return self.session
-
+SRC = open("bot.py", encoding="utf-8").read()
+SRV = open("server.ts", encoding="utf-8").read()
 
 ok = True
 
@@ -46,191 +29,103 @@ def check(cond, msg):
     print(f"  {'✅' if cond else '❌'} {msg}")
 
 
-print("=" * 66)
-print("1) gift_client() — qaysi akkaunt ishlatiladi?")
-print("=" * 66)
+print("=" * 68)
+print("1) BITTA userbot — ortiqcha akkaunt qolmagan")
+print("=" * 68)
+for gone in ("gift_userbot", "gift_client", "_start_gift_userbot",
+             "PENDING_LOGIN_ROLE", "GIFT_SESSION_STRING",
+             "adm:gift_qr", "adm:gift_phone", "adm:gift_export",
+             "neon_gift_userbot"):
+    check(gone not in SRC, f"bot.py da {gone!r} yo'q")
+    ok &= True
 
-B.userbot = FakeClient(1, "bank_humo", on_stop=lambda c: setattr(B, "userbot", None))
-B.gift_userbot = None
-check(B.gift_client() is B.userbot,
-      "GIFT akkaunti yo'q -> bank akkaunti (eski tartib saqlanadi)")
-
-B.gift_userbot = FakeClient(2, "neon_shop", on_stop=lambda c: setattr(B, "gift_userbot", None))
-check(B.gift_client() is B.gift_userbot,
-      "GIFT akkaunti bor -> ALHOHIDA akkaunt (bank emas)")
-
-B.userbot = None
-check(B.gift_client() is not None,
-      "Bank ulanmagan, gift ulangan -> gift ishlayveradi")
-
-B.gift_userbot = None
-check(B.gift_client() is None, "Ikkalasi ham ulanmagan -> None (worker ogohlantiradi)")
+check("gift_session_string" not in SRV, "server.ts da gift_session_string yo'q")
+check(SRC.count(".send_gift(") == 1 and "gclient = userbot" in SRC,
+      "sovg'a aynan BITTA userbot orqali yuboriladi (1 marta)")
+check("GIFT_SESSION_STRING" not in SRV, "server.ts da GIFT_SESSION_STRING yo'q")
 
 print()
-print("=" * 66)
-print("2) SESSION_STRING validatsiyasi")
-print("=" * 66)
-for bad, label in (("", "bo'sh"), ("x" * 100, "100 belgi"), ("A" * 362, "362 belgi"),
-                   ("A" * 351, "351 belgi (eski format)")):
-    v, m = B.diagnose_session_string(bad)
-    print(f"    {label:26} -> {'✅' if v else '❌'} {m.splitlines()[0]}")
-check(B.diagnose_session_string("A" * 362)[0], "362 belgi = to'g'ri format")
-check(not B.diagnose_session_string("x" * 100)[0], "100 belgi = noto'g'ri")
-check(B.normalize_session_string("  ab\ncd  ") == "abcd", "bo'sh joy/qator uzilishi tozalanadi")
+print("=" * 68)
+print("2) Admin menyusi — eskirgan tugmalar yo'q")
+print("=" * 68)
+for gone in ("adm:gift_qr", "adm:gift_phone", "adm:gift_export"):
+    check(gone not in SRC, f"{gone} tugmasi olib tashlandi")
+check("adm:ub_qr" in SRC and "adm:ub_phone" in SRC, "userbot ulash tugmalari saqlandi")
+check("adm:gift_retry" in SRC, "🎁 Gift qayta yuborish (muammo tiklash) saqlandi")
 
 print()
-print("=" * 66)
-print("3) _start_gift_userbot — GIFT_SESSION_STRING qarorlari")
-print("=" * 66)
+print("=" * 68)
+print("3) SESSION_STRING validatsiyasi")
+print("=" * 68)
+check(B.SESSION_STRING_EXPECTED == 362, "kutilgan uzunlik: 362 belgi")
+for n, valid, label in (
+    (362, True, "to'g'ri"),
+    (351, True, "eski format"),
+    (0, False, "bo'sh"),
+    (21, False, "telethon qisqasi"),
+    (100, False, "qirqilgan"),
+    (300, False, "to'liq emas"),
+):
+    got, why = B.diagnose_session_string("A" * n)
+    print(f"    {n:4} belgi ({label:16}) -> {'✅' if got == valid else '❌'}")
+    check(got == valid, f"{n} belgi -> {'to' + chr(39) + 'g' + chr(39) + 'ri' if got else 'noto' + chr(39) + 'g' + chr(39) + 'ri'}")
 
+_, why = B.diagnose_session_string("A" * 21)
+check("SESSION_STRING" in why and "GIFT_SESSION_STRING" not in why,
+      "xabar faqat SESSION_STRING ga ishora qiladi")
+check("362 belgi" in why, "kutilgan uzunlik ko'rsatilgan")
+check("unpack requires" not in why, "pyrofork ichki xatosi takrorlanmadi")
 
-async def t_start():
-    global ok
-
-    # (a) GIFT_SESSION_STRING yo'q -> eski tartib
-    B.gift_userbot = None
-    B.SESSION_STRING = "A" * B.SESSION_STRING_EXPECTED
-    B.GIFT_SESSION_STRING = ""
-    await B._start_gift_userbot()
-    check(B.gift_userbot is None, "GIFT_SESSION_STRING yo'q -> gift akkaunti yaratilmaydi")
-
-    # (b) GIFT_SESSION_STRING == SESSION_STRING -> eski tartib
-    B.gift_userbot = None
-    B.GIFT_SESSION_STRING = B.SESSION_STRING
-    await B._start_gift_userbot()
-    check(B.gift_userbot is None, "Ikkalasi bir xil -> alohida client yaratilmaydi")
-
-    # (c) turli akkaunt -> alohida client yaratilishi kerak
-    B.gift_userbot = None
-    B.GIFT_SESSION_STRING = "B" * B.SESSION_STRING_EXPECTED
-    started = {}
-
-    class UB(B.UserbotClient):
-        def __init__(self, name, **kw):
-            started["name"] = name
-            started["session"] = kw.get("session_string")
-
-        async def start(self):
-            pass
-
-        async def get_me(self):
-            return FakeMe(2, "neon_shop")
-
-    orig = B.UserbotClient
-    B.UserbotClient = UB
-    try:
-        await B._start_gift_userbot()
-    finally:
-        B.UserbotClient = orig
-    check(B.gift_userbot is not None, "Turli akkaunt -> gift client ulandi")
-    check(started.get("name") == "neon_gift_userbot",
-          f"Alohida session nomi: {started.get('name')}")
-    check(started.get("session") == B.GIFT_SESSION_STRING,
-          "GIFT_SESSION_STRING ishlatildi (SESSION_STRING emas)")
-
-
-asyncio.run(t_start())
+check(B.normalize_session_string("  abc\r\ndef  ") == "abcdef",
+      "bo'sh joy / qator uzilishi tozalanadi")
 
 print()
-print("=" * 66)
-print("4) ub_finish_login — rolega qarab to'g'ri joyga o'tadi")
-print("=" * 66)
-
-
-async def t_finish():
-    global ok
-    B.userbot = FakeClient(1, "bank_humo", on_stop=lambda c: setattr(B, "userbot", None))
-    B.gift_userbot = None
-    B.PENDING_LOGIN_ROLE = "gift"
-    c = FakeClient(2, "neon_shop", on_stop=lambda x: setattr(B, "gift_userbot", None))
-    await B.ub_finish_login(c, _Msg(), _State())
-    check(B.gift_userbot is not None, "rol=gift -> gift_userbot ga o'tdi")
-    check(B.userbot is not None, "rol=gift -> bank akkaunti O'LMADI")
-    check(B.userbot.handlers == [], "rol=gift -> bank xabar handler'i qo'shilmadi")
-
-    B.PENDING_LOGIN_ROLE = "bank"
-    c2 = FakeClient(3, "bank_new", on_stop=lambda x: setattr(B, "userbot", None))
-    await B.ub_finish_login(c2, _Msg(), _State())
-    check(B.userbot is not None and B.userbot._me.id == 3, "rol=bank -> userbot ga o'tdi")
-    check(len(B.userbot.handlers) == 1, "rol=bank -> bank xabar handler'i qo'shildi")
-
-
-class _Msg:
-    def __init__(self):
-        self.answers = []
-
-    async def answer(self, text, **kw):
-        self.answers.append(text)
-
-    async def edit_text(self, text, **kw):
-        pass
-
-
-class _State:
-    def __init__(self):
-        self.data = {}
-
-    async def clear(self):
-        self.data = {}
-
-    async def get_data(self):
-        return dict(self.data)
-
-    async def update_data(self, **kw):
-        self.data.update(kw)
-
-
-# _Msg/_State oldindan kerak
-Msg, State = _Msg, _State
-import bot as _b  # noqa: E402
-
-for name, obj in (("_Msg", Msg), ("_State", State)):
-    if not hasattr(_b, name):
-        setattr(_b, name, obj)
-
-asyncio.run(t_finish())
-
-print()
-print("=" * 66)
-print("5) ORDERS_CHANNEL xabari formati (mijoz rasmidagi)")
-print("=" * 66)
+print("=" * 68)
+print("4) ORDERS_CHANNEL formati (mijoz rasmidagi)")
+print("=" * 68)
 txt = B.format_order_channel_text(
     title="Stars olindi", who="@odilbek",
     amount_text="Miqdor: 50 ⭐", price=10_000, cashback=10,
 )
 plain = txt.replace("<b>", "").replace("</b>", "").replace("&#x27;", "'")
 print(plain)
-print()
-check(plain.splitlines()[0].strip() == "⭐ Stars olindi", "1-qator: ⭐ Stars olindi")
-check(plain.splitlines()[1].strip() == "👤 @odilbek", "2-qator: 👤 mijoz")
+lines = plain.splitlines()
+check(lines[0].strip() == "⭐ Stars olindi", "1-qator: ⭐ Stars olindi")
+check(lines[1].strip() == "👤 @odilbek", "2-qator: 👤 mijoz")
 check("📦 Miqdor: 50 ⭐" in plain, "📦 Miqdor: 50 ⭐")
 check("Summasi: 10 000 so'm" in plain, "  Summasi: 10 000 so'm")
 check("Keshbek: +10 so'm" in plain, "  Keshbek: +10 so'm")
 
 txt2 = B.format_order_channel_text(
-    title="Gift: 🧸 Ayiqcha (15 ⭐) (🕶️ Anonim)",
-    who="@aliy", amount_text="Sovg'a: 🧸 Ayiqcha — 15 ⭐", price=3_000,
+    title="Gift: 🧸 Ayiqcha (🕶️ Anonim)", who="@aliy",
+    amount_text="Sovg'a: 🧸 Ayiqcha — 15 ⭐", price=3_000,
 )
 plain2 = txt2.replace("<b>", "").replace("</b>", "").replace("&#x27;", "'")
-print()
-print(plain2)
 check("Keshbek" not in plain2, "Keshbek yo'q bo'lsa qator qo'shilmaydi")
 check("Sovg'a: 🧸 Ayiqcha" in plain2, "esc() apostrofni buzmaydi")
 
 print()
-print("=" * 66)
-print("6) server.ts bilan format BIR XILMI?")
-print("=" * 66)
-srv = open("server.ts", encoding="utf-8").read()
-fn = re.search(r"function channelOrderText\(.*?\n}\n", srv, re.S)
+print("=" * 68)
+print("5) server.ts bilan format BIR XILMI?")
+print("=" * 68)
+fn = re.search(r"function channelOrderText\(.*?\n}\n", SRV, re.S)
 check(fn is not None, "server.ts da channelOrderText() bor")
 if fn:
     js = fn.group(0)
-    for frag in ("Stars olindi", "Summasi:", "Keshbek:", "Miqdor"):
-        check(frag in js or "amountText" in js, f"server.ts: {frag!r} mavjud")
-check("sendTelegramMessage" in srv, "eski (grammy) yo'l o'chirilmagan — fallback sifatida")
-check("api.telegram.org/bot${token}/sendMessage" in srv,
-      "to'g'ridan-to'g'ri Bot API chaqiriladi (AUTO_START_TG_BOT=false bo'lsa ham)")
+    for frag in ("Summasi", "Keshbek", "amountText"):
+        check(frag in js, f"server.ts: {frag!r} mavjud")
+check("api.telegram.org/bot${token}/sendMessage" in SRV,
+      "to'g'ridan-to'g'ri Bot API chaqiriladi (AUTO_START_TG_BOT=false)")
+
+print()
+print("=" * 68)
+print("6) Gift tanlash va anonim semantikasi saqlangan")
+print("=" * 68)
+check(B.order_is_anonymous({"anon": True}) is True, "anon=True -> anonim")
+check(B.order_is_anonymous({"anon": False}) is False, "anon=False -> profil ko'rinadi")
+check(B.order_is_anonymous({"hide_my_name": True}) is True,
+      "eski yozuv (hide_my_name) ham to'g'ri o'qiladi")
+check(len(B.GIFT_EMOJI) == len(B.GIFTS), "GIFT_EMOJI to'liq")
 
 print()
 print("NATIJA:", "✅ BARCHASI TO'G'RI" if ok else "❌ MUAMMO BOR")

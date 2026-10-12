@@ -49,8 +49,9 @@ print("2) NOTO'G'RI xabar — TUZATILADIGAN bo'lishi kerak")
 print("=" * 66)
 _, why = B.diagnose_session_string("A" * 21)
 check("362 belgi" in why, "kutilgan uzunlik ko'rsatilgan")
-check("GIFT_SESSION_STRING" in why, "ENV kaliti nomi ko'rsatilgan")
+check("SESSION_STRING" in why, "ENV kaliti nomi ko'rsatilgan")
 check("Session zaxirasi" in why, "qayerdan olish kerakligi ko'rsatilgan")
+check("GIFT_SESSION_STRING" not in why, "eskirgan GIFT_SESSION_STRING yo'qqon qilinmadi")
 check("Invalid base64-encoded string" not in why,
       "Python ichki base64 xatosi yashirilgan (ma'nosizroq)")
 check("unpack requires" not in why, "pyrofork ichki xatosi takrorlanmadi")
@@ -98,11 +99,11 @@ print("5) Railway ENV o'qilishi tozalangan holda")
 print("=" * 66)
 import os  # noqa: E402
 
-os.environ["GIFT_SESSION_STRING"] = "  " + "A" * 362 + "\n"
-check(B.normalize_env_session("GIFT_SESSION_STRING") == "A" * 362,
+os.environ["SESSION_STRING"] = "  " + "A" * 362 + "\n"
+check(B.normalize_env_session("SESSION_STRING") == "A" * 362,
       "ENV dagi bo'sh joy/qator uzilishi tozalanadi")
-del os.environ["GIFT_SESSION_STRING"]
-check(B.normalize_env_session("GIFT_SESSION_STRING") == "",
+del os.environ["SESSION_STRING"]
+check(B.normalize_env_session("SESSION_STRING") == "",
       "yo'q ENV -> bo'sh string (xato bermaydi)")
 
 print()

@@ -42,7 +42,7 @@ DB_PATH=/tmp/_t_giftmatch.json API_ID=0 API_HASH= BOT_TOKEN=123:F \
   python3 tests/test_gift_matching.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING|ERROR"
 
 echo
-echo "=== 7/10 Gift akkaunti ajratilishi + kanal xabari formati ==="
+echo "=== 7/10 BITTA userbot + kanal xabari formati ==="
 rm -f /tmp/_t_giftacct.json
 DB_PATH=/tmp/_t_giftacct.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_gift_account.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"

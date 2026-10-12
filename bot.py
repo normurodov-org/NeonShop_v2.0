@@ -265,10 +265,10 @@ def diagnose_session_string(raw: Any) -> tuple[bool, str]:
         f"Siz kiritgan qiymat <b>{n} belgi</b> ({got}), "
         f"lekin to'g'ri session <b>{SESSION_STRING_EXPECTED} belgi</b> bo'lishi kerak.\n\n"
         "🔧 <b>Qanday tuzatiladi:</b>\n"
-        "1) <code>/admin → 🎁 Gift akkaunt (QR)</code> yoki "
-        "<code>📱 (raqam)</code> — akkauntni shu bot orqali ulang\n"
-        "2) <code>/admin → 📤 Session zaxirasi → 🎁 Gift akkaunti sessionini olish</code>\n"
-        "3) O'sha qiymatni Railway ENV ga <b>GIFT_SESSION_STRING</b> nomi bilan qo'ying\n\n"
+        "1) <code>/admin → 🔑 Userbot ulash (QR)</code> yoki "
+        "<code>📱 Raqam bilan ulash</code>\n"
+        "2) <code>/admin → 📤 Session zaxirasi</code>\n"
+        "3) O'sha qiymatni Railway ENV ga <b>SESSION_STRING</b> nomi bilan qo'ying\n\n"
         "⚠️ <i>Tashqi saytlardan (telethon, online generator) yoki eski "
         "backupdan olingan session <b>ishlamaydi</b> — format boshqa. "
         "Session faqat shu bot orqali olinadi.</i>"
@@ -280,17 +280,8 @@ def diagnose_session_string(raw: Any) -> tuple[bool, str]:
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = normalize_env_session("SESSION_STRING")
-# Gift yuborish uchun ALOHIDA akkaunt (ixtiyoriy).
-#
-# Nima uchun alohida:
-#   - SESSION_STRING  -> bank xabarlarini kuzatadi (@humocardbot), balansni to'ldiradi
-#   - GIFT_SESSION_STRING -> sovg'alarni yuboradi
-# Bu ikki vazifa bitta akkauntda bo'lsa, sovg'aning yuboruvchisi ham
-# bank xabarlarini ko'rib turadigan (ya'ni ma'lumot xavfsizligi nuqtasidan
-# chalkash) akkaunt bo'lib qoladi. Ajratilganda esa gift "Do'kon profili"
-# ko'rinishida aynan DO'KON akkaunti chiqadi.
-# GIFT_SESSION_STRING yo'q bo'lsa — eski tartib (SESSION_STRING) ishlatiladi.
-GIFT_SESSION_STRING = normalize_env_session("GIFT_SESSION_STRING")
+# DIQQAT: sovg'a yuborish va bank xabarlarini tekshirish BITTA userbot
+# orqali amalga oshiriladi — alohida session ENV kaliti kerak emas.
 TOPUP_SOURCE_CHAT = os.getenv("TOPUP_SOURCE_CHAT", "@humocardbot")
 # Gift worker tekshiruv oraliqi (soniya). Test uchun kichik qilinishi mumkin.
 GIFT_POLL_INTERVAL = float(os.getenv("GIFT_POLL_INTERVAL", "15"))
@@ -750,28 +741,15 @@ if not db.data.get("settings", {}).get("bot_active", True):
 
 bot: Optional[Bot] = None
 userbot: Optional[UserbotClient] = None
-# Gift yuborish uchun alohida akkaunt (GIFT_SESSION_STRING). Bo'lmasa
-# `userbot` ishlatiladi — eski tartib saqlanadi.
-gift_userbot: Optional[UserbotClient] = None
-
-
-def gift_client() -> Optional[UserbotClient]:
-    """Gift yuborish uchun ishlatiladigan client.
-
-    GIFT_SESSION_STRING bilan alohida akkaunt ulangan bo'lsa — u,
-# aks holda SESSION_STRING (bank kuzatuvchisi).
-    """
-    return gift_userbot or userbot
+# BITTA userbot ikkala vazifani ham bajaradi:
+#   1) @humocardbot bank xabarlarini kuzatadi -> balansni to'ldiradi
+#   2) sovg'alarni (gift) yuboradi
 DP: Optional[Dispatcher] = None
 PURCHASE_LOCK = asyncio.Lock()
 ADMIN_SESSIONS: dict[int, float] = {}
 ADMIN_FAILED: dict[int, list[float]] = {}
 ADMIN_SESSION_TTL = 12 * 3600
 
-# Keyingi userbot kirishi qaysi rolega tegishli:
-#   "bank" -> SESSION_STRING  (bank xabarlarini kuzatadi, balansni to'ldiradi)
-#   "gift" -> GIFT_SESSION_STRING (sovg'alarni yuboradi — alohida akkaunt)
-PENDING_LOGIN_ROLE: str = "bank"
 
 # =============================================================================
 # 6. FRAGMENT.COM
@@ -1884,10 +1862,8 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="✅ Unban", callback_data="adm:unban")],
             [InlineKeyboardButton(text="💎 TON balans", callback_data="adm:wallet"),
              InlineKeyboardButton(text="🔎 Fragment test", callback_data="adm:diag")],
-            [InlineKeyboardButton(text="🏦 Bank akkaunt (QR)", callback_data="adm:ub_qr"),
-             InlineKeyboardButton(text="🏦 Bank akkaunt (raqam)", callback_data="adm:ub_phone")],
-            [InlineKeyboardButton(text="🎁 Gift akkaunt (QR)", callback_data="adm:gift_qr"),
-             InlineKeyboardButton(text="🎁 Gift akkaunt (raqam)", callback_data="adm:gift_phone")],
+            [InlineKeyboardButton(text="🔑 Userbot ulash (QR)", callback_data="adm:ub_qr"),
+             InlineKeyboardButton(text="📱 Raqam bilan ulash", callback_data="adm:ub_phone")],
             [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status"),
              InlineKeyboardButton(text="📤 Session zaxirasi", callback_data="adm:ub_export")],
             [InlineKeyboardButton(text="🎁 Gift qayta yuborish", callback_data="adm:gift_retry")],
@@ -3456,7 +3432,7 @@ async def process_gift_orders() -> None:
     while True:
         try:
             await asyncio.sleep(GIFT_POLL_INTERVAL)
-            gclient = gift_client()
+            gclient = userbot  # BITTA akkaunt: bank xabarlari + gift
             if gclient is None:
                 # AVVAL jimgina "continue" edi — admin hech narsani bilmasdi va
                 # gift buyurtmalari cheksiz kutib qolardi. Endi ogohlantiramiz.
@@ -3598,7 +3574,7 @@ async def process_gift_orders() -> None:
                     # WebApp buyurtmalar ro'yxatida "Yuborilmoqda…" deb qolmasligi uchun
                     order["status"] = "completed"
                     db.save()
-                    log.info("🎁 Gift %s @%s ga gift-akkount orqali yuborildi", gift_key, recipient)
+                    log.info("🎁 Gift %s @%s ga userbot orqali yuborildi", gift_key, recipient)
                     await _safe_send(
                         order["user_id"],
                         f"🎁 <b>Sovg'a yuborildi!</b>\n\n"
@@ -3722,59 +3698,6 @@ def userbot_diagnose() -> list[str]:
     session_txt = f"{set_txt} ({len(SESSION_STRING)} belgi)" if has_session else missing_txt
     lines.append(f"{yes if has_session else no} SESSION_STRING: {session_txt}")
 
-    # Gift akkaunti — ixtiyoriy, lekin tavsiya etiladi
-    has_gift = bool(GIFT_SESSION_STRING and len(GIFT_SESSION_STRING) > 20)
-    same = has_gift and GIFT_SESSION_STRING == SESSION_STRING
-    if same:
-        lines.append(
-            f"⚠️ GIFT_SESSION_STRING: bank akkaunti bilan BIR XIL\n"
-            "   <i>Sovg'a yuboruvchisi ham bank xabarlarini ko'ra oladi. "
-            "Ajratish uchun boshqa akkauntdan session oling.</i>"
-        )
-    elif has_gift:
-        lines.append(f"{yes} GIFT_SESSION_STRING: {set_txt} ({len(GIFT_SESSION_STRING)} belgi)")
-    else:
-        lines.append(
-            f"➖ GIFT_SESSION_STRING: yo'q\n"
-            "   <i>Gift'lar bank akkaunti orqali yuboriladi. "
-            "Ajratish uchun /admin → 📱 Raqam bilan ulash → GIFT_SESSION_STRING.</i>"
-        )
-
-    ub_ok = userbot is not None
-    ub_txt = "ishlayapti" if ub_ok else "yo‘q (avto-start muvaffaqiyatsiz)"
-    lines.append(f"{yes if ub_ok else no} Userbot obyekti: {ub_txt}")
-
-    # Xotiradagi so'nggi urinish natijasi — aniq sababni ko'rsatadi
-    rt = (db.data.get("settings", {}) or {}).get("runtime", {}) or {}
-    last_ub = rt.get("userbot")
-    if last_ub:
-        human = {
-            "connected": "ulangan",
-            "starting": "ulanmoqda…",
-            "reconnecting": "qayta ulanmoqda…",
-            "missing_env": "kalitlar yetishmaydi",
-            "error": "ULANMADI",
-        }.get(str(last_ub), str(last_ub))
-        mark = yes if last_ub == "connected" else no
-        lines.append(f"{mark} Oxirgi holat: {esc(human)}")
-        if rt.get("account"):
-            lines.append(f"ℹ️ Hisob: <code>{esc(str(rt['account']))}</code>")
-        if rt.get("error"):
-            lines.append(f"🔍 Xato: <code>{esc(str(rt['error'])[:250])}</code>")
-    lines.append(f"ℹ️ Bank kuzatuv manzasi: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>")
-
-    if not (API_ID and API_HASH and has_session):
-        lines.append("")
-        if not (API_ID and API_HASH):
-            lines.append("👉 my.telegram.org → API development tools → ID va API hash olish")
-        if not has_session:
-            lines.append("👉 Bu yerdan: <b>/admin → 📱 Raqam bilan ulash</b> — kodni kiriting, "
-                         "u sizga <code>SESSION_STRING</code> beradi.")
-            lines.append("👉 Uni Railway ENV ga qo'ying va redeploy qiling.")
-    else:
-        lines.append("")
-        lines.append("👉 Kalitlar to'g'ri, lekin ulanish muvaffaqiyatsiz. "
-                     "Railway loglarida <code>Userbot ishga tushmadi</code> qatorini qarang.")
     return lines
 
 
@@ -3842,84 +3765,8 @@ class UpdateCounterMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-async def _start_gift_userbot() -> None:
-    """Gift yuborish uchun ALOHIDA akkauntni ulaydi.
-
-    GIFT_SESSION_STRING yo'q yoki SESSION_STRING bilan bir xil bo'lsa —
-    hech narsa qilinmaydi, gift'lar asosiy userbot orqali yuboriladi
-    (eski tartib saqlanadi).
-
-    Alohida akkaunt bo'lganda:
-      - sovg'a "Do'kon profili" ko'rinishida DO'KON akkauntidan chiqadi,
-      - bank kuzatuvchisi akkaunti sovg'a yuborishda umuman ishlaydi.
-    """
-    global gift_userbot
-    if not GIFT_SESSION_STRING or GIFT_SESSION_STRING == SESSION_STRING:
-        set_runtime_status(gift_userbot="same_as_userbot")
-        log.info("🎁 Gift akkaunti: alohida emas — asosiy userbot ishlatiladi")
-        return
-
-    # OLDINDAN TEKSHIRAMIZ: noto'g'ri session Pyrofork ichida
-    # "unpack requires a buffer of 271 bytes" degan ma'nosiz xatoni beradi.
-    # Bu xatoni oldindan aniqlab, aniq va tuzatiladigan xabar beramiz.
-    valid, why = diagnose_session_string(GIFT_SESSION_STRING)
-    if not valid:
-        gift_userbot = None
-        log.error("GIFT_SESSION_STRING noto'g'ri: %s", why.splitlines()[0])
-        set_runtime_status(gift_userbot="invalid_session", gift_error=why[:300])
-        await notify_admins(
-            "❌ <b>GIFT_SESSION_STRING noto'g'ri</b>\n\n"
-            f"🔍 Sabab: {why}\n\n"
-            "🤖 Sovg'alar vaqtincha asosiy akkaunt orqali yuboriladi."
-        )
-        return
-
-    set_runtime_status(gift_userbot="starting")
-    try:
-        gb = UserbotClient(
-            "neon_gift_userbot",
-            api_id=API_ID,
-            api_hash=API_HASH,
-            session_string=GIFT_SESSION_STRING,
-        )
-        await gb.start()
-        gift_userbot = gb
-        try:
-            me = await gb.get_me()
-            who = f"@{me.username}" if me.username else str(me.id)
-        except Exception:  # noqa: BLE001
-            who = "noma'lum"
-        log.info("🎁 Gift akkaunti ulandi: %s (bank akkauntidan alohida)", who)
-        set_runtime_status(gift_userbot="connected", gift_account=who)
-    except Exception as exc:  # noqa: BLE001
-        # Gift akkaunti ulanmasa — asosiy userbot orqali yuborishni davom ettiramiz,
-        # hech qachon butun xizmatni to'xtatmaymiz.
-        gift_userbot = None
-        log.error("🎁 Gift akkaunti ulanmadi (%s) — asosiy userbotga qaytamiz", exc)
-        set_runtime_status(gift_userbot="error", gift_error=str(exc)[:300])
-        await notify_admins(
-            "⚠️ <b>Gift akkaunti ulanmadi</b>\n\n"
-            f"🔍 Sabab: <code>{esc(str(exc)[:200])}</code>\n\n"
-            "<i>Sovg'alar vaqtincha asosiy akkaunt orqali yuboriladi. "
-            "Bank xabarlari va sovg'alar bir akkauntda bo'lishi xavfsiz emas.</i>"
-        )
-
-
-async def _notify_bad_session(why: str) -> None:
-    """Noto'g'ri SESSION_STRING haqida admin'ga aniq xabar."""
-    try:
-        await notify_admins(
-            "🛑 <b>SESSION_STRING noto'g'ri — userbot ishlamayapti</b>\n\n"
-            f"🔍 Sabab: {why}\n\n"
-            "🔧 <i>/admin → 📤 Session zaxirasi orqali to'g'risini oling "
-            "va Railway ENV ga qo'ying.</i>"
-        )
-    except Exception:  # noqa: BLE001
-        pass
-
-
 def maybe_start_userbot() -> None:
-    global userbot, gift_userbot
+    global userbot
     missing = []
     if not SESSION_STRING:
         missing.append("SESSION_STRING")
@@ -3971,7 +3818,6 @@ def maybe_start_userbot() -> None:
             log.info("👤 Userbot ishga tushdi (%s), bank xabarlari kuzatilmoqda...", who)
             set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
             asyncio.create_task(ub_idle())
-            await _start_gift_userbot()
         except Exception as exc:  # noqa: BLE001
             log.error("Userbot ishga tushmadi: %s", exc)
             set_runtime_status(userbot="error", error=str(exc)[:300])
@@ -3997,19 +3843,6 @@ async def userbot_supervisor() -> None:
     while True:
         try:
             await asyncio.sleep(60)
-            # Gift akkaunti alohida bo'lsa — uning holatini ham tekshiramiz.
-            # (Asosiy userbot ishlayotgan bo'lsa ham gift akkaunti o'qishi mumkin)
-            if (
-                GIFT_SESSION_STRING
-                and GIFT_SESSION_STRING != SESSION_STRING
-                and (gift_userbot is None or not getattr(gift_userbot, "is_connected", False))
-            ):
-                log.warning("🎁 Gift akkaunti ulanmagan — qayta ulanmoqda...")
-                set_runtime_status(gift_userbot="reconnecting")
-                try:
-                    await _start_gift_userbot()
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("Gift akkauntini qayta ulashda xato: %s", exc)
             if userbot is not None and getattr(userbot, "is_connected", False):
                 retries = 0
                 continue
@@ -4312,34 +4145,9 @@ async def adm_ub_status(call: CallbackQuery):
     if userbot is not None:
         lines.insert(2, f"💬 Tuzatilgan xabarlar kuzatilmoqda: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>")
 
-    # Gift akkaunti holati — alohida ko'rsatiladi
-    if gift_userbot is not None:
-        try:
-            gm = await gift_userbot.get_me()
-            gwho = f"@{gm.username}" if getattr(gm, "username", None) else str(gm.id)
-        except Exception:  # noqa: BLE001
-            gwho = "noma'lum"
-        gtxt = f"🎁 Gift akkaunti: <b>✅ alohida ulangan</b> — <code>{esc(gwho)}</code>"
-        if userbot is not None:
-            try:
-                bm = await userbot.get_me()
-                bwho = f"@{bm.username}" if getattr(bm, "username", None) else str(bm.id)
-                if str(bm.id) == str(getattr(gm, "id", -1)):
-                    gtxt = (
-                        "🎁 Gift akkaunti: <b>⚠️ bank akkaunti bilan BIR XIL</b>\n"
-                        "   <i>Sovg'a yuboruvchisi bank xabarlarini ko'ra oladi. "
-                        "Boshqa akkauntdan session oling.</i>"
-                    )
-            except Exception:  # noqa: BLE001
-                pass
-    else:
-        gtxt = (
-            "🎁 Gift akkaunti: <b>yo'q</b>\n"
-            "   <i>Sovg'a yuborilmoqda — lekin bank akkaunti orqali. "
-            "Ajratish: «🎁 Gift akkaunt (QR)» tugmasi.</i>"
-        )
-    lines.insert(0, gtxt)
-    lines.insert(0, "")
+    # Sovg'a yuborish va balans tekshiruvi BITTA akkaunt orqali amalga
+    # oshiriladi — alohida gift akkaunti yo'q.
+    lines.insert(2, "🎁 Sovg'a yuborish: <b>shu akkaunt orqali</b> (alohida emas)")
 
     await call.message.answer(
         f"🩺 Userbot holati: <b>{status}</b>\n\n" + "\n".join(lines),
@@ -4414,7 +4222,12 @@ async def adm_gift_retry_one(call: CallbackQuery):
     """Bitta buyurtmaning urinishlarini tozalaydi — worker qayta yuboradi."""
     if not await _admin_guard(call):
         return
-    order_id = call.data.split(":", 1)[1]
+    # DIQQAT: callback_data = "adm:gift_retry_one:<id>" — ikkiта ":" bor.
+    # split(":", 1) -> ["adm", "gift_retry_one:<id>"] beradi va <id> OLINMAYDI
+    # (buyurtma "Topilmadi" deb chiqadi). Shuning uchun ikkinchidan keyingini
+    # olamiz.
+    parts = call.data.split(":", 2)
+    order_id = parts[2] if len(parts) > 2 else ""
     db.reload_if_changed()
     o = db.data.get("orders", {}).get(order_id)
     if not o:
@@ -4971,58 +4784,6 @@ async def adm_ub_export(call: CallbackQuery, state: FSMContext):
         "<i>Ishlayotgan sessiyani olish uchun kod umuman kerak emas. "
         "Uni xotirangizda saqlang — kelajakda shu bilan darhal "
         "qo'ya boshlay olasiz.</i>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="🎁 Gift akkaunti sessionini olish",
-                callback_data="adm:gift_export",
-            ),
-            InlineKeyboardButton(text="⬅️ Orqaga", callback_data="adm:home"),
-        ]]),
-        disable_web_page_preview=True,
-    )
-
-
-@admin_router.callback_query(F.data == "adm:gift_export")
-async def adm_gift_export(call: CallbackQuery):
-    """Gift uchun ALOHIDA akkaunt sessionini beradi.
-
-    Bu akkaunt sovg'alarni yuboradi — bank xabarlarini kuzatuvchi
-    akkauntdan butunlay alohida. Shu sababli mijoz tanlagan
-    «Do'kon profili ko'rinadi» variantida aynan shu akkaunt chiqadi.
-    """
-    if not await _admin_guard(call):
-        return
-    await call.answer("🎁 Olinmoqda...")
-    if gift_userbot is None:
-        await call.message.answer(
-            "ℹ️ Hozircha <b>gift akkaunti ulanmagan</b> — sovg'alar "
-            "hozir bank akkaunti orqali yuborilmoqda.\n\n"
-            "🔗 Alohida akkaunt ulash uchun:\n"
-            "1) <b>«🎁 Gift akkaunt (QR)»</b> yoki <b>«🎁 Gift akkaunt (raqam)»</b>\n"
-            "2) Telegram'da tasdiqlang\n"
-            "3) <b>«🎁 Gift akkaunti sessionini olish»</b> — shu yerda chiqadigan "
-            f"<code>GIFT_SESSION_STRING</code> ni Railway ENV ga qo'ying.\n\n"
-            f"⚠️ <b>Muhim:</b> to'g'ri session <b>{SESSION_STRING_EXPECTED} belgi</b> "
-            "bo'lishi kerak. Boshqa saytlardan (telethon / online generator) "
-            "olingan session <b>ishlamaydi</b> — format farq qiladi va "
-            f"<code>unpack requires a buffer of 271 bytes</code> xatosi chiqadi.\n\n"
-            "<i>Ikkalasi bir xil bo'lsa, sovg'a yuboruvchisi bank akkaunti bo'lib qoladi.</i>",
-            reply_markup=admin_back_kb(),
-        )
-        return
-    try:
-        session = await gift_userbot.export_session_string()
-        me = await gift_userbot.get_me()
-        who = f"@{me.username}" if getattr(me, "username", None) else str(me.id)
-    except Exception as exc:  # noqa: BLE001
-        await call.message.answer(f"❌ Olib bo'lmadi:\n<code>{esc(str(exc)[:200])}</code>")
-        return
-    await call.message.answer(
-        f"✅ <b>Gift akkaunti sessioni</b> ({esc(who)})\n\n"
-        f"🔑 Railway ENV ga <b>GIFT_SESSION_STRING</b> nomi bilan saqlang:\n\n"
-        f"<code>GIFT_SESSION_STRING={esc(session)}</code>\n\n"
-        "<i>Shundan keyin sovg'alar shu akkauntdan yuboriladi, "
-        "bank xabarlari esa eski akkauntda tekshiriladi.</i>",
         reply_markup=admin_back_kb(),
         disable_web_page_preview=True,
     )
@@ -5030,21 +4791,6 @@ async def adm_gift_export(call: CallbackQuery):
 
 @admin_router.callback_query(F.data == "adm:ub_qr")
 async def adm_ub_qr(call: CallbackQuery, state: FSMContext):
-    """Bank akkauntini (SESSION_STRING) QR orqali ulaydi."""
-    global PENDING_LOGIN_ROLE
-    PENDING_LOGIN_ROLE = "bank"
-    await _ub_qr_login(call, state)
-
-
-@admin_router.callback_query(F.data == "adm:gift_qr")
-async def adm_gift_qr(call: CallbackQuery, state: FSMContext):
-    """ALOHIDA gift akkauntini (GIFT_SESSION_STRING) QR orqali ulaydi."""
-    global PENDING_LOGIN_ROLE
-    PENDING_LOGIN_ROLE = "gift"
-    await _ub_qr_login(call, state)
-
-
-async def _ub_qr_login(call: CallbackQuery, state: FSMContext):
     """QR orqali ulash.
 
     ESKI KOD: client.export_login_token() / client.import_login_token() —
@@ -5135,21 +4881,6 @@ async def _ub_qr_login(call: CallbackQuery, state: FSMContext):
 
 @admin_router.callback_query(F.data == "adm:ub_phone")
 async def adm_ub_phone(call: CallbackQuery, state: FSMContext):
-    """Bank akkauntini (SESSION_STRING) telefon orqali ulaydi."""
-    global PENDING_LOGIN_ROLE
-    PENDING_LOGIN_ROLE = "bank"
-    await _ub_phone_login(call, state)
-
-
-@admin_router.callback_query(F.data == "adm:gift_phone")
-async def adm_gift_phone(call: CallbackQuery, state: FSMContext):
-    """ALOHIDA gift akkauntini (GIFT_SESSION_STRING) telefon orqali ulaydi."""
-    global PENDING_LOGIN_ROLE
-    PENDING_LOGIN_ROLE = "gift"
-    await _ub_phone_login(call, state)
-
-
-async def _ub_phone_login(call: CallbackQuery, state: FSMContext):
     if not await _admin_guard(call):
         return
     await call.answer()
@@ -5157,8 +4888,12 @@ async def _ub_phone_login(call: CallbackQuery, state: FSMContext):
         await call.message.answer("❌ API_ID va API_HASH o'zgaruvchilari yo'q.")
         return
     await state.set_state(AdminStates.ub_phone)
-    await call.message.answer("📱 <b>Raqam bilan ulash</b>\n\nTelefon raqamingizni +998 XX XXX XX XX ko'rinishida yuboring:",
-                              reply_markup=admin_back_kb())
+    await call.message.answer(
+        "📱 <b>Raqam bilan ulash</b>\n\n"
+        "Telefon raqamingizni +998 XX XXX XX XX ko'rinishida yuboring.\n\n"
+        "<i>Bu akkaunt bank xabarlarini tekshiradi va sovg'alarni yuboradi.</i>",
+        reply_markup=admin_back_kb(),
+    )
 
 
 # Telefon bilan ulash vaqtinchalik ma'lumotlari.
@@ -5213,85 +4948,40 @@ UB_LOGIN = {"client": None, "phone": "", "hash": "", "admin_id": 0, "tries": 0}
 
 
 async def ub_finish_login(client, admin_msg: Message, state: FSMContext) -> None:
-    """Ulangan client'ni kerakli rolega o'rnatadi va sessiyani beradi.
+    """Ulangan client'ni userbot qilib o'rnatadi va SESSION_STRING beradi.
 
-    ROLE:
-      "bank" -> SESSION_STRING       — bank xabarlarini kuzatadi
-      "gift" -> GIFT_SESSION_STRING  — sovg'alarni yuboradi (alohida akkaunt)
-
-    Muhim: "gift" roli mavjud bank akkauntini O'Zgartirmaydi — ikkala
-    akkaunt bir vaqtda ishlaydi. Faqat ikki rolda BIR XIL akkaunt bo'lsa,
-    o'sha holatda eski akkaunt to'xtatiladi (ikki xil narsa bir akkaunt
-    bo'lolmaydi).
+    BITTA akkaunt ikkala vazifani ham bajaradi:
+      1) @humocardbot bank xabarlarini kuzatadi -> balansni to'ldiradi
+      2) sovg'alarni (gift) yuboradi
     """
-    global userbot, gift_userbot
-    role = PENDING_LOGIN_ROLE if PENDING_LOGIN_ROLE in ("bank", "gift") else "bank"
+    global userbot
     try:
         me = await client.get_me()
         who = f"@{me.username}" if getattr(me, "username", None) else str(me.id)
     except Exception:  # noqa: BLE001
         who = "noma'lum"
 
-    is_gift = role == "gift"
-    # Ikki rolda bir xil akkauntni bir vaqtga ulab bo'lmaydi:
-    # agar yangi akkaunt bank roli bilan kelsa va gift roli ham shu
-    # akkauntni ishlatayotgan bo'lsa — gift'ni to'xtatamiz.
-    if not is_gift and gift_userbot is not None:
+    if userbot is not None and userbot is not client:
         try:
-            gift_me = await gift_userbot.get_me()
-            if getattr(gift_me, "id", None) == getattr(me, "id", None):
-                await gift_userbot.stop()
-                gift_userbot = None
+            await userbot.stop()
         except Exception:  # noqa: BLE001
             pass
-    elif is_gift and userbot is not None:
-        try:
-            bank_me = await userbot.get_me()
-            if getattr(bank_me, "id", None) == getattr(me, "id", None):
-                await userbot.stop()
-                userbot = None
-        except Exception:  # noqa: BLE001
-            pass
-
-    if is_gift:
-        if gift_userbot is not None:
-            try:
-                await gift_userbot.stop()
-            except Exception:  # noqa: BLE001
-                pass
-        gift_userbot = client
-    else:
-        if userbot is not None:
-            try:
-                await userbot.stop()
-            except Exception:  # noqa: BLE001
-                pass
-        userbot = client
-        await client.add_handler(
-            UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
-        )
-        asyncio.create_task(ub_idle())
-        set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
-
-    if is_gift:
-        set_runtime_status(gift_userbot="connected", gift_account=who)
-
-    env_name = "GIFT_SESSION_STRING" if is_gift else "SESSION_STRING"
-    title = "Gift akkaunti" if is_gift else "Bank akkaunti"
-    extra = (
-        "🎁 Endi sovg'alar SHU akkauntdan yuboriladi.\n"
-        "🏦 Bank xabarlari esa eski akkauntda tekshiriladi.\n\n"
-        if is_gift
-        else f"🏦 Bank xabarlari: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>\n\n"
+    userbot = client
+    await client.add_handler(
+        UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
     )
+    asyncio.create_task(ub_idle())
+    set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
+
     session = await client.export_session_string()
     await state.clear()
     await admin_msg.answer(
-        f"✅ <b>{title} ulandi!</b>\n\n"
+        "✅ <b>Userbot ulandi!</b>\n\n"
         f"👤 Hisob: <code>{esc(who)}</code>\n"
-        f"{extra}"
-        f"🔑 <b>Railway ENV ga qo'ying</b> (sessiya kaliti — hech kimga bermang):\n\n"
-        f"<code>{env_name}={esc(session)}</code>\n\n"
+        f"🏦 Bank xabarlari: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>\n"
+        "🎁 Sovg'a yuborish: shu akkaunt orqali\n\n"
+        "🔑 <b>Railway ENV ga qo'ying</b> (sessiya kaliti — hech kimga bermang):\n\n"
+        f"<code>SESSION_STRING={esc(session)}</code>\n\n"
         "<i>Keyin Railway da Redeploy bosing.</i>",
         reply_markup=admin_back_kb(),
         disable_web_page_preview=True,

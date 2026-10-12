@@ -89,7 +89,6 @@ async def cycle(mid, wait_keys=("gift_sent", "gift_needs_review", "gift_failed")
 
 async def main():
     B.userbot = UB()
-    B.gift_userbot = None
     B.db.get_or_create_user(555, "aliy", "Aliy")
 
     print("=" * 66)
@@ -183,6 +182,56 @@ async def main():
           "bosqich aniq: " + repr(o.get("gift_error_stage")))
     check(len(tr) > 10, f"traceback saqlandi ({len(tr)} belgi)")
     check("File " in tr, "traceback ichida qator raqamlari bor")
+
+    print()
+    print("=" * 66)
+    print("6) ADMIN: 'Gift qayta yuborish' tugmasi ishlaydimi?")
+    print("=" * 66)
+    # callback_data = "adm:gift_retry_one:<id>" — ikkita ":" bor.
+    # split(":", 1) bilan olish ID ni OLMAYDI (bug'ni kuzatish uchun).
+    parts = "adm:gift_retry_one:o1".split(":", 2)
+    check(len(parts) > 2 and parts[2] == "o1",
+          "callback parsing: split(':', 2) -> id='o1'")
+
+    import time as _t
+    B.ADMIN_IDS = {8307046273}
+    B.ADMIN_SESSIONS[8307046273] = _t.time()
+
+    class _Msg:
+        def __init__(self):
+            self.sent = []
+
+        async def answer(self, t, **kw):
+            self.sent.append((t, kw))
+
+    class _Call:
+        def __init__(self, data):
+            self.data = data
+            self.message = _Msg()
+            self.alerts = None
+            self.from_user = type("U", (), {"id": 8307046273, "username": "boss"})()
+
+        async def answer(self, *a, **kw):
+            self.alerts = a
+
+        async def edit_text(self, t, **kw):
+            self.message.sent.append((t, kw))
+
+    B.db.data["orders"] = {"ord_r1": {
+        "id": "ord_r1", "user_id": 555, "kind": "gift", "gift": "bear",
+        "stars": 15, "title": "Ayq", "recipient": "bobur", "status": "completed",
+        "gift_failed": True, "gift_attempts": 5, "gift_error": "xato",
+    }}
+    B.db.save()
+    await B.adm_gift_retry_one(_Call("adm:gift_retry_one:ord_r1"))
+    o = B.db.data["orders"]["ord_r1"]
+    check(o.get("gift_attempts") == 0, f"urishlar tozalandi ({o.get('gift_attempts')})")
+    check(o.get("gift_failed") is False, "gift_failed tozalandi")
+    check("gift_error" not in o, "xato tozalandi")
+    c_bad = _Call("adm:gift_retry_one:yoq")
+    await B.adm_gift_retry_one(c_bad)
+    check(c_bad.alerts and "Topilmadi" in str(c_bad.alerts),
+          "yo'q buyurtma -> 'Topilmadi' (xato bilan crash emas)")
 
     print()
     print("NATIJA:", "✅ BARCHASI TO'G'RI" if ok else "❌ MUAMMO BOR")

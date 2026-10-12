@@ -949,9 +949,8 @@ app.get('/api/health', async (_req: Request, res: Response) => {
       api_id: Boolean(process.env.API_ID),
       api_hash: Boolean(process.env.API_HASH),
       session_string: Boolean(process.env.SESSION_STRING),
-      // Gift yuborish uchun ALOHIDA akkaunt. Bo'lmasa gift'lar
-      // SESSION_STRING (bank kuzatuvchisi) orqali yuboriladi.
-      gift_session_string: Boolean((process.env.GIFT_SESSION_STRING || '').trim()),
+      // Sovg'a yuborish ham, bank xabarlarini tekshirish ham BITTA
+      // userbot (SESSION_STRING) orqali amalga oshiriladi.
     },
     wallet_seed: Boolean(process.env.WALLET_SEED),
     fragment_cookies: Boolean(process.env.FRAGMENT_COOKIE_HEADER),
