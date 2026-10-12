@@ -277,6 +277,72 @@ def diagnose_session_string(raw: Any) -> tuple[bool, str]:
 
 
 
+# =============================================================================
+# SESSION_STRING — Railway ENV ga qo'yish SHART EMAS (bazada saqlanadi)
+# =============================================================================
+# MUAMMO: session faqat Railway ENV da saqlanganda har bir redeploy'da
+# uni qayta kiritish kerak edi. Telefondan yangi session olib ENV'ga
+# yozib redeploy qilsangiz — eski session (ENV'dagi) baribir qo'llanilib
+# qoladi va yangisi "eskirgan" bo'lib tuyuladi.
+#
+# YECHIM: telefon/QR orqali ulangan akkauntning session string'i
+# AVTOMATIK bazaga yoziladi. Baza (/data/users_db.json) Railway'da
+# saqlanadi — redeploy'da ham joyida qoladi, ENV kerak bo'lmaydi.
+SESSION_KEY = "userbot_session"
+
+
+def save_session_to_db(session: str) -> bool:
+    """Session string'ni bazaga saqlaydi (kalit hech qayerga yuborilmaydi)."""
+    session = normalize_session_string(session)
+    if not session:
+        return False
+    try:
+        settings = db.data.setdefault("settings", {})
+        if settings.get(SESSION_KEY) == session:
+            return False  # o'zgarmagan
+        settings[SESSION_KEY] = session
+        db.save()
+        # Kalitning o'zi logga TUSHMAYDI — faqat uzunligi
+        log.info("🔐 Session bazaga saqlandi (%d belgi) — Railway ENV kerak emas",
+                 len(session))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Sessionni bazaga saqlab bo'lmadi: %s", exc)
+        return False
+
+
+def get_session_from_db() -> str:
+    try:
+        return normalize_session_string(
+            (db.data.get("settings", {}) or {}).get(SESSION_KEY, "")
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def delete_session_from_db() -> bool:
+    settings = db.data.setdefault("settings", {})
+    if settings.pop(SESSION_KEY, None) is None:
+        return False
+    db.save()
+    return True
+
+
+def resolve_session_string() -> tuple[str, str]:
+    """Qaysi session ishlatilishini aniqlaydi.
+
+    QAYTA QATIK: bazadagi session ENG YANGISI (telefon/QR orqali ulangan),
+    shuning uchun u birinchi turadi. Railway ENV zaxira sifatida qoladi —
+    faqat baza bo'sh bo'lsa ishlatiladi.
+
+    Qaytaradi: (session, manba) — manba: "db" | "env" | "yo'q"
+    """
+    from_db = get_session_from_db()
+    if from_db:
+        return from_db, "db"
+    return SESSION_STRING, ("env" if SESSION_STRING else "yo'q")
+
+
 # --- Userbot (pyrofork) ---
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
@@ -1867,7 +1933,8 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="📱 Raqam bilan ulash", callback_data="adm:ub_phone")],
             [InlineKeyboardButton(text="🩺 Userbot holati", callback_data="adm:ub_status"),
              InlineKeyboardButton(text="📤 Session zaxirasi", callback_data="adm:ub_export")],
-            [InlineKeyboardButton(text="🎁 Gift qayta yuborish", callback_data="adm:gift_retry")],
+            [InlineKeyboardButton(text="🔎 Gift diagnostikasi", callback_data="adm:gift_diag"),
+             InlineKeyboardButton(text="♻️ Gift qayta yuborish", callback_data="adm:gift_retry")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
         ]
     )
@@ -3870,8 +3937,15 @@ def recover_stuck_gifts() -> int:
 def maybe_start_userbot() -> None:
     global userbot
     missing = []
-    if not SESSION_STRING:
+    # QAYTA QATIK: avval bazadagi (eng yangi) session, keyin Railway ENV.
+    # Sabab: telefon/QR orqali ulangan yangi session bazada saqlanadi va
+    # u har doim afzal — aks holda eski ENV qiymati qo'llanilib, yangisi
+    # "eskirgan" bo'lib tuyulardi.
+    session, source = resolve_session_string()
+    if not session:
         missing.append("SESSION_STRING")
+    elif source == "db":
+        log.info("🔐 Session bazadan olinadi (Railway ENV ishlatilmaydi)")
     if not API_ID:
         missing.append("API_ID")
     if not API_HASH:
@@ -3888,7 +3962,7 @@ def maybe_start_userbot() -> None:
     # Session formatini oldindan tekshiramiz — Pyrofork ichidagi
     # "unpack requires a buffer of 271 bytes" xatosi o'rniga aniq
     # va tuzatiladigan xabar beramiz.
-    bank_valid, bank_why = diagnose_session_string(SESSION_STRING)
+    bank_valid, bank_why = diagnose_session_string(session)
     if not bank_valid:
         log.error("SESSION_STRING noto'g'ri: %s", bank_why.splitlines()[0])
         set_runtime_status(userbot="invalid_session", userbot_error=bank_why[:300])
@@ -3905,7 +3979,7 @@ def maybe_start_userbot() -> None:
                 "humo_userbot",
                 api_id=API_ID,
                 api_hash=API_HASH,
-                session_string=SESSION_STRING,
+                session_string=session,
             )
             await ub.start()
             ub.add_handler(
@@ -3957,7 +4031,7 @@ async def userbot_supervisor() -> None:
             if userbot is not None and getattr(userbot, "is_connected", False):
                 retries = 0
                 continue
-            if not (API_ID and API_HASH and SESSION_STRING):
+            if not (API_ID and API_HASH):
                 continue
             retries += 1
             if retries > 10:
@@ -4301,6 +4375,109 @@ async def adm_ub_status(call: CallbackQuery):
 # =============================================================================
 # ADMIN: qurilmagan gift buyurtmalarini qayta yuborish
 # =============================================================================
+# =============================================================================
+# ADMIN: GIFТ DIAGNOSTIKASI — nima uchun yuborilmayapti?
+# =============================================================================
+@admin_router.callback_query(F.data == "adm:gift_diag")
+async def adm_gift_diag(call: CallbackQuery):
+    """Gift yuborilishining BARCHA bosqichlarini jonli tekshiradi.
+
+    Nima uchun kerak: gift ishlamasa, sabab bir necha joyda bo'lishi
+    mumkin (userbot ulanmagan, Stars yo'q, Telegram'da mos sovg'a yo'q,
+    buyurtma noto'g'ri holatda). Bu tugma har birini alohida tekshiradi
+    va aniq qatorni ko'rsatadi.
+    """
+    if not await _admin_guard(call):
+        return
+    await call.answer("🔍 Tekshirilyapti...")
+    db.reload_if_changed()
+    lines = ["🔎 <b>Gift diagnostikasi</b>\n"]
+
+    # 1) Userbot
+    if userbot is None:
+        lines.append("❌ <b>Userbot ulanmagan</b> — gift yuborilmaydi\n")
+        lines.append("🔧 <i>/admin → 📱 Raqam bilan ulash</i>")
+        await call.message.answer("\n".join(lines), reply_markup=admin_back_kb())
+        return
+    lines.append("✅ Userbot ulangan\n")
+
+    # 2) Telegram'da mavjud sovg'alar
+    try:
+        gifts = await userbot.get_available_gifts()
+        lines.append(f"✅ Telegram'da <b>{len(gifts)}</b> ta sovg'a mavjud\n")
+        seen: list[str] = []
+        for g in gifts[:14]:
+            e = getattr(getattr(g, "sticker", None), "emoji", "?")
+            seen.append(f"{e} {getattr(g, 'price', '?')}⭐")
+        lines.append("🔍 <code>" + esc(", ".join(seen)) + "</code>\n")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(
+            f"❌ <b>Sovg'alar ro'yxatini olib bo'lmadi</b>\n"
+            f"<code>{esc(str(exc)[:200])}</code>\n"
+            "🔧 <i>Ko'pincha akkauntda Stars yo'q yoki Telegram vaqtinchalik "
+            "javob bermayapti.</i>"
+        )
+        await call.message.answer("\n".join(lines), reply_markup=admin_back_kb())
+        return
+
+    # 3) Bizning sovg'alarimiz Telegram'da bormi?
+    missing = [g[4] for g in GIFTS if not any(
+        gift_sticker_emoji(x) == g[4] for x in gifts
+    )]
+    if missing:
+        lines.append(
+            "⚠️ Telegram'da topilmagan sovg'alar: <b>"
+            + esc(" ".join(missing))
+            + "</b>\n<i>(ular narx bo'yicha zaxira sifatida yuboriladi)</i>\n"
+        )
+    else:
+        lines.append("✅ Barcha sovg'alar Telegram'da topildi\n")
+
+    # 4) Kutayotgan buyurtmalar va ularning holati
+    pend = [o for o in db.data.get("orders", {}).values()
+            if o.get("kind") == "gift" and not o.get("gift_sent")]
+    lines.append(f"📦 Kutayotgan buyurtmalar: <b>{len(pend)}</b>\n")
+    reasons: dict[str, int] = {}
+    for o in pend:
+        if o.get("gift_failed"):
+            r = "🛑 urishlar tugagan"
+        elif o.get("gift_processing"):
+            r = "⏳ yuborilmoqda"
+        elif int(o.get("gift_attempts", 0)) >= GIFT_MAX_ATTEMPTS:
+            r = "⛔ urish limiti"
+        elif not normalize_gift_recipient(o.get("recipient")):
+            r = "⚠️ noto'g'ri qabul qiluvchi"
+        elif o.get("status") not in ("completed", "pending_admin", "processing"):
+            r = f"⚠️ holat={o.get('status')}"
+        elif not (o.get("gift") or o.get("gift_key")):
+            r = "⚠️ sovg'a turi ko'rsatilmagan"
+        else:
+            r = "✅ kutilmoqda"
+        reasons[r] = reasons.get(r, 0) + 1
+    for k, v in reasons.items():
+        lines.append(f"  {k}: <b>{v}</b>")
+    last = next(
+        (o for o in reversed(list(db.data.get("orders", {}).values()))
+         if o.get("kind") == "gift" and o.get("gift_error")),
+        None,
+    )
+    if last:
+        lines.append(
+            f"\n🕐 Oxirgi xato: <code>{esc(str(last.get('gift_error'))[:160])}</code>"
+        )
+        stage = last.get("gift_error_stage")
+        if stage:
+            lines.append(f"🧩 Bosqich: <code>{esc(str(stage))}</code>")
+
+    await call.message.answer(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="♻️ Qayta yuborish", callback_data="adm:gift_retry"),
+            InlineKeyboardButton(text="⬅️ Orqaga", callback_data="adm:home"),
+        ]]),
+    )
+
+
 @admin_router.callback_query(F.data == "adm:gift_retry")
 async def adm_gift_retry(call: CallbackQuery):
     """Yuborilmagan / muvaffaqiyatsiz bo'lgan gift'larni ro'yxatlaydi.
@@ -5116,16 +5293,28 @@ async def ub_finish_login(client, admin_msg: Message, state: FSMContext) -> None
     asyncio.create_task(ub_idle())
     set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
 
+    # Sessionni AVTOMATIK bazaga saqlaymiz — Railway ENV kerak emas.
+    # Baza saqlanadigan papkada (/data) turgani uchun redeploy'da ham
+    # joyida qoladi: telefon bilan ulaganingizdan keyin hech qachon
+    # qayta ulash shart bo'lmaydi.
     session = await client.export_session_string()
+    saved = save_session_to_db(session)
     await state.clear()
     await admin_msg.answer(
         "✅ <b>Userbot ulandi!</b>\n\n"
         f"👤 Hisob: <code>{esc(who)}</code>\n"
         f"🏦 Bank xabarlari: <code>{esc(str(TOPUP_SOURCE_CHAT))}</code>\n"
         "🎁 Sovg'a yuborish: shu akkaunt orqali\n\n"
-        "🔑 <b>Railway ENV ga qo'ying</b> (sessiya kaliti — hech kimga bermang):\n\n"
-        f"<code>SESSION_STRING={esc(session)}</code>\n\n"
-        "<i>Keyin Railway da Redeploy bosing.</i>",
+        + (
+            "🔐 <b>Session avtomatik saqlandi</b> — Railway ENV ga qo'yish "
+            "<b>shart emas</b>.\n"
+            "♻️ Redeploy, yangilash yoki qayta ishga tushirishdan keyin ham "
+            "shu akkaut avtomatik ulanadi.\n\n"
+            if saved else
+            "⚠️ Sessionni bazaga saqlab bo'lmadi — Railway ENV ga qo'ying:\n\n"
+            f"<code>SESSION_STRING={esc(session)}</code>\n\n"
+        )
+        + "<i>Ikkalasi ham ishlaydi. Kalitni hech kimga bermang.</i>",
         reply_markup=admin_back_kb(),
         disable_web_page_preview=True,
     )
