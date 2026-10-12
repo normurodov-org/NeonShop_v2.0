@@ -3837,6 +3837,26 @@ def userbot_diagnose() -> list[str]:
     return lines
 
 
+# Eski (ikki-userbot) rejimdan qolgan kalitlar — chalkashtiradi va
+# eskirgan ma'lumot ko'rsatadi. Yangi rejimda ular kerak emas.
+STALE_RUNTIME_KEYS = ("gift_userbot", "gift_account", "gift_error")
+
+
+def purge_stale_runtime() -> int:
+    """Runtime holatidan eski kalitlarni olib tashlaydi."""
+    settings = db.data.setdefault("settings", {})
+    rt = settings.get("runtime") or {}
+    dead = [k for k in STALE_RUNTIME_KEYS if k in rt]
+    if not dead:
+        return 0
+    for k in dead:
+        rt.pop(k, None)
+    settings["runtime"] = rt
+    db.save()
+    log.info("🧹 Runtime dan esriган kalitlar tozalandi: %s", ", ".join(dead))
+    return len(dead)
+
+
 def set_runtime_status(**kwargs: Any) -> None:
     """Botning ish vaqtidagi holatini bazaga yozadi.
 
@@ -3946,6 +3966,64 @@ def recover_stuck_gifts() -> int:
     return recovered
 
 
+def session_error_kind(exc: BaseException) -> str:
+    """Session bilan bog'liq xatoni TUR bo'yicha aniqlaydi.
+
+    Nima uchun kerak: "Userbot ishga tushmadi — SESSION_STRING muddati
+    tuggan" degan umumiy xabar administratorga NIMANI qilish kerakligini
+    aytmaydi. "401 AUTH_KEY_UNERGISTERED" (kalit bekor qilingan) bilan
+    "tarmoq uzildi" butunlay boshqa narsa — birinchisini faqat telefon
+    bilan qayta ulash tuzatadi.
+
+    Qaytaradi: "auth_key_unregistered" | "session_revoked" |
+               "account_blocked" | "network" | ""
+    """
+    txt = str(exc).upper()
+    name = type(exc).__name__.lower()
+    if "AUTH_KEY_UNREGISTERED" in txt or "AUTH_KEY_INVALID" in txt:
+        return "auth_key_unregistered"
+    if "SESSION_REVOKED" in txt or "SESSION_EXPIRED" in txt:
+        return "session_revoked"
+    if "USER_DEACTIVATED" in txt or "USER_BANNED" in txt:
+        return "account_blocked"
+    if any(k in txt or k in name for k in (
+        "TIMEOUT", "CONNECTION", "NETWORK", "FLOOD", "SERVER", "UNAVAILABLE",
+    )):
+        return "network"
+    return ""
+
+
+SESSION_ERROR_HELP: dict[str, str] = {
+    "auth_key_unregistered": (
+        "\n\n<b>🔍 Bu nima degani?</b>\n"
+        "Telegram shu sessiya kalitini BUTUNLAY o'chirib qo'ygan "
+        "(AUTH_KEY_UNREGISTERED). Bu \"muddat tugdi\" emas — kalit "
+        "bekor qilingan.\n\n"
+        "<b>Sabablari:</b>\n"
+        "• shu session boshqa joyda (kompyuter/server) ham ishlatilgan\n"
+        "• Telegram faol ishlatilmagan sessiyalarni tozalagan\n\n"
+        "<b>🔧 Yechim:</b> qayta telefon bilan ulash kerak —\n"
+        "<code>/admin → 📱 Raqam bilan ulash</code>\n\n"
+        "<i>Yangi session avtomatik bazaga saqlanadi — keyin qayta "
+        "qilish shart bo'lmaydi.</i>"
+    ),
+    "session_revoked": (
+        "\n\n<b>🔍 Bu nima degani?</b>\n"
+        "Sessiya Telegram tomonidan bekor qilingan.\n\n"
+        "<b>🔧 Yechim:</b> <code>/admin → 📱 Raqam bilan ulash</code>"
+    ),
+    "account_blocked": (
+        "\n\n<b>🔍 Bu nima degani?</b>\n"
+        "Akkaunt Telegram tomonidan bloklangan. Gift va balans "
+        "avtomatik ishlash TO'XTAYDI."
+    ),
+    "network": (
+        "\n\n<i>Tarmoq vaqtinchalik uzilib qolgan bo'lishi mumkin — "
+        "avtomatik qayta ulanishga urilmoqda.</i>"
+    ),
+}
+
+
 def maybe_start_userbot() -> None:
     global userbot
     missing = []
@@ -3998,11 +4076,41 @@ def maybe_start_userbot() -> None:
                 UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
             )
             userbot = ub
+            # DIQQAT: start() muvaffaqiyatli bo'lishi kalitning
+            # ro'yxatda borligini KAFAVATLAYDI. Kalit bekor qilingan
+            # bo'lsa (AUTH_KEY_UNREGISTERED), xato FAQAT keyingi
+            # chaqiruvda — masalan get_me() yoki bank xabarini
+            # kuzatishda — chiqadi va gift yuborish ham to'xtaydi.
+            # Shuning uchun ULANGANDAN KEYIN darhol tekshiramiz.
             try:
-                me = await ub.get_me()
+                me = await asyncio.wait_for(ub.get_me(), timeout=25)
                 who = f"@{me.username}" if me.username else str(me.id)
-            except Exception:  # noqa: BLE001
-                who = "noma'lum"
+            except Exception as exc:  # noqa: BLE001
+                kind = session_error_kind(exc)
+                log.error("Userbot ulandi, lekin kalit ishlashdan "
+                          "bekor qilingan [%s]: %s", kind or "noma'lum", exc)
+                try:
+                    await ub.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+                userbot = None
+                set_runtime_status(
+                    userbot="error", error=str(exc)[:300],
+                    error_kind=kind or "unknown",
+                    gift_worker="blocked_userbot_offline" if kind else "degraded",
+                )
+                pend = sum(
+                    1 for o in db.data.get("orders", {}).values()
+                    if o.get("kind") == "gift" and not o.get("gift_sent")
+                )
+                await notify_admins(
+                    "🛑 <b>Sessiya kaliti Telegram tomonidan bekor qilingan</b>\n\n"
+                    f"🔍 Sabab: <code>{esc(str(exc)[:200])}</code>"
+                    + SESSION_ERROR_HELP.get(kind, "")
+                    + (f"\n\n📦 Kutayotgan gift buyurtmalari: <b>{pend}</b>"
+                       if pend else "")
+                )
+                return
             log.info("👤 Userbot ishga tushdi (%s), bank xabarlari kuzatilmoqda...", who)
             set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
             asyncio.create_task(ub_idle())
@@ -4016,13 +4124,35 @@ def maybe_start_userbot() -> None:
                     "🤖 Endi ular avtomatik qayta yuboriladi."
                 )
         except Exception as exc:  # noqa: BLE001
-            log.error("Userbot ishga tushmadi: %s", exc)
-            set_runtime_status(userbot="error", error=str(exc)[:300])
+            kind = session_error_kind(exc)
+            log.error("Userbot ishga tushmadi [%s]: %s", kind or "noma'lum", exc)
+            set_runtime_status(
+                userbot="error", error=str(exc)[:300], error_kind=kind or "unknown",
+                # Gift worker "running" ko'rinib, ammo yuborilmay qolmasligi
+                # mumkin — admin buni aniq bilishi kerak.
+                gift_worker="blocked_userbot_offline" if kind else "degraded",
+            )
+            need_relogin = kind in ("auth_key_unregistered", "session_revoked",
+                                    "account_blocked")
+            pending = sum(
+                1 for o in db.data.get("orders", {}).values()
+                if o.get("kind") == "gift" and not o.get("gift_sent")
+            )
+            head = (
+                "🛑 <b>Userbot ulanmadi — balans va gift ISHLAMAYDI</b>"
+                if need_relogin else
+                "⚠️ <b>Userbot ishga tushmadi</b>"
+            )
+            tail = (
+                f"\n\n📦 Kutayotgan gift buyurtmalari: <b>{pending}</b> "
+                "(ular HECH qachon yuborilmaydi)"
+                if pending else ""
+            )
             await notify_admins(
-                "⚠️ <b>Userbot ishga tushmadi</b>\n\n"
-                f"🔍 Sabab: <code>{esc(str(exc)[:200])}</code>\n\n"
-                "<i>Odatda sabab: SESSION_STRING muddati tuggan. "
-                "/admin → 📱 Raqam bilan ulash orqali yangisini oling.</i>"
+                f"{head}\n\n"
+                f"🔍 Sabab: <code>{esc(str(exc)[:200])}</code>"
+                + SESSION_ERROR_HELP.get(kind, "")
+                + tail
             )
 
     asyncio.create_task(_start())
@@ -4046,14 +4176,33 @@ async def userbot_supervisor() -> None:
             if not (API_ID and API_HASH):
                 continue
             retries += 1
+            # Kalit Telegram tomonidan BEKOR QILINGAN bo'lsa (401
+            # AUTH_KEY_UNREGISTERED) — qayta urinish 100 marta ham
+            # natija bermaydi, faqat xato spam qiladi. Shu sabab
+            # urinishni to'xtatamiz va faqat ADMINGA yo'naltiramiz.
+            rt_kind = str((db.data.get("settings", {}).get("runtime", {}) or {})
+                          .get("error_kind") or "")
+            if rt_kind in ("auth_key_unregistered", "session_revoked",
+                           "account_blocked"):
+                if retries in (2, 8):
+                    log.error("Userbot: sessiya kaliti bekor qilingan "
+                              "(%s) — qayta urinish to'xtatildi", rt_kind)
+                    await notify_admins(
+                        "🛑 <b>Sessiya kaliti bekor qilingan — "
+                        "qayta urinishning ma'nosi yo'q</b>\n\n"
+                        "🔧 <b>Yechim:</b> <code>/admin → 📱 Raqam bilan ulash</code>\n"
+                        "<i>Yangi session avtomatik saqlanadi — Railway ENV "
+                        "kerak bo'lmaydi.</i>"
+                    )
+                set_runtime_status(gift_worker="blocked_session_revoked")
+                continue
             if retries > 10:
                 if retries == 11:
                     log.error("Userbot 10 marta urinishdan keyin ham ulanmadi — to'xtatildi")
                     await notify_admins(
                         "🛑 <b>Userbot umuman ulanmayapti</b>\n\n"
-                        "🔍 Sabab ehtimoli: <code>SESSION_STRING</code> muddati tuggan.\n"
-                        "🔧 <i>/admin → 📱 Raqam bilan ulash → telefon + kod → "
-                        "yangilan SESSION_STRING ni Railway ga qo'ying.</i>"
+                        "🔍 Sabah ehtimoli: tarmoq uzilib qolyapti.\n"
+                        "🔧 <i>/admin → 🩺 Userbot holati</i>"
                     )
                 continue
             log.warning("Userbot ulanmagan — %d-urinish (avto qayta ulanmoqda)...", retries)
@@ -4493,9 +4642,18 @@ async def adm_gift_diag(call: CallbackQuery):
     lines = ["🔎 <b>Gift diagnostikasi</b>\n"]
 
     # 1) Userbot
-    if userbot is None:
+    rt = db.data.get("settings", {}).get("runtime", {}) or {}
+    kind = str(rt.get("error_kind") or "")
+    if userbot is None or not getattr(userbot, "is_connected", False):
         lines.append("❌ <b>Userbot ulanmagan</b> — gift yuborilmaydi\n")
-        lines.append("🔧 <i>/admin → 📱 Raqam bilan ulash</i>")
+        if kind and kind in SESSION_ERROR_HELP:
+            lines.append("🧩 Sabab turi: <code>" + esc(kind) + "</code>\n")
+            # Bu matn allaqachon HTML teglari bilan yozilgan
+            lines.append(SESSION_ERROR_HELP.get(kind, ""))
+        elif rt.get("error"):
+            lines.append(f"🔍 <code>{esc(str(rt.get('error'))[:180])}</code>\n")
+        lines.append("\n🔧 <b>Yechim:</b> <code>/admin → 📱 Raqam bilan ulash</code>")
+        lines.append("\n<i>Yangi session avtomatik saqlanadi.</i>")
         await call.message.answer("\n".join(lines), reply_markup=admin_back_kb())
         return
     lines.append("✅ Userbot ulangan\n")
@@ -6205,6 +6363,8 @@ async def main() -> None:
             # ORDERS_CHANNEL ga xabar yuborish mumkinligini tekshiramiz —
             # aks holda barcha savdo xabarlari jimgina yo'qoladi.
             await _safe(check_orders_channel(), "ORDERS_CHANNEL tekshiruvi")
+            # Eski ikki-userbot rejimidan qolgan runtime kalitlarini tozala
+            purge_stale_runtime()
             # Baza zaxiradan tiklangan bo'lsa — bu PUL bilan bog'liq voqea
             if DB_RESTORED_FROM_BACKUP.get("path"):
                 await _safe(

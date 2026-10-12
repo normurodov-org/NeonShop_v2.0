@@ -32,12 +32,18 @@ def check(cond, msg):
 print("=" * 68)
 print("1) BITTA userbot — ortiqcha akkaunt qolmagan")
 print("=" * 68)
-for gone in ("gift_userbot", "gift_client", "_start_gift_userbot",
-             "PENDING_LOGIN_ROLE", "GIFT_SESSION_STRING",
-             "adm:gift_qr", "adm:gift_phone", "adm:gift_export",
-             "neon_gift_userbot"):
+for gone in ("gift_client", "_start_gift_userbot", "PENDING_LOGIN_ROLE",
+             "GIFT_SESSION_STRING", "adm:gift_qr", "adm:gift_phone",
+             "adm:gift_export", "neon_gift_userbot"):
     check(gone not in SRC, f"bot.py da {gone!r} yo'q")
-    ok &= True
+# gift_userbot so'z qolgan bo'lsa — u FAQAT eski kalitlar ro'yxatida
+# (tozalash uchun), real ishlatilmaydi
+import re as _re
+uses = [m for m in _re.finditer(r"gift_userbot", SRC)]
+check(len(uses) == 1 and "STALE_RUNTIME_KEYS" in SRC,
+      f"gift_userbot faqat STALE_RUNTIME_KEYS da ({len(uses)} marta)")
+check("UserbotClient(\n                \"neon_gift_userbot\"" not in SRC,
+      "gift uchun ikkinchi client yaratilmaydi")
 
 check("gift_session_string" not in SRV, "server.ts da gift_session_string yo'q")
 check(SRC.count(".send_gift(") == 1 and "gclient = userbot" in SRC,

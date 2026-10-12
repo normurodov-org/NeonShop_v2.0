@@ -136,6 +136,8 @@ async def main():
             self.id, self.sticker, self.price = i, FS(e), p
 
     class UB:
+        is_connected = True
+
         async def get_available_gifts(self):
             return [G(102, "🧸", 15), G(101, "💝", 15), G(103, "🌹", 25)]
 
