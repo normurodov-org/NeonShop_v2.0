@@ -219,7 +219,6 @@ export function syncAndSaveDb() {
 // Boshlang'ich holatni "o'zgartirilmagan" deb belgilaymiz
 lastSynced = clone(currentSnapshot());
 migrateLegacyFakeStats();
-openContestIfEmpty();
 
 const DEFAULT_USER_ID = 8307046273;
 
@@ -275,6 +274,14 @@ function openContestIfEmpty() {
   console.log('[contest] WebApp uchun faol konkurs yo\'qilindi');
   return true;
 }
+
+/**
+ * Konkursni ochish — BARCHA const/function deklaratsiyalaridan KEYIN
+ * chaqirilishi shart. Aks holda TDZ (Temporal Dead Zone) xatosi:
+ * "Cannot access 'DEFAULT_CONTEST_DAYS' before initialization" —
+ * bu serverni butunlay ishga tushirmaydi (production'da "Server crashed").
+ */
+openContestIfEmpty();
 
 /** WebApp uchun konkursni tayyorlaydi (konkurs yo'q bo'lsa — ochadi). */
 function contestPayload(userId: number): any {
