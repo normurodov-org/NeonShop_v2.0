@@ -107,8 +107,9 @@ async def run_case(label, order, expect_skip=False):
         pass
     o = B.db.data["orders"]["o1"]
     if expect_skip:
-        # Skip kutilgan holat: yuborilMAMALIgicha qolishi kerak
-        ok = not o.get("gift_sent") and not o.get("gift_error")
+        # Noto'g'ri qabul qiluvchi: yuborilMAYDI va sababi yoziladi
+        # (admin "noto'g'ri qabul qiluvchi" deb ko'ra oladi)
+        ok = not o.get("gift_sent") and bool(o.get("gift_error"))
     else:
         ok = bool(o.get("gift_sent")) and "SendStarsForm" in SENT
     print(f"\n--- {label} ---")
@@ -140,8 +141,7 @@ async def main():
     B.gift_userbot = None
     B.db.get_or_create_user(555, "aliy", "Aliy")
 
-    ok &= await run_case("ayiqcha (emoji mos), anonim, matnsiz", order())
-    ok &= await run_case("matn bilan", order(gift_text="Sizga omad! 🌸"))
+    ok &= await run_case("ayiqcha (emoji mos), anonim", order())
     ok &= await run_case("gift='rose' (narx 25)", order(gift="rose", stars=25))
     ok &= await run_case("gift_key yo'q (eski yozuv)",
                          {k: v for k, v in order().items() if k != "gift"}

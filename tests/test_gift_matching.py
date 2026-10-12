@@ -42,20 +42,17 @@ class UB:
     async def get_available_gifts(self):
         return TELEGRAM
 
-    async def send_gift(self, chat_id, gift_id, text=None,
-                        hide_my_name=None, parse_mode=None):
-        calls.append({"chat": chat_id, "gift": gift_id,
-                      "text": text, "anon": hide_my_name})
+    async def send_gift(self, chat_id, gift_id, hide_my_name=None):
+        calls.append({"chat": chat_id, "gift": gift_id, "anon": hide_my_name})
         return True
 
 
-async def run_order(gift_key, stars, text, anon_flag, mid):
+async def run_order(gift_key, stars, anon_flag, mid):
     calls.clear()
     B.db.data["orders"] = {f"o{mid}": {
         "id": f"o{mid}", "user_id": 555, "kind": "gift", "gift": gift_key,
         "stars": stars, "title": "x", "recipient": "bobur",
-        "status": "completed", "hide_my_name": anon_flag,
-        "gift_text": text,
+        "status": "completed", "anon": anon_flag, "hide_my_name": anon_flag,
     }}
     B.db.save()
     task = asyncio.create_task(B.process_gift_orders())
@@ -103,36 +100,32 @@ async def main():
 
     print()
     print("=" * 64)
-    print("3) XABAR MATNI va ANONIM")
+    print("3) ANONIM (matn funksiyasi olib tashlangan)")
     print("=" * 64)
     B.userbot = UB()
     B.db.get_or_create_user(555, "aliy", "Aliy")
 
-    # UI "🕶️ Anonim" -> hide_my_name=True -> Telegram hide_my_name=True
-    # (Telegram MTProto: InputInvoiceStarGift.hide_name = flags.0?true)
-    c = await run_order("cake", 50, "Sizga omad! 🌸", True, 1)
-    g = bool(c) and c["text"] == "Sizga omad! 🌸" and c["anon"] is True
+    c = await run_order("cake", 50, True, 1)
+    g = bool(c) and c["anon"] is True
     ok &= g
-    print("  UI: 🕶️ ANONIM tanlangan (hide_my_name=True)")
-    print(f"    matn='{c['text'] if c else None}'  Telegram hide_my_name={c['anon'] if c else None}")
-    print(f"    (True = profil YASHIRILADI)  {'✅' if g else '❌'}")
+    print("  UI: 🕶️ ANONIM tanlangan")
+    print(f"    Telegram hide_my_name={c['anon'] if c else None} "
+          f"(True = profil YASHIRILADI)  {'✅' if g else '❌'}")
 
-    # UI "👤 Do'kon profili" -> hide_my_name=False -> Telegram hide_my_name=False
-    c = await run_order("rose", 25, "", False, 2)
-    g = bool(c) and c["anon"] is False and not c["text"]
+    c = await run_order("rose", 25, False, 2)
+    g = bool(c) and c["anon"] is False
     ok &= g
-    print("  UI: 👤 DO'KON PROFILI ko'rinadi (hide_my_name=False)")
-    print(f"    matn={c['text'] if c else None!r}  Telegram hide_my_name={c['anon'] if c else None}")
-    print(f"    (False = profil KO'RINADI)  {'✅' if g else '❌'}")
+    print("  UI: 👤 DO'KON PROFILI ko'rinadi")
+    print(f"    Telegram hide_my_name={c['anon'] if c else None} "
+          f"(False = profil KO'RINADI)  {'✅' if g else '❌'}")
 
     print()
-    print("=" * 64)
-    print("4) MATN YO'Q bo'lsa — None uzatiladi (xato emas)")
-    print("=" * 64)
-    c = await run_order("bear", 15, None, True, 3)
-    g = bool(c) and c["text"] is None
-    ok &= g
-    print(f"  matn=None -> send_gift(text=None): {c['text'] if c else 'YUBORILMADI'}  {'✅' if g else '❌'}")
+    print("  Matn funksiyasi butunlay olib tashlangan:")
+    _src = open("bot.py", encoding="utf-8").read()
+    for bad in ("gift_text", "clean_gift_text", "GiftStates.text"):
+        g = bad not in _src
+        ok &= g
+        print(f"    bot.py da {bad!r} yo'q: {'✅' if g else '❌'}")
 
     print()
     print("NATIJA:", "✅ BARCHASI TO'G'RI" if ok else "❌ MUAMMO BOR")

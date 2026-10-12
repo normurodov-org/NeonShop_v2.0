@@ -1947,6 +1947,8 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="📤 Session zaxirasi", callback_data="adm:ub_export")],
             [InlineKeyboardButton(text="🔎 Gift diagnostikasi", callback_data="adm:gift_diag"),
              InlineKeyboardButton(text="♻️ Gift qayta yuborish", callback_data="adm:gift_retry")],
+            [InlineKeyboardButton(text="🚫 Kutayotgan gift'larni bekor qilish",
+                                  callback_data="adm:gift_cancel_gone", style="danger")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
         ]
     )
@@ -3631,23 +3633,12 @@ async def process_gift_orders() -> None:
                     for attempt in range(3):
                         _stage(f"3) send_gift (urinish {attempt + 1}/3)")
                         try:
-                            # Sovg'a ostiga mijoz qoldirgan matn (ixtiyoriy)
-                            gift_text = clean_gift_text(order.get("gift_text"))
                             # Telegram: hide_my_name=True -> anonim
                             # (InputInvoiceStarGift.hide_name = flags.0?true)
                             anon = order_is_anonymous(order)
                             await gclient.send_gift(
                                 chat_id=recipient,
                                 gift_id=match.id,
-                                text=gift_text or None,
-                                # DIQQAT: mijoz matni ODDIY matn bo'lib
-                                # yuboriladi. Aks holda Pyrogram undagi
-                                # _ * [ ] < > belgilarini markdown/HTML deb
-                                # talqin qilib entity yaratadi va sovg'a
-                                # "parse failed" bilan umuman yuborilmaydi.
-                                parse_mode=(
-                                    UbParseMode.DISABLED if gift_text else None
-                                ),
                                 hide_my_name=anon,
                             )
                             sent = True
@@ -4297,22 +4288,6 @@ def is_internal_gift_error(exc: BaseException) -> bool:
     )
 
 
-def clean_gift_text(raw: Any) -> str:
-    """Mijoz yozgan matnni xavfsiz tozalaydi.
-
-    Muhim: matn Telegram'ga ODDIY matn sifatida (verbatim) yuboriladi.
-    `parse_mode=ParseMode.DISABLED` — aks holda Pyrogram matn ichidagi
-    _ * [ ] < > belgilarini markdown/HTML deb talqin qilib entity yaratadi
-    va noto'g'ri yoki buzilgan entity Telegram tomonidan rad qilinadi
-    ("MESSAGE_PARSE_FAILED") — ya'ni mijoz oddiy "<b>salom" deb yozsa,
-    sovg'a umuman yuborilmay qoladi.
-    """
-    t = str(raw or "")
-    # Boshqaruv belgilarini olib tashlaymiz (Telegram ularni rad qiladi)
-    t = "".join(ch for ch in t if ch == "\n" or ch == "\t" or ord(ch) >= 32)
-    return re.sub(r"\s+", " ", t).strip()[:200]
-
-
 def normalize_gift_recipient(raw: Any) -> str:
     """Qabul qiluvchini tozalaydi.
 
@@ -4759,6 +4734,7 @@ async def adm_gift_retry(call: CallbackQuery):
             reply_markup=admin_back_kb(),
         )
         return
+    log.info("🎁 Kutilayotgan gift'lar: %d", len(stuck))
 
     lines = [
         "🎁 <b>Yuborilmagan gift'lar</b>\n",
@@ -4818,8 +4794,18 @@ async def adm_gift_retry(call: CallbackQuery):
     )
 
 
+@admin_router.callback_query(F.data == "adm:gift_cancel_gone")
+async def adm_gift_cancel_gone(call: CallbackQuery):
+    """Admin menyusidan to'g'ridan-to'g'ri: BARCHA kutilayotgan gift'lar.
+
+    Avval ro'yxatni ko'rsatadi (nechta, qancha pul), keyin tasdiq
+    so'raydi. Xavfsiz — hech qanday buyurtma tasdiqsiz yo'qolmaydi.
+    """
+    await adm_gift_cancel(call, confirm_all=True)
+
+
 @admin_router.callback_query(F.data.startswith("adm:gift_cancel_"))
-async def adm_gift_cancel(call: CallbackQuery):
+async def adm_gift_cancel(call: CallbackQuery, confirm_all: bool = False):
     """Kutilayotgan gift'larni bekor qiladi (mijozga pul qaytariladi).
 
     XAVFLI amal — shuning uchun avval tasdiq so'raladi va keyin
@@ -4839,10 +4825,10 @@ async def adm_gift_cancel(call: CallbackQuery):
         label = "30+ kundik gift'lar"
     else:
         # 1-qadam: tasdiq so'rash
-        if part == "gift_cancel_old":
-            preview = stuck_gift_orders(older_than_days=30)
-        else:
-            preview = stuck_gift_orders()
+        preview = (
+            stuck_gift_orders(older_than_days=30)
+            if part == "gift_cancel_old" else stuck_gift_orders()
+        )
         if not preview:
             await call.message.answer("✅ Bekor qilinadigan gift yo'q.")
             return
@@ -4964,21 +4950,38 @@ async def adm_logout(call: CallbackQuery, state: FSMContext):
 
 # ------------------------------------------------------------------ statistika
 def db_stats() -> dict:
+    # DIQQAT: "volume" avval settings.total_volume_uzs dan olinardi —
+    # bu bitta jamlangan akkumulator, seed qiymati bilan (485 mln) va
+    # orderlarning haqiqiy holati bilan mos kelmaydigan raqam edi.
+    # ENDI: to'ldirilgan summalar HAQIQIY topups ro'yxatidan yig'iladi.
     users = list(db.data["users"].values())
     orders = list(db.data["orders"].values())
     topups = list(db.data["topups"].values())
-    settings = db.data.get("settings", {})
+    done_topups = [t for t in topups if t.get("status") == "completed"]
+    volume = sum(num(t.get("amount")) for t in done_topups)
+    completed_orders = [
+        o for o in orders
+        if o.get("status") == "completed" and not o.get("gift_cancelled")
+    ]
     return {
         "users": len(users),
-        "active": sum(1 for u in users if int(u.get("total_spent", 0)) > 0),
+        "active": sum(1 for u in users if num(u.get("total_spent")) > 0),
         "banned": sum(1 for u in users if u.get("banned")),
-        "balance": sum(int(u.get("balance", 0)) for u in users),
+        "balance": sum(num(u.get("balance")) for u in users),
         "orders": len(orders),
-        "volume": int(settings.get("total_volume_uzs", 0) or 0),
-        "topups_done": sum(1 for t in topups if t.get("status") == "completed"),
+        "completed_orders": len(completed_orders),
+        "volume": volume,
+        "revenue": sum(
+            num(o.get("price_uzs") or o.get("price")) for o in completed_orders
+        ),
+        "topups_done": len(done_topups),
         "topups_pending": sum(1 for t in topups if t.get("status") == "pending"),
         "pending_orders": sum(1 for o in orders if o.get("status") in
-                              ("processing", "manual_pending", "unknown")),
+                              ("processing", "pending_admin", "manual_pending")),
+        "cancelled_orders": sum(
+            1 for o in orders
+            if o.get("status") == "cancelled" or o.get("gift_cancelled")
+        ),
     }
 
 
@@ -5959,7 +5962,6 @@ async def adm_ub_password_wait(message: Message, state: FSMContext):
 
 class GiftStates(StatesGroup):
     recipient = State()
-    text = State()      # sovg'a ostiga qo'yiladigan matn
     confirm = State()
 
 
@@ -6057,10 +6059,7 @@ async def gift_recipient(message: Message, state: FSMContext, db_user: dict):
                 InlineKeyboardButton(text="🕶️ Anonim yuborish", callback_data="gift_anon:1", style="success"),
                 InlineKeyboardButton(text="👤 Do'kon profili", callback_data="gift_anon:0", style="primary"),
             ],
-            [
-                InlineKeyboardButton(text="📝 Xabar qo'shish", callback_data="gift_text_ask", style="primary"),
-                InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data="gift_text_skip", style="primary"),
-            ],
+            [InlineKeyboardButton(text="🎁 Yuborishni tasdiqlash", callback_data="gift_send", style="success")],
             [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:gifts", style="danger")],
         ]),
     )
@@ -6078,47 +6077,24 @@ async def gift_anon_pick(call: CallbackQuery, state: FSMContext, db_user: dict):
     label = "🕶️ ANONIM — profilingiz yashiriladi" if anon else "👤 Do'kon profili ko'rinadi"
     await call.message.answer(
         f"✅ Yuborish turi tanlandi: <b>{esc(label)}</b>\n\n"
-        "📝 Enda xabar qo'shishingiz yoki to'g'ridan-to'g'ri yuborishingiz mumkin.",
+        "🎁 Davom etish uchun tasdiqlang.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📝 Xabar qo'shish", callback_data="gift_text_ask", style="primary"),
-                InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data="gift_text_skip", style="primary"),
-            ],
+            [InlineKeyboardButton(text="🎁 Yuborishni tasdiqlash",
+                                  callback_data="gift_send", style="success")],
             [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:gifts", style="danger")],
         ]),
     )
 
 
 # --- Sovg'a ostidagi matn: so'rash ------------------------------------------
-@common_router.callback_query(F.data == "gift_text_ask")
-async def gift_text_ask(call: CallbackQuery, state: FSMContext):
-    await call.answer()
-    await state.set_state(GiftStates.text)
-    await call.message.answer(
-        "📝 Sovg'a ostiga qo&apos;ymoqchi bo&apos;lgan matnni yuboring\n\n"
-        "<i>Ixtiyoriy. Yubormasdan /start deb yozing — matnsiz yuboriladi.</i>",
-        reply_markup=cancel_inline_kb("gift_text_skip"),
-    )
+@common_router.callback_query(F.data == "gift_send")
+async def gift_send(call: CallbackQuery, state: FSMContext, db_user: dict):
+    await call.answer("Yuborilmoqda...")
+    await gift_do(call, state, db_user)
 
 
-@common_router.callback_query(F.data == "gift_text_skip")
-async def gift_text_skip(call: CallbackQuery, state: FSMContext, db_user: dict):
-    await call.answer("Matnsiz yuboriladi")
-    await gift_do(call, state, db_user, text="")
-
-
-@router.message(StateFilter(GiftStates.text), F.text)
-async def gift_text_input(message: Message, state: FSMContext, db_user: dict):
-    txt = (message.text or "").strip()
-    if txt.startswith("/start"):
-        await gift_do(message, state, db_user, text="")
-        return
-    txt = re.sub(r"\s+", " ", txt)[:200]
-    await gift_do(message, state, db_user, text=txt)
-
-
-async def gift_do(event, state: FSMContext, db_user: dict, text: str) -> None:
-    """Gift buyurtmasini yaratadi (matn bilan yoki matnsiz)."""
+async def gift_do(event, state: FSMContext, db_user: dict) -> None:
+    """Gift buyurtmasini yaratadi."""
     is_callback = isinstance(event, CallbackQuery)
     data = await state.get_data()
     key = data.get("gift_key", "")
@@ -6144,7 +6120,6 @@ async def gift_do(event, state: FSMContext, db_user: dict, text: str) -> None:
         "user_id": db_user["id"],
         "kind": "gift",
         "gift": key,
-        "gift_text": text or None,
         "stars": g[2],
         "title": g[1],
         "recipient": username,
@@ -6172,7 +6147,6 @@ async def gift_do(event, state: FSMContext, db_user: dict, text: str) -> None:
         f"🎁 {g[1]} ({g[2]} ⭐)\n"
         f"👤 Qabul qiluvchi: <b>@{esc(username)}</b>\n"
         f"🕶️ Yuborish: <b>{esc(anon_label)}</b>\n"
-        + (f"📝 Matn: <i>{esc(text[:120])}</i>\n" if text else "")
         + f"💳 Yechildi: <b>{fmt(price)} so'm</b>\n\n"
         "📦 Sovg'a avtomatik yuborilmoqda — 1–5 daqiqa ichida tushadi."
     )
@@ -6192,7 +6166,7 @@ async def gift_do(event, state: FSMContext, db_user: dict, text: str) -> None:
         f"🎯 Qabul qiluvchi: <b>@{esc(username)}</b>\n"
         f"🎁 {g[1]} ({g[2]} ⭐)\n"
         f"🕶️ <b>{esc(anon_label)}</b>\n"
-        + (f"📝 Matn: {esc(text[:120])}\n" if text else "")
+
         + f"💳 <b>{fmt(price)} so'm</b>"
     )
     anon_txt = "🕶️ Anonim" if anon else "👤 Do'kon profili"

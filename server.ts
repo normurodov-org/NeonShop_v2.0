@@ -219,6 +219,7 @@ export function syncAndSaveDb() {
 // Boshlang'ich holatni "o'zgartirilmagan" deb belgilaymiz
 lastSynced = clone(currentSnapshot());
 migrateLegacyFakeStats();
+openContestIfEmpty();
 
 const DEFAULT_USER_ID = 8307046273;
 
@@ -233,6 +234,58 @@ const DEFAULT_USER_ID = 8307046273;
 function numOr(v: any, fallback: number): number {
   const n = Number(v);
   return Number.isFinite(n) && v !== undefined && v !== null && v !== '' ? n : fallback;
+}
+
+/**
+ * Konkursni FAOL qiladi (WebApp'da ko'rinishi uchun).
+ *
+ * Oldin default `active: false` + "Hali konkurs yaratilmagan" edi —
+ * shuning uchun WebApp hech qachon raqamni ko'rsatmasdi. Endi:
+ *   • bo'sh/placeholder konkurs bo'lsa — real, faol konkurs bilan
+ *     almashtiriladi (admin keyin o'zgartirishi mumkin)
+ *   • admin tomonidan yaratilgan konkurs tegilmaydi
+ */
+const DEFAULT_CONTEST_DAYS = 30;
+
+function defaultContest() {
+  const end = new Date(Date.now() + DEFAULT_CONTEST_DAYS * 86400_000);
+  return {
+    id: 'contest_1',
+    text: '🎉 <b>Yulduzlar g\'alchasi!</b>\nXaridingiz orqali ball to\'pling va sovg\'a yutish shansini qo\'shing.',
+    winners: 3,
+    prize_stars: 100,
+    ends_in: DEFAULT_CONTEST_DAYS,
+    end_at: end.toISOString(),
+    participants: [],
+    min: 10_000,
+    active: true,
+  };
+}
+
+function openContestIfEmpty() {
+  const c = store.contest as any;
+  const isEmpty =
+    !c ||
+    c.id === 'contest_none' ||
+    !c.text ||
+    String(c.text).includes('yaratilmagan');
+  if (!isEmpty) return false;
+  store.contest = { ...defaultContest(), participants: [] } as any;
+  syncAndSaveDb();
+  console.log('[contest] WebApp uchun faol konkurs yo\'qilindi');
+  return true;
+}
+
+/** WebApp uchun konkursni tayyorlaydi (konkurs yo'q bo'lsa — ochadi). */
+function contestPayload(userId: number): any {
+  if (!store.contest || !store.contest.text) openContestIfEmpty();
+  const c: any = store.contest as any;
+  return {
+    ...c,
+    active: contestIsActive(c),
+    joined: Array.isArray(c.participants) ? c.participants.includes(userId) : false,
+    spent: Number(store.users.get(userId)?.total_spent) || 0,
+  };
 }
 
 function contestIsActive(c: any): boolean {
@@ -384,14 +437,7 @@ app.get('/api/me', async (req: Request, res: Response) => {
       pending_topup: pendingTopup || null,
     },
     history: userOrders,
-    contest: {
-      ...store.contest,
-      active: contestIsActive(store.contest),
-      joined: Array.isArray(store.contest.participants)
-        ? store.contest.participants.includes(user.id)
-        : false,
-      spent: user.total_spent,
-    },
+    contest: contestPayload(user.id),
     settings: store.settings,
   });
 });
@@ -530,7 +576,7 @@ app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
 
 app.post('/api/order', async (req: Request, res: Response) => {
   const user = getUser(req);
-  const { kind, amount, months, gift, username, hide_my_name, gift_text } = req.body;
+  const { kind, amount, months, gift, username, hide_my_name } = req.body;
 
   let price = 0;
   let title = '';
@@ -707,17 +753,6 @@ app.post('/api/order', async (req: Request, res: Response) => {
     // (Telegram MTProto: InputInvoiceStarGift.hide_name = flags.0?true)
     anon: kind === 'gift' ? Boolean(hide_my_name) : undefined,
     hide_my_name: kind === 'gift' ? Boolean(hide_my_name) : undefined,
-    // Sovg'a ostiga qo'yiladigan matn (Telegram "Add Message...")
-    // MIJOZ MATNI ODDIY MATN ("verbatim") bo'lib yuboriladi —
-    // parse_mode DISABLED. Shu sababli teglarni olib tashlamaymiz:
-    // mijoz "<b>salom" deb yozsa, aynan shu yoziladi.
-    gift_text:
-      kind === 'gift' && typeof gift_text === 'string'
-        ? gift_text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
-               .replace(/\s+/g, ' ')
-               .trim()
-               .slice(0, 200) || undefined
-        : undefined,
     status: orderStatus,
     source: 'webapp',
     payment_method: 'usdt_ton',
@@ -1273,16 +1308,87 @@ app.get('/api/admin/data', (req: Request, res: Response) => {
       // DIQQAT: eski kod `users.length + settings.total_users` qilardi —
       // settings'dagi SOXTA qiymat ham qo'shilardi (va haqiqiy hisob
       // ikki marta hisoblanardi). Endi FAQAT haqiqiy ma'lumot.
-      totalUsers: users.length,
-      totalOrders: orders.length,
-      totalVolume: Number(store.settings.total_volume_uzs) || 0,
-      activeContests: contestIsActive(store.contest) ? 1 : 0,
+      ...realStats(),
     },
     orders: orders.slice(0, 50),
     topups: topups.slice(0, 50),
     users,
   });
 });
+
+/**
+ * HAQIQIY statistika — faqat haqiqiy ma'lumotlardan.
+ *
+ * AVVAL: "Jami aylanma" — `settings.total_volume_uzs` dan olinardi. Bu
+ * bitta jamlangan akkumulator bo'lib, seed qiymati (485 000 000) bilan
+ * boshlanardi va orderlarning haqiqiy holati bilan MOS KELMASDI.
+ *
+ * ENDI: har bir ko'rsatkich aniq HAQIQIY ro'yxatdan hisoblanadi.
+ */
+function realStats() {
+  const users = [...store.users.values()];
+  const orders = [...store.orders.values()];
+  const topups = [...store.topups.values()];
+
+  const orderPrice = (o: any): number => {
+    const p = Number(o?.price_uzs ?? o?.price ?? 0);
+    return Number.isFinite(p) && p > 0 ? p : 0;
+  };
+  const done = (o: any): boolean =>
+    o?.status === 'completed' && !o?.gift_cancelled;
+  const t0 = new Date();
+  t0.setHours(0, 0, 0, 0);
+  const todayMs = t0.getTime();
+
+  const completed = orders.filter(done);
+  const revenue = completed.reduce((s, o) => s + orderPrice(o), 0);
+  const doneTopups = topups.filter((t: any) => t?.status === 'completed');
+  const topupSum = doneTopups.reduce(
+    (s: number, t: any) => s + (Number(t?.amount) || 0), 0
+  );
+  const todayOrders = completed.filter(
+    (o: any) => Date.parse(o?.created_at || '') >= todayMs
+  );
+
+  return {
+    totalUsers: users.length,
+    activeUsers: users.filter((u: any) => Number(u?.total_spent) > 0).length,
+    bannedUsers: users.filter((u: any) => u?.banned).length,
+    newUsersToday: users.filter(
+      (u: any) => Date.parse(u?.joined_at || '') >= todayMs
+    ).length,
+
+    totalOrders: orders.length,
+    completedOrders: completed.length,
+    pendingOrders: orders.filter(
+      (o: any) => o?.status === 'processing' || o?.status === 'pending_admin'
+    ).length,
+    cancelledOrders: orders.filter(
+      (o: any) => o?.status === 'cancelled' || o?.gift_cancelled
+    ).length,
+    todayOrders: todayOrders.length,
+
+    totalTopups: topupSum,
+    topupsCompleted: doneTopups.length,
+    topupsPending: topups.filter((t: any) => t?.status === 'pending').length,
+
+    totalRevenue: revenue,
+    totalVolume: topupSum,
+    todayVolume: doneTopups
+      .filter((t: any) => Date.parse(t?.created_at || '') >= todayMs)
+      .reduce((s: number, t: any) => s + (Number(t?.amount) || 0), 0),
+    todayRevenue: todayOrders.reduce((s: number, o: any) => s + orderPrice(o), 0),
+
+    userBalance: users.reduce(
+      (s: number, u: any) => s + (Number(u?.balance) || 0), 0
+    ),
+    starsSold: completed
+      .filter((o: any) => o?.kind === 'sell')
+      .reduce((s: number, o: any) => s + (Number(o?.stars) || 0), 0),
+
+    activeContests: contestIsActive(store.contest) ? 1 : 0,
+  };
+}
 
 app.post('/api/admin/toggle-bot', (req: Request, res: Response) => {
   getUser(req); // bazani diskdan yangilash
@@ -1457,7 +1563,7 @@ app.post('/api/bot/chat', (req: Request, res: Response) => {
       `Bot holati: <b>${store.settings.bot_active ? '🟢 Faol' : '🔴 To\'xtatilgan'}</b>\n` +
       `Jami foydalanuvchilar: <b>${store.users.size.toLocaleString()}</b>\n` +
       `Jami buyurtmalar: <b>${store.orders.size.toLocaleString()}</b>\n` +
-      `Jami aylanma: <b>${store.settings.total_volume_uzs.toLocaleString()} UZS</b>\n\n` +
+      `Jami aylanma: <b>${realStats().totalVolume.toLocaleString()} UZS</b>\n\n` +
       `Admin buyruqlari quyida:`;
     inlineKeyboard = [
       [{ text: store.settings.bot_active ? '⏸ Botni to\'xtatish' : '▶️ Botni yoqish', action: 'admin_toggle_bot' }],

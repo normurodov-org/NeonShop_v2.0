@@ -53,8 +53,6 @@ export const BuyView: React.FC<BuyViewProps> = ({
   const [photoFailed, setPhotoFailed] = useState<boolean>(false);
   // Sovg'a: anonim yuborish (true) yoki do'kon profili ko'rinadi (false)
   const [hideMyName, setHideMyName] = useState<boolean>(true);
-  // Sovg'a ostiga qo'yiladigan matn (Telegram dagi "Add Message...")
-  const [giftText, setGiftText] = useState<string>('');
 
   const [amount, setAmount] = useState<number>(100);
   // Kirish maydoni uchun alohida holat: foydalanuvchi raqamni to'liq
@@ -200,7 +198,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
       } else if (subTab === 'premium') {
         body = { ...body, kind: 'premium', mode: premMode, months: premMonths };
       } else if (subTab === 'gifts') {
-        body = { ...body, kind: 'gift', gift: selectedGift, hide_my_name: hideMyName, gift_text: giftText };
+        body = { ...body, kind: 'gift', gift: selectedGift, hide_my_name: hideMyName };
       }
 
       const res = await fetch('/api/order', {
@@ -619,32 +617,6 @@ export const BuyView: React.FC<BuyViewProps> = ({
             </button>
           </div>
 
-          {/* Sovg'a ostiga matn — Telegram dagi "Add Message..." */}
-          <div className="pt-2 border-t border-white/10">
-            <label className={`block text-[11px] font-semibold mb-1.5 ${
-              isDark ? 'text-neutral-300' : 'text-neutral-700'
-            }`}>
-              📝 Sovg'a ostiga matn qo'shish (ixtiyoriy)
-            </label>
-            <input
-              type="text"
-              value={giftText}
-              maxLength={200}
-              onChange={(e) => setGiftText(e.target.value)}
-              placeholder="Masalan: Sizga omad tilayman!"
-              className={`w-full px-3.5 py-3 rounded-[16px] text-sm font-medium
-                          focus:outline-none apple-spring liquid-glass-input ${
-                            isDark
-                              ? 'text-white placeholder:text-neutral-600'
-                              : 'text-neutral-900 placeholder:text-neutral-400'
-                          }`}
-            />
-            <div className={`text-[10px] mt-1 ${
-              isDark ? 'text-neutral-500' : 'text-neutral-400'
-            }`}>
-              {giftText.length}/200
-            </div>
-          </div>
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StoreSettings, Contest } from '../types';
-import { Shield, Lock, Power, Users, ShoppingBag, DollarSign, CheckCircle2, AlertCircle, ArrowRight, RefreshCw, Trophy, ChevronUp, ChevronDown } from 'lucide-react';
+import { Shield, Lock, Power, Users, ShoppingBag, DollarSign, CheckCircle2, AlertCircle, ArrowRight, RefreshCw, Trophy, TrendingUp, Wallet, Clock, Ban, ChevronUp, ChevronDown } from 'lucide-react';
 
 interface AdminPanelProps {
   onSettingsUpdated: (newSettings: StoreSettings) => void;
@@ -224,6 +224,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
           </div>
           <div className="text-xl font-black text-emerald-400 mt-1">
             {Number(stats?.totalVolume || 0).toLocaleString()} <span className="text-xs">UZS</span>
+          </div>
+          <div className="text-[9px] text-slate-500 mt-0.5">
+            Bugungi: {Number(stats?.todayVolume || 0).toLocaleString()} UZS
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-slate-900 border border-white/10">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <Wallet className="w-3.5 h-3.5 text-teal-400" /> Tushum (sotilgan)
+          </div>
+          <div className="text-xl font-black text-teal-300 mt-1">
+            {Number(stats?.totalRevenue || 0).toLocaleString()}{' '}
+            <span className="text-xs">UZS</span>
+          </div>
+          <div className="text-[9px] text-slate-500 mt-0.5">
+            Kutilmoqda: {Number(stats?.topupsPending || 0).toLocaleString()}
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-slate-900 border border-white/10">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-amber-400" /> Kutayotgan buyurtma
+          </div>
+          <div className="text-xl font-black text-amber-300 mt-1">
+            {Number(stats?.pendingOrders || 0).toLocaleString()}
+          </div>
+          <div className="text-[9px] text-slate-500 mt-0.5">
+            Bekor: {Number(stats?.cancelledOrders || 0).toLocaleString()}
+          </div>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-slate-900 border border-white/10">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <TrendingUp className="w-3.5 h-3.5 text-sky-400" /> Bajarilgan xaridlar
+          </div>
+          <div className="text-xl font-black text-sky-300 mt-1">
+            {Number(stats?.completedOrders || 0).toLocaleString()}{' '}
+            <span className="text-xs text-slate-500">
+              / {Number(stats?.totalOrders || 0).toLocaleString()}
+            </span>
           </div>
         </div>
 

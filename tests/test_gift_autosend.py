@@ -31,29 +31,7 @@ def check(cond, msg):
 
 
 print("=" * 68)
-print("1) clean_gift_text — mijoz matni xavfsiz")
-print("=" * 68)
-cases = [
-    ("Sizga omad! 🌸", "oddiy matn"),
-    ("  ko'p   bo'sh  joy ", "bo'sh joylar siqiladi"),
-    ("<b>salom", "HTML teglari SAQLANADI (verbatim)"),
-    ("A*B*C_", "markdown belgilari saqlanadi"),
-    ("birinchi\nikkinchi", "qator uzilishi"),
-    ("nul\x00belgi", "boshqaruv belgisi"),
-    ("x" * 300, "uzunlik 200"),
-]
-for raw, label in cases:
-    got = B.clean_gift_text(raw)
-    print(f"      {label:42} -> {got[:40]!r}")
-check(B.clean_gift_text("Sizga omad!") == "Sizga omad!", "oddiy matn o'zgarmaydi")
-check("<b>" in B.clean_gift_text("<b>salom"), "HTML teglari olib tashlanMAYdi")
-check("\x00" not in B.clean_gift_text("nul\x00belgi"), "boshqaruv belgisi tozalandi")
-check(len(B.clean_gift_text("x" * 300)) == 200, "200 belgiga qisqartirildi")
-check(B.clean_gift_text(None) == "", "None -> bo'sh matn")
-
-print()
-print("=" * 68)
-print("2) normalize_gift_recipient — barcha shakllar bir xil")
+print("1) normalize_gift_recipient — barcha shakllar bir xil")
 print("=" * 68)
 for raw, exp in (
     ("@bobur", "bobur"), ("bobur", "bobur"), ("  @bobur  ", "bobur"),
@@ -70,11 +48,10 @@ check(B.normalize_gift_recipient(None) == "", "None -> bo'sh")
 
 print()
 print("=" * 68)
-print("3) send_gift parse_mode=DISABLED (mijoz matni verbatim)")
+print("2) send_gift — anonim va toza matnsiz")
 print("=" * 68)
-check("parse_mode=" in SRC, "send_gift ga parse_mode beriladi")
-check("UbParseMode.DISABLED" in SRC, "DISABLED ishlatiladi")
-check("text=gift_text or None" in SRC, "matn uzatiladi")
+check("gift_text" not in SRC, "matn funksiyasi bot.py da yo'q")
+check("clean_gift_text" not in SRC, "clean_gift_text yo'q")
 check(SRC.count("await gclient.send_gift(") == 1, "bitta send_gift chaqiruvi")
 
 # endi haqiqiy chaqiruvni tekshiramiz
@@ -95,10 +72,8 @@ class UB:
     async def get_available_gifts(self):
         return [G(102, "🧸", 15)]
 
-    async def send_gift(self, chat_id, gift_id, text=None, parse_mode=None,
-                        hide_my_name=None):
-        calls.append({"chat": chat_id, "gift": gift_id, "text": text,
-                      "pm": str(parse_mode), "anon": hide_my_name})
+    async def send_gift(self, chat_id, gift_id, hide_my_name=None):
+        calls.append({"chat": chat_id, "gift": gift_id, "anon": hide_my_name})
         return True
 
 
@@ -109,12 +84,12 @@ async def main():
     B.userbot = UB()
     B.db.get_or_create_user(555, "aliy", "Aliy")
 
-    async def run(text, anon):
+    async def run(anon):
         calls.clear()
         B.db.data["orders"] = {"o1": {
             "id": "o1", "user_id": 555, "kind": "gift", "gift": "bear",
             "stars": 15, "title": "🧸", "recipient": "https://t.me/bobur",
-            "status": "completed", "anon": anon, "gift_text": text,
+            "status": "completed", "anon": anon,
         }}
         B.db.save()
         t = asyncio.create_task(B.process_gift_orders())
@@ -130,25 +105,20 @@ async def main():
         return calls[0] if calls else {}
 
     print()
-    c = await run("<b>Sizga omad! _barchasi yaxshi_", True)
+    c = await run(True)
     check(bool(c), "gift yuborildi")
-    check(c.get("pm", "").endswith("DISABLED"),
-          f"parse_mode = DISABLED ({c.get('pm')})")
-    check(c.get("text") == "<b>Sizga omad! _barchasi yaxshi_",
-          f"matn o'zgarmasdan yuborildi: {c.get('text')!r}")
     check(c.get("anon") is True, "anonim (hide_my_name=True)")
     check(c.get("chat") == "bobur",
           f"t.me havolasi tozalandi: {c.get('chat')!r}")
 
-    c2 = await run("", False)
+    c2 = await run(False)
     check(c2.get("anon") is False, "profil ko'rinadi (hide_my_name=False)")
-    check(c2.get("text") is None, "matn yo'q -> None")
-    check(c2.get("pm") in ("None", ""),
-          f"matn yo'q -> parse_mode berilmadi ({c2.get('pm')})")
+    check("text" not in c2 and "parse_mode" not in c2,
+          "matn va parse_mode umuman yuborilmaydi (funksiya olib tashlangan)")
 
     print()
     print("=" * 68)
-    print("4) recover_stuck_gifts — yutilgan buyurtmalar tiklanadi")
+    print("3) recover_stuck_gifts — yutilgan buyurtmalar tiklanadi")
     print("=" * 68)
     B.db.data["orders"] = {
         "i1": {"id": "i1", "kind": "gift", "gift_sent": False,
@@ -183,7 +153,7 @@ async def main():
 
     print()
     print("=" * 68)
-    print("5) Qisqarib qolgan gift'lar ogohlantiriladi")
+    print("4) Qisqarib qolgan gift'lar ogohlantiriladi")
     print("=" * 68)
     check("gift_stuck" in SRC, "runtime da gift_stuck sanaladi")
     check("Yuborilmagan gift buyurtmalari" in SRC, "admin ga xabar yuboriladi")
@@ -192,7 +162,7 @@ async def main():
 
     print()
     print("=" * 68)
-    print("6) server.ts — qabul qiluvchi va matn")
+    print("5) server.ts — qabul qiluvchi va matn")
     print("=" * 68)
     m = re.search(r"let recipient = \(username \|\| ''\)(.*?)slice\(0, 32\);", SRV, re.S)
     check(m is not None, "recipient normalizatsiyasi bor")
@@ -202,8 +172,7 @@ async def main():
         check("^@+" in js or "@+" in js, "'@' tozalanadi")
         check("user.username" not in js,
               "bo'sh bo'lsa mijozning o'z usernami ishlatilmaydi")
-    check(".replace(/[<>&]/g, '')" not in SRV,
-          "gift_text dagi teglar olib tashlanmaydi (verbatim)")
+    check("gift_text" not in SRV, "server.ts da gift_text yo'q")
 
     print()
     print("=" * 68)
