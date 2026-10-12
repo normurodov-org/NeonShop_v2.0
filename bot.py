@@ -704,7 +704,16 @@ class JsonDB:
                     data = json.load(f)
                 if isinstance(data, dict):
                     if candidate != self.path:
-                        log.warning("Asosiy baza buzilgan, zaxiradan tiklandi: %s", candidate)
+                        # DIQQAT: bu PUL bilan bog'liq voqea. Asosiy baza
+                        # buzilgani va zaxiraga QAYTISH natijada oxirgi
+                        # yozuvlar (balanslar, buyurtmalar, bekor qilingan
+                        # gift'lar va qaytarilgan pullar) YO'QOLADI.
+                        # Shuning uchun admin'ga darhol xabar beramiz.
+                        log.error(
+                            "Asosiy baza buzilgan, zaxiradan tiklandi: %s — "
+                            "oxirgi yozuvlar yo'q bo'lishi mumkin!", candidate,
+                        )
+                        DB_RESTORED_FROM_BACKUP["path"] = candidate
                     return data
             except (OSError, json.JSONDecodeError) as exc:
                 log.error("Bazani o'qib bo'lmadi (%s): %s", candidate, exc)
@@ -796,6 +805,9 @@ class JsonDB:
         self.save()
         return new_balance
 
+
+# Baza zaxiradan tiklanganmi? (pulgа xavfi bor — admin ga xabar beriladi)
+DB_RESTORED_FROM_BACKUP: dict[str, str] = {"path": ""}
 
 db = JsonDB(DB_PATH)
 log.info(f"Baza fayli: {DB_PATH}")
@@ -4378,6 +4390,93 @@ async def adm_ub_status(call: CallbackQuery):
 # =============================================================================
 # ADMIN: GIFТ DIAGNOSTIKASI — nima uchun yuborilmayapti?
 # =============================================================================
+def gift_order_price(order: dict) -> int:
+    """Gift buyurtmasining narxi (so'm)."""
+    return num(order.get("price_uzs") or order.get("price") or 0)
+
+
+def cancel_gift_order(order_id: str, refund: bool = True) -> tuple[bool, str]:
+    """Kutilayotgan gift buyurtmasini bekor qiladi.
+
+    Nima uchun: mijoz pulini to'lab sovg'a ololmagan bo'lsa, uni
+    cheksiz kutayotgan qoldirish mumkin emas — bekor qilib pulni
+    qaytarish to'g'ri. Aks holda mijoz nafaqat giftini, balki pulini
+    ham yo'qotadi.
+
+    Qaytaradi: (muvaffaqiyatmi?, xabar)
+    """
+    order = db.data.get("orders", {}).get(order_id)
+    if not order:
+        return False, "Buyurtma topilmadi"
+    if order.get("kind") != "gift":
+        return False, "Bu gift buyortmasi emas"
+    # DIQQAT tartibi: bekor qilinganlikni OLDIN tekshiramiz, aks holda
+    # "allaqachon yuborilgan" xabari chiqadi (biz esa o'zimiz belgilagan
+    # gift_sent=True qiymati sababidan) — bu chalkash xabar bo'lardi.
+    if order.get("gift_cancelled"):
+        return False, "Allaqachon bekor qilingan"
+    if order.get("gift_sent"):
+        return False, "Gift allaqachon yuborilgan — bekor qilinmaydi"
+
+    price = gift_order_price(order)
+
+    # Worker bu buyurtmani qayta ushlab olmasin
+    order["gift_sent"] = True          # skip qilish uchun "yuborilgan" belgisi
+    order["gift_cancelled"] = True
+    order["gift_processing"] = False
+    order["status"] = "cancelled"
+    order.pop("gift_processing_at", None)
+    order.pop("gift_error", None)
+    order.pop("gift_error_stage", None)
+    order.pop("gift_error_trace", None)
+    order.pop("gift_needs_review", None)
+    order.pop("gift_failed", None)
+    order["gift_attempts"] = 0
+
+    refunded = 0
+    if refund and price > 0:
+        u = db.get_user(num(order.get("user_id")))
+        if u is not None:
+            u["balance"] = num(u.get("balance")) + price
+            db.add_history(
+                u, "refund", price,
+                f"Gift bekor qilindi: {order.get('title') or order.get('gift')}",
+            )
+            refunded = price
+    db.save()
+    return True, (
+        f"Pul qaytarildi: {fmt(refunded)} so'm" if refunded
+        else "Pul qaytarilmadi (nomutanoshiblik yoki narx 0)"
+    )
+
+
+def stuck_gift_orders(older_than_days: Optional[float] = None) -> list[dict]:
+    """Bekor qilinishi mumkin bo'lgan gift buyurtmalari.
+
+    Yuborilmagan va hali bekor qilinmagan barcha gift'lar. Agar
+    `older_than_days` berilgan bo'lsa — faqat shundan ESKINI.
+    """
+    out: list[dict] = []
+    now = datetime.now(TZ)
+    for o in db.data.get("orders", {}).values():
+        if o.get("kind") != "gift" or o.get("gift_sent") or o.get("gift_cancelled"):
+            continue
+        if older_than_days is not None:
+            raw = str(o.get("created_at") or o.get("date") or "")
+            try:
+                created = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=TZ)
+            except Exception:  # noqa: BLE001
+                continue  # sanasi yo'q — "eski" deb hisoblamaymiz
+            age = (now - created).total_seconds() / 86400
+            if age < older_than_days:
+                continue
+        out.append(o)
+    return out
+
+
+
 @admin_router.callback_query(F.data == "adm:gift_diag")
 async def adm_gift_diag(call: CallbackQuery):
     """Gift yuborilishining BARCHA bosqichlarini jonli tekshiradi.
@@ -4524,17 +4623,145 @@ async def adm_gift_retry(call: CallbackQuery):
             text=f"♻️ {str(o.get('id'))[-6:]}",
             callback_data=f"adm:gift_retry_one:{o.get('id')}",
         ))
-        if len(row) == 3:
+        row.append(InlineKeyboardButton(
+            text=f"❌ {str(o.get('id'))[-6:]}",
+            callback_data=f"adm:gift_cancel_one:{o.get('id')}",
+            style="danger",
+        ))
+        if len(row) >= 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
+
+    # Bekor qilish. XAVFLI amal — avval tasdiq so'raladi va mijozning
+    # puli QAYTARILADI (u hech qanday sababsiz pulini yo'qotmasin).
+    total_refund = sum(gift_order_price(o) for o in stuck)
+    buttons.append([
+        InlineKeyboardButton(
+            text=f"❌ {len(stuck)} ta giftni bekor qilish (💳 {fmt(total_refund)} qaytariladi)",
+            callback_data="adm:gift_cancel_all",
+            style="danger",
+        ),
+    ])
+    if len(stuck) > 1:
+        buttons.append([
+            InlineKeyboardButton(
+                text="📅 Faqat 30+ kundikini bekor qilish",
+                callback_data="adm:gift_cancel_old",
+                style="danger",
+            ),
+        ])
     buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="adm:home")])
 
     await call.message.answer(
         "\n".join(lines),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),  # type: ignore[arg-type]
     )
+
+
+@admin_router.callback_query(F.data.startswith("adm:gift_cancel_"))
+async def adm_gift_cancel(call: CallbackQuery):
+    """Kutilayotgan gift'larni bekor qiladi (mijozga pul qaytariladi).
+
+    XAVFLI amal — shuning uchun avval tasdiq so'raladi va keyin
+    "ha" bosilgandagina bajariladi.
+    """
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    part = call.data.split(":", 1)[1]
+
+    if part == "gift_cancel_confirm_all":
+        targets = stuck_gift_orders()
+        label = "BARCHA kutilayotgan gift'lar"
+    elif part == "gift_cancel_confirm_old":
+        targets = stuck_gift_orders(older_than_days=30)
+        label = "30+ kundik gift'lar"
+    else:
+        # 1-qadam: tasdiq so'rash
+        if part == "gift_cancel_old":
+            preview = stuck_gift_orders(older_than_days=30)
+        else:
+            preview = stuck_gift_orders()
+        if not preview:
+            await call.message.answer("✅ Bekor qilinadigan gift yo'q.")
+            return
+        total = sum(gift_order_price(o) for o in preview)
+        cb = ("adm:gift_cancel:gift_cancel_confirm_old" if part == "gift_cancel_old"
+              else "adm:gift_cancel:gift_cancel_confirm_all")
+        await call.message.answer(
+            "⚠️ <b>Ishonchingiz komilmi?</b>\n\n"
+            f"📦 Bekor qilinadi: <b>{len(preview)}</b> ta gift\n"
+            f"💳 Mijozlarga qaytariladi: <b>{fmt(total)} so'm</b>\n\n"
+            "<i>Bekor qilingan buyurtmalar qaytarib bo'lmaydi "
+            "(lekin pul har doim qaytariladi).</i>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Ha, bekor qil", callback_data=cb,
+                                     style="danger"),
+                InlineKeyboardButton(text="↩️ Bekor qilish", callback_data="adm:gift_retry",
+                                     style="primary"),
+            ]]),
+        )
+        return
+
+    if not targets:
+        await call.message.answer("✅ Qo'shimcha bekor qilinadigan gift qolmadi.")
+        return
+
+    done, refund_total, users = 0, 0, set()
+    for o in targets:
+        oid = str(o.get("id"))
+        okc, msg = cancel_gift_order(oid, refund=True)
+        if okc:
+            done += 1
+            users.add(o.get("user_id"))
+            refund_total += gift_order_price(o)
+    db.save()
+    await call.message.answer(
+        f"✅ <b>{done} ta gift bekor qilindi</b> ({esc(label)})\n\n"
+        f"💳 Mijozlarga qaytarilgan: <b>{fmt(refund_total)} so'm</b>\n"
+        f"👥 Foydalanuvchilar: <b>{len(users)}</b>",
+        reply_markup=admin_back_kb(),
+    )
+    log.info("🎁 %d ta gift bekor qilindi, %s so'm qaytarildi", done, fmt(refund_total))
+
+
+@admin_router.callback_query(F.data.startswith("adm:gift_cancel_one:"))
+async def adm_gift_cancel_one(call: CallbackQuery):
+    """Bitta gift buyurtmasini bekor qiladi (puli qaytariladi)."""
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    order_id = call.data.split(":", 2)[2] if ":" in call.data[2:] else ""
+    order = db.data.get("orders", {}).get(order_id)
+    if not order:
+        await call.message.answer("❌ Buyurtma topilmadi.")
+        return
+    okc, msg = cancel_gift_order(order_id, refund=True)
+    price = gift_order_price(order)
+    if not okc:
+        await call.message.answer(f"❌ Bekor qilinmadi: {esc(msg)}")
+        return
+    await call.message.answer(
+        f"✅ <b>Gift bekor qilindi</b>\n\n"
+        f"📦 Buyurtma: <code>{esc(order_id)}</code>\n"
+        f"🎁 {esc(str(order.get('title') or order.get('gift')))}\n"
+        f"💳 {esc(msg)}",
+        reply_markup=admin_back_kb(),
+    )
+    u = db.get_user(num(order.get("user_id")))
+    if u is not None:
+        await _safe_send(
+            u["id"],
+            "↩️ <b>Gift buyurtmangiz bekor qilindi</b>\n\n"
+            f"🎁 {esc(str(order.get('title') or order.get('gift')))}\n"
+            f"🆔 <code>{esc(order_id)}</code>\n"
+            f"💳 Balansga qaytarildi: <b>{fmt(price)} so'm</b>\n\n"
+            "<i>Xabar bering — yordam beraimiz.</i>",
+        )
 
 
 @admin_router.callback_query(F.data.startswith("adm:gift_retry_one:"))
@@ -5978,6 +6205,19 @@ async def main() -> None:
             # ORDERS_CHANNEL ga xabar yuborish mumkinligini tekshiramiz —
             # aks holda barcha savdo xabarlari jimgina yo'qoladi.
             await _safe(check_orders_channel(), "ORDERS_CHANNEL tekshiruvi")
+            # Baza zaxiradan tiklangan bo'lsa — bu PUL bilan bog'liq voqea
+            if DB_RESTORED_FROM_BACKUP.get("path"):
+                await _safe(
+                    notify_admins(
+                        "🚨 <b>Baza buzilgan, zaxiradan tiklandi</b>\n\n"
+                        f"📁 <code>{esc(DB_RESTORED_FROM_BACKUP['path'])}</code>\n\n"
+                        "⚠️ Oxirgi yozuvlar (balans, buyurtma, bekor qilingan "
+                        "gift va qaytarilgan pullar) YO'QOLGAN bo'lishi mumkin.\n"
+                        "🔧 <i>Ishga tushgandan keyin balanslar va tarixni "
+                        "tekshiring.</i>"
+                    ),
+                    "DB tiklash ogohlantirishi",
+                )
             maybe_start_userbot()
             for label, coro in (
                 ("Gift worker", process_gift_orders()),
