@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Boxes, Heart, ChevronDown, SlidersHorizontal, X, Minus, Plus } from 'lucide-react';
+import Modal from '../Modal';
+import { Boxes, Gift, Heart, ChevronDown, SlidersHorizontal, X, Minus, Plus } from 'lucide-react';
 
 interface NftItem {
   id: string;
@@ -54,6 +55,69 @@ const fmt = (n: number) => Number(n || 0).toLocaleString('uz-UZ').replace(/,/g, 
 const isImageUrl = (v?: string): boolean => {
   if (!v) return false;
   return /^https?:\/\//i.test(v) || v.startsWith('/');
+};
+
+/**
+ * NFT rasmi — rasm, "yuklanmoqda" va chiroli placeholder.
+ *
+ * 🔴 NIMA UCHUN alohida komponent:
+ * `<img>` buzilsa (404, noto'g'ri havola) brauzer o'z "broken image"
+ * ikonkasini ko'rsatadi — bu chiroli emas va mijozni chalg'itadi.
+ * Shu sabab `onError` da biz o'zimizning placeholderimizga almashamiz.
+ */
+const NftImage: React.FC<{
+  src?: string;
+  alt: string;
+  isDark: boolean;
+  className?: string;
+}> = ({ src, alt, isDark, className = '' }) => {
+  const [failed, setFailed] = useState(false);
+
+  // 🔴 Yuklanmaydigan rasm — bo'sh kvadrat UCHUN QOLMASIN.
+  // Ba'zi havolalar (o'lik domen, Telegram CDN muammosi) 404 ham
+  // bermaydi, balki osilib qoladi: `onError` ishlamaydi va karta
+  // doim bo'sh ko'rinadi. Shuning uchun qisqa muddatli TAYMER
+  // ham qo'yamiz — yuklanmasa placeholder ga o'tamiz.
+  useEffect(() => {
+    if (!isImageUrl(src)) return;
+    setFailed(false);
+    const t = setTimeout(() => setFailed(true), 6000);
+    return () => clearTimeout(t);
+  }, [src]);
+
+  const ok = isImageUrl(src) && !failed;
+
+  if (!ok) {
+    return (
+      <div
+        className={`w-full h-full flex flex-col items-center justify-center gap-1 ${
+          isDark
+            ? 'bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10'
+            : 'bg-gradient-to-br from-violet-100 to-fuchsia-50'
+        } ${className}`}
+      >
+        <Gift
+          className={`w-7 h-7 ${isDark ? 'text-violet-300/70' : 'text-violet-400/80'}`}
+        />
+        <span
+          className={`text-[8px] font-bold uppercase tracking-wide ${
+            isDark ? 'text-violet-200/60' : 'text-violet-400/70'
+          }`}
+        >
+          NFT
+        </span>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={`w-full h-full object-cover ${className}`}
+    />
+  );
 };
 
 export const NftRentView: React.FC<NftProps> = ({
@@ -316,22 +380,12 @@ export const NftRentView: React.FC<NftProps> = ({
                               apple-view-animate cursor-pointer group`}
                 >
                   <div className="relative aspect-square overflow-hidden">
-                    {isImageUrl(n.image) ? (
-                      <img
-                        src={n.image}
-                        alt={n.title}
-                        loading="lazy"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                    ) : (
-                      <div
-                        className={`w-full h-full flex items-center justify-center ${
-                          isDark ? 'bg-white/[0.04]' : 'bg-black/[0.03]'
-                        }`}
-                      >
-                        <Boxes className="w-9 h-9 opacity-30" />
-                      </div>
-                    )}
+                    <NftImage
+                      src={n.image}
+                      alt={n.title}
+                      isDark={isDark}
+                      className="transition-transform duration-300 group-hover:scale-105"
+                    />
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -380,17 +434,20 @@ export const NftRentView: React.FC<NftProps> = ({
         </>
       )}
 
-      {/* MODAL — muddat va hisob */}
-      {sel && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setSel(null)}
-          />
+      {/* MODAL — muddat va hisob.
+          `Modal` PORTAL orqali `document.body` ga chiqaradi. Bu SHART:
+          `apple-view-animate` da `transform: scale(1)` va `filter: blur(0px)`
+          ANIMATSIYA TUGAGANDAN KEYIN HAM qoladi (fill-mode: both) —
+          ikkalasi ham `position: fixed` ni buzadi va modal ekran emas,
+          butun konteyner balandligida joylashadi (CTA tugmasi
+          ekrandan tashqariga chiqib ketadi). */}
+      <Modal open={!!sel} onClose={() => setSel(null)} align="bottom" label="NFT ijarasi">
+        {sel && (
           <div
             className={`relative w-full sm:max-w-md rounded-t-[32px] sm:rounded-[32px]
-                        liquid-glass-card p-5 space-y-4 max-h-[92vh] overflow-y-auto
-                        apple-view-animate`}
+                        liquid-glass-card p-5 space-y-4 overflow-y-auto sheet-in
+                        max-h-[calc(100dvh-1.5rem)] sm:max-h-[88vh]
+                        pb-[max(1.25rem,env(safe-area-inset-bottom))]`}
           >
             {/* Sarlavha */}
             <div className="flex items-center gap-3">
@@ -399,13 +456,7 @@ export const NftRentView: React.FC<NftProps> = ({
                   isDark ? 'bg-white/[0.06]' : 'bg-black/[0.04]'
                 }`}
               >
-                {isImageUrl(sel.image) ? (
-                  <img src={sel.image} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <Boxes className="w-6 h-6 opacity-30" />
-                  </div>
-                )}
+                <NftImage src={sel.image} alt={sel.title} isDark={isDark} />
               </div>
               <div className="flex-1 min-w-0">
                 <div
@@ -512,12 +563,14 @@ export const NftRentView: React.FC<NftProps> = ({
                 <span className={`text-[14px] font-black ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                   Total
                 </span>
-                <span className="text-[16px] font-black text-[var(--accent)]">
+                <span className="text-[16px] font-black text-[var(--accent-text)]">
                   {fmt(quote?.total ?? 0)} UZS
                 </span>
               </div>
               <div className="flex items-center justify-between pt-1">
-                <span className={`text-[12px] ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
+                {/* DIQQAT: neutral-500 yorug' rejimda 4.43:1 edi
+                    (WCAG AA 4.5 dan past). neutral-600 -> 7.31:1 */}
+                <span className={`text-[12px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
                   Balance
                 </span>
                 <span
@@ -540,7 +593,7 @@ export const NftRentView: React.FC<NftProps> = ({
               onClick={insufficient ? onGoToTopup : rent}
               className={`w-full py-4 rounded-[22px] text-[15px] font-black apple-spring
                           disabled:opacity-50 cursor-pointer
-                          bg-[var(--accent)] text-white shadow-lg`}
+                          bg-[var(--accent)] text-white shadow-lg active:scale-[0.98] transition-transform`}
             >
               {insufficient
                 ? `Top up · ${fmt(quote?.total ?? 0)} UZS`
@@ -548,13 +601,13 @@ export const NftRentView: React.FC<NftProps> = ({
                   ? 'Yuborilmoqda…'
                   : `Sotib olish · ${fmt(quote?.total ?? 0)} UZS`}
             </button>
-            <p className={`text-[10px] text-center leading-relaxed ${isDark ? 'text-neutral-500' : 'text-neutral-400'}`}>
+            <p className={`text-[10px] text-center leading-relaxed ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
               To&apos;lovdan keyin NFTni Fragment hisobingizga ulaysiz. Muddat tugach
               egasi qaytaradi.
             </p>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </div>
   );
 };

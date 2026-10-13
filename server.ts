@@ -611,13 +611,31 @@ function isTelegramFileId(v: string): boolean {
 }
 
 /** WebApp uchun rasm manzilini tayyorlaydi (to'g'ridan-to'g'ri yoki proxy). */
+/**
+ * Telegram sahifa havolalari — bular RASM EMAS, balki SPA sahifa.
+ * `<img src="https://t.me/nft/FinePen">` brauzerda BUZILGAN rasm
+ * ikonkasini ko'rsatadi (naturalWidth = 0). Shuning uchun ularni
+ * rasm sifatida qabul qilmaymiz.
+ *
+ * Eslatma: server tomondan bu sahifalardan rasmni yuklab bo'lmaydi —
+ * `t.me/nft/...` 302 bilan `telegram.org` ga qaytaradi, rasm esa
+ * faqat klientda (Mini App) chiziladi. Shuning uchun rasmni admin
+ * yuborishi kerak: `/admin → 🖼 Rasm qo'shish`.
+ */
+function isTelegramPageUrl(v: string): boolean {
+  return /^https?:\/\/(?:[a-z0-9-]+\.)*(?:t\.me|telegram\.me|telegram\.dog|nft\.telegram\.org|fragment\.com)(?:[/?#]|$)/i.test(
+    v,
+  );
+}
+
 function nftImageUrl(n: any): string {
   const raw = String(n?.image || '').trim();
   if (!raw) return '';
-  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^https?:\/\//i.test(raw)) {
+    // t.me/nft/... — sahifa, rasm emas
+    return isTelegramPageUrl(raw) ? '' : raw;
+  }
   if (isTelegramFileId(raw)) return `/api/nft-image/${encodeURIComponent(n.id)}`;
-  // t.me/nft/... kabi link — bu rasm EMAS, shuning uchun bo'sh qoldiramiz
-  // (WebApp placeholder ko'rsatadi).
   return '';
 }
 

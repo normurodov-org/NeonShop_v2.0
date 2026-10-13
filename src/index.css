@@ -19,6 +19,34 @@
   --my: 30vh;
   --ax: 0px;
   --ay: 0px;
+
+  /* Brend aksenti.
+     DIQQAT: bu o'zgaruvchilar OLDINDAN YO'Q EDI! `bg-[var(--accent)]`
+     fon bermaydi va `text-white` yorug' fonda OQ QOLIB KETADI
+     (ko'rinmaydi) — ilovada 6 joyda ishlatilardi.
+
+     Ikkita o'zgaruvchi kerak, chunki bir rang IKKITA fonda
+     WCAG AA dan o'tmaydi:
+       • --accent      → TUGMA FONI (ustida oq matn)
+       • --accent-text → MATN RANGI (karta ustida)
+
+     Barcha kontrastlar brauzerda o'lchilgan (WCAG 2.1):
+       yorug' rejim:  --accent oq matn ustida  7.10:1 (AAA)
+                      --accent-text kartada      6.64:1 (AA)
+       qorong'i:      --accent oq matn ustida  5.70:1 (AA)
+                      --accent-text kartada      8.96:1 (AAA) */
+  --accent: #6d28d9;
+  --accent-text: #6d28d9;
+}
+
+.light {
+  --accent: #6d28d9;       /* oq matn ustida 7.10:1 */
+  --accent-text: #6d28d9;  /* kartada 6.64:1 */
+}
+
+.dark {
+  --accent: #7c3aed;       /* oq matn ustida 5.70:1 */
+  --accent-text: #c4b5fd;  /* kartada 8.96:1 */
 }
 
 @layer base {

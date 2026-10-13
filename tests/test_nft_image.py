@@ -73,7 +73,8 @@ check("/[\\/\\s]/" in fn, "havola (t.me/nft/...) file_id DEGIL deb rad qilinadi"
 print()
 print("  nftImageUrl qoidalari:")
 fn2 = SRV[SRV.index("function nftImageUrl("):SRV.index("function nftPublicList(")]
-check("return raw;" in fn2, "http(s) -> to'g'ridan-to'g'ri")
+check("return isTelegramPageUrl(raw) ? '' : raw;" in fn2,
+      "http(s) -> to'g'ridan-to'g'ri (t.me sahifalari bundan tashqarida)")
 check("/api/nft-image/" in fn2, "file_id -> proxy yo'l")
 check("return '';" in fn2, "t.me linki -> bo'sh (placeholder ko'rsatiladi)")
 
@@ -84,8 +85,10 @@ print("=" * 68)
 check("const isImageUrl = " in VIEW, "isImageUrl() yordamchisi")
 check("v.startsWith('/')" in VIEW, "nisbiy yo'l (/api/nft-image/...) qabul qilinadi")
 check("/^https?:\\/\\//i.test(v)" in VIEW, "to'g'ridan-to'g'ri havolа ham")
-check("isImageUrl(n.image)" in VIEW, "kartada ishlatiladi")
-check("isImageUrl(sel.image)" in VIEW, "modalda ishlatiladi")
+# Endi rasm alohida NftImage komponentida — u ichida ishlaydi
+check("const NftImage" in VIEW, "NftImage komponenti")
+check(VIEW.count("<NftImage") >= 2, "kartada VA modalda ishlatiladi")
+check("isImageUrl(src)" in VIEW, "isImageUrl komponent ichida qo'llanadi")
 # eski xato qolmaganligini tekshiramiz
 check("/^https?:\\/\\//i.test(n.image)" not in VIEW,
       "eski `^https?://` tekshiruvi QOLMAGAN (proxy ni yashirardi)")

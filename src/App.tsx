@@ -27,6 +27,16 @@ export default function App() {
   });
   const isDark = theme === 'dark';
 
+  // Tema klassi faqat asosiy `<div>` da bo'lsa, `document.body` ga
+  // PORTAL qilingan modal (NftRentView) tema ranglarini OLMAYDI:
+  // u `.light`/`.dark` dan tashqarida qoladi va har doim qorong'i
+  // kabi chiziladi. Shu sabab biz ham body ga sinxronlaymiz.
+  useEffect(() => {
+    const b = document.body;
+    b.classList.remove('light', 'dark');
+    b.classList.add(theme);
+  }, [theme]);
+
   const [user, setUser] = useState<User | null>(null);
   const [settings, setSettings] = useState<StoreSettings | null>(null);
   const [contest, setContest] = useState<Contest | null>(null);
