@@ -2372,6 +2372,64 @@ async def cmd_cancel(message: Message, state: FSMContext, db_user: dict):
     await send_main_menu(message, db_user, "❌ Amal bekor qilindi.")
 
 
+@common_router.callback_query(F.data.startswith("topup_cancel"))
+async def cb_topup_cancel(call: CallbackQuery):
+    """To'lov so'rovini bekor qiladi.
+
+    MUHIM: bu tugma `cancel_inline_kb(f"topup_cancel:{id}")` orqali
+    yuborilardi, lekin HANDLER YO'Q edi — shuning uchun tugma
+    hech narsa qilmasdi (mijoz "Bekor qilish" bossa ham so'rov faol
+    qolardi). Endi ishlaydi.
+
+    Bekor qilinganda hech qanday pul olinmagan (mijoz hali
+    to'lov qilmagan), shuning uchun balansga hech narsa qaytarilmaydi.
+    """
+    tid = call.data.split(":", 1)[1] if ":" in call.data else ""
+    db.reload_if_changed()
+    t = db.data.get("topups", {}).get(tid)
+    if not t:
+        await call.answer("So'rov topilmadi", show_alert=True)
+        try:
+            await call.message.edit_text("❌ Bu so'rov topilmadi (balki allaqachon yopilgan).")
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    # Faqat hali kutilayotgan so'rovni bekor qilamiz
+    if t.get("status") != "pending":
+        label = {
+            "completed": "allaqachon to'ldirilgan",
+            "expired": "muddati tugagan",
+            "cancelled": "allaqachon bekor qilingan",
+        }.get(t.get("status"), t.get("status"))
+        await call.answer(f"So'rov {label}", show_alert=True)
+        try:
+            await call.message.edit_text(
+                f"ℹ️ Bu so'rov {label} — bekor qilish shart emas."
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return
+
+    t["status"] = "cancelled"
+    t["cancelled_at"] = now_iso()
+    db.save()
+    await call.answer("Bekor qilindi", show_alert=True)
+    try:
+        await call.message.edit_text(
+            "❌ <b>To'lov so'rovi bekor qilindi</b>\n\n"
+            "💰 Summa: <b>{amt} UZS</b>\n"
+            "🆔 <code>{tid}</code>\n\n"
+            "<i>Xavfsiz — kartadan to'lov qilinmagansiz, pul qaytarilmaydi.</i>\n\n"
+            "💳 Balans to'ldirish uchun /start → Balans to'ldirish".format(
+                amt=fmt(num(t.get("amount"))), tid=esc(str(tid)),
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    log.info("💳 To'lov so'rovi bekor qilindi: %s (%s UZS)",
+             tid, fmt(num(t.get("amount"))))
+
+
 @common_router.callback_query(F.data == "cancel")
 async def cb_cancel(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -4411,8 +4469,45 @@ def find_gift(gifts: list[Any], gift_key: str, stars: int) -> Optional[Any]:
     return None
 
 
+def expire_stale_topups() -> int:
+    """Muddati o'tgan so'rovlarni "expired" deb belgilaydi.
+
+    Nima uchun kerak: eski kodda muddatni faqat `on_humo_message`
+    (bank xabari kelganda) tekszirdi. Mijoz bankdan to'lamasa yoki
+    xato kiritsa, so'rov "pending" holatida ABADIY qolardi va mijozga
+    "Sizda faol so'rov bor" deb ko'rinib turardi — qolgan vaqt 0:00,
+    lekin bekor qilish tugmasi ishlamasdi.
+    """
+    now = now_ms()
+    n = 0
+    for t in db.data.get("topups", {}).values():
+        if t.get("status") != "pending":
+            continue
+        exp = to_ms(t.get("expires_at"), 0)
+        if exp and exp < now:
+            t["status"] = "expired"
+            t["expired_at"] = now_iso()
+            n += 1
+    if n:
+        db.save()
+        log.info("⏰ %d ta to'lov so'rovi muddati tugagani uchun yopildi", n)
+    return n
+
+
 def pending_topups() -> list[dict]:
-    return [t for t in db.data["topups"].values() if t["status"] == "pending"]
+    """Faol (kutilayotgan) to'lov so'rovlari.
+
+    DIQQAT: avval faqat `status == "pending"` tekshirilardi — muddati
+    o'tgan so'rovlar ham "faol" chiqardi (qolgan vaqt 0:00, bekor qilish
+    tugmasi ishlamaydi). Endi avval eskirganlarni tozalaymiz.
+    """
+    expire_stale_topups()
+    now = now_ms()
+    return [
+        t for t in db.data["topups"].values()
+        if t.get("status") == "pending"
+        and to_ms(t.get("expires_at"), now) > now
+    ]
 
 
 @router.message(F.text == BTN_GIFTS)

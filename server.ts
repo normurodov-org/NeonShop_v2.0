@@ -412,7 +412,7 @@ function getUser(req?: Request, defaultId = DEFAULT_USER_ID) {
 app.get('/api/me', async (req: Request, res: Response) => {
   const user = getUser(req);
   const pendingTopup = Array.from(store.topups.values()).find(
-    (t) => t.user_id === user.id && t.status === 'pending' && t.expires_at > Date.now()
+    (t) => t.user_id === user.id && t.status === 'pending' && !isExpired(t)
   );
 
   const userOrders = Array.from(store.orders.values())
@@ -497,6 +497,27 @@ function loadTopupSequence(): number {
   return max;
 }
 
+/**
+ * expires_at ni millisekundga keltiradi.
+ *
+ * Nima uchun kerak: eski versiyalarda bot.py `time.time()` (SEKUND)
+ * yozgan, server.ts esa `Date.now()` (MS) ishlatadi. Agar sekund qiymatni
+ * to'g'ridan-to'g'ri solishtirsak — so'rov DARHOL "expired" bo'lib
+ * qoladi (1.79e9 < 1.79e12), mijoz esa "eskirgan" xatosini oladi.
+ * 10^11 dan kichik qiymat = sekund deb hisoblanadi.
+ */
+function expiresMs(t: any): number {
+  const v = Number(t?.expires_at) || 0;
+  if (v <= 0) return 0;
+  return v < 1e11 ? v * 1000 : v;
+}
+
+/** So'rov muddati o'tganmi? */
+function isExpired(t: any): boolean {
+  const e = expiresMs(t);
+  return e > 0 && Date.now() > e;
+}
+
 app.post('/api/topup', (req: Request, res: Response) => {
   const user = getUser(req);
   const amount = Number(req.body.amount);
@@ -552,7 +573,7 @@ app.get('/api/topup/status', (req: Request, res: Response) => {
     return res.status(404).json({ ok: false, error: 'Top-up topilmadi.' });
   }
 
-  if (topup.status === 'pending' && Date.now() > topup.expires_at) {
+  if (topup.status === 'pending' && isExpired(topup)) {
     topup.status = 'expired';
     syncAndSaveDb();
   }
@@ -561,7 +582,7 @@ app.get('/api/topup/status', (req: Request, res: Response) => {
     ok: true,
     topup: {
       ...topup,
-      expires_in: Math.max(0, Math.floor((topup.expires_at - Date.now()) / 1000)),
+      expires_in: Math.max(0, Math.floor((expiresMs(topup) - Date.now()) / 1000)),
     },
     balance: user.balance,
   });
@@ -595,6 +616,16 @@ app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
       message: `✅ ${topup.amount.toLocaleString()} UZS balansga muvaffaqiyatli qo'shildi!`,
       topup,
       balance: user.balance,
+    });
+  }
+
+  if (topup.status === 'pending' && isExpired(topup)) {
+    topup.status = 'expired';
+    syncAndSaveDb();
+    return res.status(400).json({
+      ok: false,
+      error: "So'rov muddati tugagan. Qayta urinib ko'ring — yangi so'rov yarating.",
+      expired: true,
     });
   }
 
