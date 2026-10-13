@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, StoreSettings, Topup } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { CreditCard, Copy, Check, Clock, Plus, History, AlertCircle, RefreshCw, X } from 'lucide-react';
+import { tgHeaders } from '../../lib/tgAuth';
 
 interface TopupViewProps {
   user: User | null;
@@ -96,10 +97,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
     try {
       const res = await fetch('/api/topup', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-telegram-user-id': user?.id?.toString() || '',
-        },
+        headers: tgHeaders(),
         body: JSON.stringify({ amount }),
       });
       const data = await res.json();
@@ -122,10 +120,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
     try {
       const res = await fetch('/api/topup/cancel', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-telegram-user-id': user?.id?.toString() || '',
-        },
+        headers: tgHeaders(),
         body: JSON.stringify({ id: activeTopup.id }),
       });
       const data = await res.json();
@@ -145,10 +140,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
     try {
       const res = await fetch('/api/topup/simulate-pay', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-telegram-user-id': user?.id?.toString() || '',
-        },
+        headers: tgHeaders(),
         body: JSON.stringify({ id: activeTopup.id }),
       });
       const data = await res.json();
@@ -202,19 +194,38 @@ export const TopupView: React.FC<TopupViewProps> = ({
           </div>
 
           <div className={`p-4 rounded-[20px] space-y-2 ${isDark ? 'bg-black/30' : 'bg-white/60'} border border-white/10`}>
-            <div className="text-[11px] text-neutral-400 font-medium">To'lov summasi:</div>
-            <div className={`text-2xl font-bold font-mono tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-              {activeTopup.amount.toLocaleString()} <span className="text-xs font-normal opacity-70">UZS</span>
+            {/* 🔴 BU YERDA `amount_to_send` KO'RSATILADI, `amount` EMAS.
+                Har bir to'lovga ketma-ket raqam qo'shiladi (1000 -> 1001
+                -> 1002 ...) va bot aynan `amount_to_send` ni bank
+                xabaridan qidiradi. `amount` ko'rsatilsa, mijoz to'g'ri
+                summani yubormaydi va uning puli QOLIB KETADI.
+
+                Bot yaratgan to'lovlarda `amount_to_send` yo'q — u holda
+                `amount` ishlatiladi (bot o'z xabarida to'g'ri summani
+                ko'rsatadi). */}
+            <div className="text-[11px] text-neutral-400 font-medium">
+              Kartaga yuborish uchun ANIQ summa:
             </div>
+            <div className={`text-2xl font-bold font-mono tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+              {(activeTopup.amount_to_send ?? activeTopup.amount).toLocaleString()}{' '}
+              <span className="text-xs font-normal opacity-70">UZS</span>
+            </div>
+            {activeTopup.amount_to_send != null
+              && activeTopup.amount_to_send !== activeTopup.amount ? (
+              <div className="text-[10px] text-amber-400/90">
+                ⚠️ Aynan shu {activeTopup.amount_to_send.toLocaleString()} so'mni
+                yuboring — boshqa summa avtomatik topilmaydi.
+              </div>
+            ) : null}
 
             <div className="pt-2 border-t border-white/10 flex items-center justify-between">
               <div>
                 <div className="text-[10px] text-neutral-400">Karta raqami:</div>
                 <div className={`text-sm font-mono font-bold tracking-wider ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                  {activeTopup.card}
+                  {activeTopup.card || (isDark ? 'bot orqali' : '—')}
                 </div>
                 <div className="text-[10px] text-neutral-400 mt-0.5">
-                  {activeTopup.holder}
+                  {activeTopup.holder || ' '}
                 </div>
               </div>
               <button

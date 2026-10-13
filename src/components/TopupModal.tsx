@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Topup, StoreSettings } from '../types';
 import { X, Copy, Check, Clock, CreditCard, ShieldCheck, Zap, AlertCircle, RefreshCw } from 'lucide-react';
+import { telegramInitData } from '../lib/tgAuth';
 
 interface TopupModalProps {
   isOpen: boolean;
@@ -95,7 +96,7 @@ export const TopupModal: React.FC<TopupModalProps> = ({
     try {
       const res = await fetch('/api/topup/simulate-pay', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': telegramInitData() },
         body: JSON.stringify({ id: activeTopup.id }),
       });
       const data = await res.json();
@@ -120,7 +121,7 @@ export const TopupModal: React.FC<TopupModalProps> = ({
     try {
       await fetch('/api/topup/cancel', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': telegramInitData() },
         body: JSON.stringify({ id: activeTopup.id }),
       });
       onTopupCancelled();

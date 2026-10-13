@@ -300,6 +300,106 @@ export function syncAndSaveDb() {
 lastSynced = clone(currentSnapshot());
 migrateLegacyFakeStats();
 
+// =============================================================================
+// TELEGRAM IDENTIFIKATSIYASI — HMAC tekshiruvi
+// =============================================================================
+// 🔴 BU NIMA UCHUN KERAK?
+// Ilgari foydalanuvchi id'si `x-telegram-user-id` HEADERidan olinardi
+// va TELEGRAM TOMONidan HECH QANDAY TEKSHIRILMAGAN edi. Shu sabab:
+//   • header kelmasa  -> targetId = DEFAULT_USER_ID (admin!) bo'lib qolardi
+//   • `?uid=` URL orqali -> istalgan id yuborish mumkin edi
+// Ya'ni:
+//   1) Telegram DAN tashqarida ochilgan WebApp -> ADMIN sifatida kiradi
+//      (profil "odilbek" ko'rinadi, balans 357 813 UZS, AdminPanel ochiq)
+//   2) H anyone `?uid=8307046273` deb yozib, ADMINNING BALANSINI
+//      ishlatib yubora olardi
+//   3) `POST /api/admin/adjust-balance` authsiz -> cheksiz UZS yaratish
+//
+// YECHIM: Telegram WebApp `initData` SIGNED satrini yuboradi. Uning
+// HMAC-SHA256 imzosi BOT_TOKEN kaliti bilan tekshiriladi (Telegramning
+// o'z rasmiy usuli). Imzo mos kelmasa — so'rov RAD qilinadi.
+//
+//  data_check_string = "auth_date=<t>\nquery_id=<q>\nuser=<json>"
+//  secret_key         = HMAC_SHA256(bot_token, "WebAppData")
+//  hash               = HMAC_SHA256(data_check_string, secret_key)  <- initData'dagi hash
+
+import crypto from 'crypto';
+
+/** `initData` satridan maydonlarni ajratadi (URL-decode qilib). */
+function parseInitData(initData: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of initData.split('&')) {
+    const i = pair.indexOf('=');
+    if (i < 0) continue;
+    try {
+      out[pair.slice(0, i)] = decodeURIComponent(pair.slice(i + 1).replace(/\+/g, ' '));
+    } catch {
+      out[pair.slice(0, i)] = pair.slice(i + 1);
+    }
+  }
+  return out;
+}
+
+/**
+ * `initData` imzosini BOT_TOKEN bilan tekshiradi.
+ *
+ * Qaytaradi: `{ ok: true, user: {...} }` yoki `{ ok: false, why: string }`
+ */
+export function verifyTelegramInitData(
+  initData: string
+): { ok: boolean; user?: any; why?: string } {
+  if (!initData || !initData.trim()) return { ok: false, why: 'initData yoq' };
+  const token = (process.env.BOT_TOKEN || '').trim();
+  // Bot token ENV yo'q bo'lsa tekshiruvni O'CHIRMAYMIZMIZ — aks holda
+  // hamma narsa yotib qoladi. Balki "ruxsat yoq" deb rad qilamiz
+  // (fail-closed), chunki ochiq qoldirish xavfsiz emas.
+  if (!token) return { ok: false, why: 'BOT_TOKEN ENV yoq' };
+
+  const params = parseInitData(initData);
+  const hash = params.hash;
+  if (!hash) return { ok: false, why: 'hash yoq' };
+
+  // hash ni chiqarib, qolganini "key=value" tartibida (bo'sh joy
+  // bo'yicha saralangan) data_check_string ga yig'amiz
+  const pairs: string[] = [];
+  for (const k of Object.keys(params).sort()) {
+    if (k === 'hash') continue;
+    pairs.push(`${k}=${params[k]}`);
+  }
+  const dataCheckString = pairs.join('\n');
+
+  const secretKey = crypto
+    .createHmac('sha256', 'WebAppData')
+    .update(token)
+    .digest();
+  const expected = crypto
+    .createHmac('sha256', secretKey)
+    .update(dataCheckString)
+    .digest('hex');
+
+  // Uzunlik bo'yicha taqqoslash (timing-safe)
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(hash, 'utf8');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, why: 'imzo mos emas' };
+  }
+
+  // auth_date juda eshimi bo'lsa — rad qilamiz (eskirgan link)
+  const authDate = Number(params.auth_date || 0);
+  const maxAge = Number(process.env.WEBAPP_AUTH_MAX_AGE || 86400); // 1 kun
+  if (authDate && Date.now() / 1000 - authDate > maxAge) {
+    return { ok: false, why: 'initData eskirgan' };
+  }
+
+  try {
+    const user = JSON.parse(params.user || '{}');
+    if (!user.id) return { ok: false, why: 'user.id yoq' };
+    return { ok: true, user };
+  } catch {
+    return { ok: false, why: 'user JSON buzilgan' };
+  }
+}
+
 const DEFAULT_USER_ID = 8307046273;
 
 /**
@@ -383,6 +483,53 @@ function contestIsActive(c: any): boolean {
   return true;
 }
 
+/**
+ * 🔴 SO'ROVNING TEGISHLILIGINI ANIQLAYDI.
+ *
+ * Tartib:
+ *   1) `X-Telegram-Init-Data` header — IMZOLI, `verifyTelegramInitData()`
+ *      bilan tekshiriladi. Bu — YAGONA ishonchli manba.
+ *   2) `x-telegram-user-id` — FAQAT `ALLOW_UNSIGNED_USER=1` bo'lsa
+ *      (mahalliy ishlab chiqish uchun). Production'da YO'Q.
+ *
+ * 🔴 ESKI XULOSASIZ: `if (header yo'q) -> DEFAULT_USER_ID`. Bu
+ * Telegram dan tashqarida ochilgan har bir WebApp'ni ADMIN qilib
+ * qo'yardi (profil, 357 813 UZS balans, AdminPanel). Endi — 401.
+ */
+function requireIdentity(req: Request): { user: any } | null {
+  const initData = (req.headers['x-telegram-init-data'] as string) || '';
+  if (initData) {
+    const v = verifyTelegramInitData(initData);
+    if (v.ok && v.user) return { user: v.user };
+    return null;   // imzo mos emas -> rad
+  }
+  if (String(process.env.ALLOW_UNSIGNED_USER || '') === '1') {
+    const raw = (req.headers['x-telegram-user-id'] as string) || '';
+    const id = parseInt(raw, 10);
+    if (!isNaN(id) && id > 0) {
+      return {
+        user: {
+          id,
+          username: (req.headers['x-telegram-username'] as string || '').replace('@', ''),
+          first_name: (req.headers['x-telegram-first-name'] as string) || '',
+          photo_url: (req.headers['x-telegram-photo-url'] as string) || undefined,
+        },
+      };
+    }
+  }
+  return null;
+}
+
+function requireAdmin(req: Request): boolean {
+  const id = requireIdentity(req)?.user?.id;
+  return !!id && id === Number(store.settings.admin_id || DEFAULT_USER_ID);
+}
+
+/** 401 javobini beradi (frontend "Telegram orqali kiring" ko'rsatadi). */
+function unauthorized(res: Response, why = 'Telegram orqali kiring') {
+  return res.status(401).json({ ok: false, need_telegram: true, error: why });
+}
+
 function getUser(req?: Request, defaultId = DEFAULT_USER_ID) {
   // Always refresh latest state from /data/users_db.json so data matches bot 1:1
   try {
@@ -406,48 +553,43 @@ function getUser(req?: Request, defaultId = DEFAULT_USER_ID) {
     console.error('Error refreshing db in getUser:', e);
   }
 
+  // 🔴 IDENTITET — faqat tekshirilgan manbadan
   let targetId = defaultId;
   let username = '';
   let firstName = '';
   let photoUrl: string | undefined;
 
   if (req) {
-    const headerId = req.headers['x-telegram-user-id'] as string;
-    const queryId = (req.query?.tg_user_id || req.query?.uid) as string;
-    const bodyId = (req.body?.tg_user_id || req.body?.uid) as string;
-    const headerUsername = req.headers['x-telegram-username'] as string;
-    const queryUsername = (req.query?.tg_username || req.query?.un) as string;
-    const bodyUsername = (req.body?.tg_username || req.body?.un) as string;
-    const headerFirst = req.headers['x-telegram-first-name'] as string;
-    const queryFirst = (req.query?.first_name || req.query?.fn) as string;
-    const bodyFirst = (req.body?.first_name || req.body?.fn) as string;
-    photoUrl = (req.query?.photo_url || req.headers['x-telegram-photo-url'] || req.body?.photo_url) as string;
-
-    const parsedId = parseInt(headerId || queryId || bodyId, 10);
-    if (!isNaN(parsedId) && parsedId > 0) {
-      targetId = parsedId;
-    }
-    if (headerUsername || queryUsername || bodyUsername) {
-      username = (headerUsername || queryUsername || bodyUsername).replace('@', '');
-    }
-    if (headerFirst || queryFirst || bodyFirst) {
-      firstName = headerFirst || queryFirst || bodyFirst;
+    const ident = requireIdentity(req);
+    if (ident?.user) {
+      const u = ident.user;
+      targetId = Number(u.id);
+      username = String(u.username || '').replace('@', '');
+      firstName = String(u.first_name || '');
+      photoUrl = u.photo_url ? String(u.photo_url) : undefined;
+    } else if (String(process.env.ALLOW_UNSIGNED_USER || '') !== '1') {
+      // 🔴 IMZO YO'Q — endi ADMIN emas, balki null. Endpoint'lar
+      // `getUser(req)` natijasini tekshirib 401 qaytaradi.
+      return null as any;
     }
   }
-
-  // If defaulting to admin and no username set yet
-  if (targetId === DEFAULT_USER_ID && !username) {
-    username = 'normuzb';
-  }
-
   let user = store.users.get(targetId);
   if (!user) {
     user = {
       id: targetId,
-      username: username || 'user_' + targetId.toString().slice(-4),
+      // 🔴 ESKI: `'user_' + id.slice(-4)` — bu SUN'IY username edi.
+      // "O'zimga" bosilganda shu yuborilardi, server har qanday
+      // bo'sh bo'lmagan string'ni qabul qilib UZS ni yechardi, so'ng
+      // Fragment ishlamay qolardi: pul ketgan, hech narsa kelmagan.
+      // Endi username yo'q bo'lsa BO'SH qoladi — frontend bu holatda
+      // "O'zimga" tugmasini o'chiradi va xabar ko'rsatadi.
+      username: username || '',
       first_name: firstName || undefined,
       photo_url: photoUrl || (targetId === DEFAULT_USER_ID ? '/logo.svg' : undefined),
-      balance: targetId === DEFAULT_USER_ID ? 357813 : 0,
+      // 🔴 ESKI: `targetId === DEFAULT_USER_ID ? 357813 : 0` — ya'ni
+      // admin ro'yxatga YO'YOTSA uni soxta qilib 357 813 UZS BERARDI.
+      // Endi har qanday yangi hisob 0 dan boshlanadi.
+      balance: 0,
       total_spent: 0,
       referrals_count: 0,
       ref_stars: 0,
@@ -483,6 +625,7 @@ function getUser(req?: Request, defaultId = DEFAULT_USER_ID) {
 // REST API Endpoints
 app.get('/api/me', async (req: Request, res: Response) => {
   const user = getUser(req);
+  if (!user) return unauthorized(res);
   const pendingTopup = Array.from(store.topups.values()).find(
     (t) => t.user_id === user.id && t.status === 'pending' && !isExpired(t)
   );
@@ -750,6 +893,7 @@ app.get('/api/nft-image/:id', async (req: Request, res: Response) => {
 
 app.post('/api/topup', (req: Request, res: Response) => {
   const user = getUser(req);
+  if (!user) return unauthorized(res);
   const amount = Number(req.body.amount);
 
   if (!amount || amount < 1000 || amount > 10000000) {
@@ -797,10 +941,16 @@ app.post('/api/topup', (req: Request, res: Response) => {
 app.get('/api/topup/status', (req: Request, res: Response) => {
   const id = req.query.id as string;
   const user = getUser(req);
+  if (!user) return unauthorized(res);
   const topup = store.topups.get(id);
 
   if (!topup) {
     return res.status(404).json({ ok: false, error: 'Top-up topilmadi.' });
+  }
+  // 🔴 EGALIK: boshqa mijozning to'lovini ko'rish/o'chirish mumkin
+  // emas edi (kartasi va summasi ochiq chiqardi).
+  if (Number(topup.user_id) !== Number(user.id)) {
+    return res.status(403).json({ ok: false, error: "Bu to'lov sizniki emas." });
   }
 
   if (topup.status === 'pending' && isExpired(topup)) {
@@ -819,13 +969,22 @@ app.get('/api/topup/status', (req: Request, res: Response) => {
 });
 
 app.post('/api/topup/cancel', (req: Request, res: Response) => {
+  // 🔐 Bu MIJOZ tugmasi ("Bekor qilish"), admin emas. Egalik tekshiriladi.
+  const user = getUser(req);
+  if (!user) return unauthorized(res);
   const id = req.body.id;
   const topup = store.topups.get(id);
-  if (topup && topup.status === 'pending') {
+  // 🔴 EGALIK: boshqaning to'lovini bekor qilish mumkin emas edi
+  if (!topup) return res.status(404).json({ ok: false, error: 'Top-up topilmadi.' });
+  if (Number(topup.user_id) !== Number(user.id)) {
+    return res.status(403).json({ ok: false, error: 'Bu to\'lov sizniki emas.' });
+  }
+  if (topup.status === 'pending') {
     topup.status = 'cancelled';
+    topup.cancelled_at = new Date().toISOString();
     syncAndSaveDb();
   }
-  res.json({ ok: true, topup });
+  res.json({ ok: true, topup, balance: Number(user.balance) || 0 });
 });
 
 // Bank xabarlari (humocardbot userbot orqali) avtomatik tasdiqlaydi.
@@ -834,10 +993,15 @@ app.post('/api/topup/cancel', (req: Request, res: Response) => {
 app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
   const id = req.body.id;
   const user = getUser(req);
+  if (!user) return unauthorized(res);
   const topup = store.topups.get(id);
 
   if (!topup) {
     return res.status(404).json({ ok: false, error: "To'lov so'rovi topilmadi" });
+  }
+  // 🔴 EGALIK
+  if (Number(topup.user_id) !== Number(user.id)) {
+    return res.status(403).json({ ok: false, error: "Bu to'lov sizniki emas." });
   }
 
   if (topup.status === 'completed') {
@@ -901,6 +1065,7 @@ app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
 
 app.post('/api/order', async (req: Request, res: Response) => {
   const user = getUser(req);
+  if (!user) return unauthorized(res);
   const { kind, amount, months, gift, username, hide_my_name } = req.body;
 
   let price = 0;
@@ -919,6 +1084,28 @@ app.post('/api/order', async (req: Request, res: Response) => {
 
   if (!recipient) {
     return res.status(400).json({ ok: false, error: "Qabul qiluvchi Telegram username'ni kiriting." });
+  }
+
+  // 🔴 SUN'IY USERNAME RAD QILINADI.
+  // Eski kod yangi (serverda yo'q) foydalanuvchiga `user_XXXX`
+  // username yozardi. "O'zimga" bosilganda shu yuborilardi, server
+  // har qanday bo'sh bo'lmagan string'ni qabul qilib UZS ni yechardi,
+  // so'ng Fragment ishlamay qolardi -> pul ketgan, hech narsa kelmagan.
+  if (/^user_\d+$/i.test(recipient)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Telegram akkauntingizda username yo\'q. Botga /start yozib, '
+        + 'username o\'rnatasiz — keyin "O\'zimga" ishlaydi.',
+    });
+  }
+  // 🔴 Faqat raqam (Telegram ID) qabul qilinmaydi — bu Stars yuborish
+  // uchun noto'g'ri ma'lumot va Fragment ishlamaydi.
+  if (/^\d+$/.test(recipient)) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Qabul qiluvchi Telegram username (masalan @bobur) bo\'lishi kerak, '
+        + 'ID emas.',
+    });
   }
 
   if (kind === 'stars') {
@@ -1035,6 +1222,36 @@ app.post('/api/order', async (req: Request, res: Response) => {
         cashback,
       }),
     ).catch(() => undefined);
+  } else if (kind === 'premium') {
+    // 🔴 ILGARI: `orderStatus` 'completed' bo'lib qolardi va mijozga
+    // "yetkazildi" degan xabar yuborilardi — lekin Telegram Premium
+    // berish AVTOMATIK emas, admin qo'lda beradi. Natijada mijoz
+    // pulini to'lab, HECH NARSA olmay qolardi va xato xabar olardi.
+    // Endi: 'processing' + admin darhol xabar beriladi.
+    orderStatus = 'processing';
+    const pm = Number(months);
+    const pmMode = req.body.mode === 'login' ? 'login' : 'nologin';
+    orderMessage =
+      `\u23f3 <b>Buyurtmangiz qabul qilindi!</b>\n\n` +
+      `\ud83d\udc8e Premium: <b>${title}</b>\n` +
+      `\ud83d\udc64 Kimga: <b>@${recipient}</b>\n` +
+      `\ud83d\udcb3 Yechildi: <b>${price.toLocaleString()} UZS</b>\n` +
+      `\ud83c\udd94 <code>${orderId}</code>\n\n` +
+      `\ud83d\udce6 Premium <b>bir necha soat</b> ichida beriladi.\n` +
+      `\u23f3 Telegram hisobingizga xabar keladi. Sabr qiling.`;
+
+    sendTelegramMessage(
+      store.settings.admin_id || 8307046273,
+      `\ud83d\udc8e <b>Yangi PREMIUM buyurtmasi!</b>\n\n` +
+        `\ud83d\udcc4 Buyurtma: <code>#${orderId}</code>\n` +
+        `\ud83d\udc64 Mijoz: @${user.username} (ID: <code>${user.id}</code>)\n` +
+        `\ud83c\udfaf Qabul qiluvchi: <b>@${recipient}</b>\n` +
+        `\ud83c\udf20 Rejim: <b>${pmMode === 'login' ? "Kirib (login)" : 'Sovg\'a (nologin)'}</b>, ` +
+        `<b>${pm} oy</b>\n` +
+        `\ud83d\udcb3 Yechilgan: <b>${price.toLocaleString()} UZS</b>\n\n` +
+        `\ud83e\uddea <i>Berib bo\'lgach: /admin \u2192 \ud83d\udc8e Premium buyurtmalari \u2192 ` +
+        `\u2705 Berildi</i>`
+    );
   } else if (kind === 'gift') {
     // Gift userbot orqali ASINCHRON yuboriladi — darhol "yetkazildi" degani
     // NOTO'G'RI bo'lardi (mijoz pulini to'lab, hech narsa olmay qolardi).
@@ -1071,6 +1288,11 @@ app.post('/api/order', async (req: Request, res: Response) => {
     amount: amount || months || 1,
     stars: kind === 'stars' ? Number(amount) : undefined,
     gift: kind === 'gift' ? gift : undefined,
+    // 🔴 Premium: bot qancha oy va qanday rejim (Sovg'a / Kirib) berishini
+    // bilishi SHART. Ilgari saqlanmagandi — buyurtma yaratilgan va
+    // "yetkazildi" deb yozilgan, lekin hech kim qilmaydigan ish qolardi.
+    months: kind === 'premium' ? Number(months) : undefined,
+    mode: kind === 'premium' ? (req.body.mode || 'nologin') : undefined,
     // Sovg'a maxfiyligi.
     // UI "🕶️ Anonim" tanlangan bo'lsa true. Semantika:
     //   true  -> Telegram hide_my_name=True  -> profil YASHIRILADI (anonim)
@@ -1310,6 +1532,7 @@ app.get('/api/nfts/quote', (req: Request, res: Response) => {
   }
   const q = nftQuote(Number(item.daily) || 0, days);
   const u = getUser(req);
+  if (!u) return unauthorized(res);
   res.json({ ok: true, quote: q, balance: Number(u.balance) || 0, item: {
     id: item.id, title: item.title, number: item.number ?? null,
     image: nftImageUrl(item), link: item.link || '',
@@ -1347,6 +1570,7 @@ const ADMIN_HANDLE = (
  */
 app.post('/api/nfts/rent', async (req: Request, res: Response) => {
   const user = getUser(req);
+  if (!user) return unauthorized(res);
   refreshNftsFromDisk();
   const id = String(req.body?.id || '');
   const days = Number(req.body?.days) || NFT_MIN_DAYS;
@@ -1542,7 +1766,11 @@ app.get('/api/rate', async (_req: Request, res: Response) => {
 });
 
 // Dynamic Real Ranking from actual database users & completed orders
-app.get('/api/ranking', (req: Request, res: Response) => {  const currentUser = getUser(req);
+app.get('/api/ranking', (req: Request, res: Response) => {
+  // 🔴 `getUser()` imzo yo'q bo'lganda `null` qaytaradi.
+  // Reyting ommaviy ma'lumot, shuning uchun 401 emas — anonim
+  // foydalanuvchi ham ko'ra oladi, faqat "o'zing" belgisi yo'q.
+  const currentUser = getUser(req);
   const period = (req.query.period as string) || 'all';
   const now = Date.now();
   const cutoffMs =
@@ -1594,17 +1822,18 @@ app.get('/api/ranking', (req: Request, res: Response) => {  const currentUser = 
     photo_url: item.user.photo_url || '',
     orders: item.ordersCount || 1,
     amount: item.totalSpent,
-    isMe: item.user.id === currentUser.id,
+    isMe: !!currentUser && item.user.id === currentUser.id,
   }));
 
   const myIndex = leaders.findIndex((l) => l.isMe);
-  const myRank = myIndex !== -1 ? myIndex + 1 : (currentUser.total_spent > 0 ? leaders.length + 1 : null);
+  const allTimeSpent = Number(currentUser?.total_spent) || 0;
   const mySpent = cutoffMs
     ? allOrders
-        .filter((o) => o.user_id === currentUser.id)
+        .filter((o) => currentUser && o.user_id === currentUser.id)
         .reduce((sum, o) => sum + orderPrice(o), 0)
-    : Number(currentUser.total_spent) || 0;
-  const myOrders = allOrders.filter((o) => o.user_id === currentUser.id).length;
+    : allTimeSpent;
+  const myRank = myIndex !== -1 ? myIndex + 1 : (mySpent > 0 ? leaders.length + 1 : null);
+  const myOrders = currentUser ? allOrders.filter((o) => o.user_id === currentUser.id).length : 0;
 
   res.json({
     ok: true,
@@ -1712,10 +1941,11 @@ app.get('/api/resolve-user', async (req: Request, res: Response) => {
 
 // Admin update wallet USDT balance
 app.post('/api/admin/wallet-balance', (req: Request, res: Response) => {
-  const user = getUser(req);
-  if (user.id !== (store.settings.admin_id || 8307046273)) {
-    return res.status(403).json({ ok: false, error: 'Ruxsat berilmagan' });
-  }
+  // 🔐 Unified `requireAdmin()` ga o'tkazildi. Avval `user.id !== admin_id`
+  // deb qo'lda tekshirilardi — natija to'g'ri edi, lekin boshqa
+  // endpoint'lardan farqli ko'rinishi keyinchalik auditda
+  // "guard'siz" deb o'ngayotgan (va shunday).
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
 
   const { balance, star_usdt_rate, wallet_address } = req.body;
   if (balance !== undefined && !isNaN(Number(balance))) {
@@ -1935,11 +2165,16 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 });
 
 // Konkursni boshqarish (admin panel uchun)
-app.get('/api/admin/contest', (_req: Request, res: Response) => {
+app.get('/api/admin/contest', (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — faqat ADMIN. (Guard avval `res.json` dan KEYIN
+  // turgan edi — o'lik kod, hech qachon ishlamagan.)
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   res.json({ ok: true, contest: store.contest });
 });
 
 app.post('/api/admin/contest', (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   getUser(req); // bazani diskdan yangilash
   const { text, prize_stars, winners, min, days, active } = req.body || {};
 
@@ -1972,6 +2207,7 @@ app.post('/api/admin/contest', (req: Request, res: Response) => {
 
 app.post('/api/contest/join', (req: Request, res: Response) => {
   const user = getUser(req);
+  if (!user) return unauthorized(res);
 
   // Konkurs faol emas — hech kim qatnasha olmaydi
   const isActive = Boolean(store.contest.active) && (store.contest.prize_stars || 0) > 0;
@@ -2002,6 +2238,7 @@ app.post('/api/contest/join', (req: Request, res: Response) => {
 
 app.post('/api/referral/withdraw', (req: Request, res: Response) => {
   const user = getUser(req);
+  if (!user) return unauthorized(res);
   if (user.ref_stars < 50) {
     return res.status(400).json({
       ok: false,
@@ -2044,6 +2281,8 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
 });
 
 app.get('/api/admin/data', (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   const orders = Array.from(store.orders.values()).sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
@@ -2142,6 +2381,8 @@ function realStats() {
 }
 
 app.post('/api/admin/toggle-bot', (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   getUser(req); // bazani diskdan yangilash
   store.settings.bot_active = !store.settings.bot_active;
   syncAndSaveDb();
@@ -2149,6 +2390,8 @@ app.post('/api/admin/toggle-bot', (req: Request, res: Response) => {
 });
 
 app.post('/api/admin/adjust-balance', (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   getUser(req); // MUHIM: foydalanuvchini diskdan yangilaymiz, eskirgan ma'lumot bilan
   const { userId, amount } = req.body;
   const user = store.users.get(Number(userId));
@@ -2162,8 +2405,11 @@ app.post('/api/admin/adjust-balance', (req: Request, res: Response) => {
 
 // Interactive Telegram Bot chat simulator handler
 app.post('/api/bot/chat', (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   const { message, action } = req.body;
   const user = getUser(req);
+  if (!user) return unauthorized(res);
   const text = (message || action || '').trim();
 
   let botReply = '';
@@ -2351,16 +2597,22 @@ app.post('/api/bot/chat', (req: Request, res: Response) => {
 
 // Live Telegram Bot Connection Endpoints
 app.get('/api/bot/status', (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   res.json({ ok: true, ...getBotStatus() });
 });
 
 app.post('/api/bot/start', async (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   const { token, webappUrl } = req.body;
   const result = await startTelegramBot(token, webappUrl);
   res.json(result);
 });
 
 app.post('/api/bot/stop', async (req: Request, res: Response) => {
+  // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.
+  if (!requireAdmin(req)) return unauthorized(res, 'Faqat admin');
   await stopTelegramBot();
   res.json({ ok: true, message: "Telegram bot to'xtatildi" });
 });

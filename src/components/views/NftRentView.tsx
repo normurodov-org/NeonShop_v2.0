@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../Modal';
 import { Boxes, Gift, Heart, ChevronDown, SlidersHorizontal, X, Minus, Plus } from 'lucide-react';
+import { tgHeaders, tgHeadersGet } from '../../lib/tgAuth';
 
 interface NftItem {
   id: string;
@@ -164,7 +165,7 @@ const NftImage: React.FC<{
     try {
       const r = await fetch(`/api/nfts/refresh-image/${encodeURIComponent(nftId)}`, {
         method: 'POST',
-        headers: { 'x-telegram-user-id': userId?.toString() || '' },
+        headers: tgHeadersGet(),
       });
       const j = await r.json();
       if (j?.ok && j.image && j.image !== src) {
@@ -341,7 +342,7 @@ export const NftRentView: React.FC<NftProps> = ({
   const load = async () => {
     try {
       const r = await fetch('/api/nfts', {
-        headers: { 'x-telegram-user-id': userId?.toString() || '' },
+        headers: tgHeadersGet(),
       });
       const d = await r.json();
       if (d.ok) {
@@ -372,7 +373,7 @@ export const NftRentView: React.FC<NftProps> = ({
     setQLoading(true);
     try {
       const r = await fetch(`/api/nfts/quote?id=${encodeURIComponent(item.id)}&days=${d}`, {
-        headers: { 'x-telegram-user-id': userId?.toString() || '' },
+        headers: tgHeadersGet(),
       });
       const j = await r.json();
       if (j.ok) {
@@ -414,10 +415,7 @@ export const NftRentView: React.FC<NftProps> = ({
     try {
       const r = await fetch('/api/nfts/rent', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-telegram-user-id': userId?.toString() || '',
-        },
+        headers: tgHeaders(),
         body: JSON.stringify({ id: sel.id, days: quote.days }),
       });
       const j = await r.json();

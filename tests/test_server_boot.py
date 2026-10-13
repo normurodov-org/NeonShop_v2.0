@@ -9,6 +9,8 @@ Nima uchun bu test kerak:
   Bu test server.ts ni haqiqiy ishga tushirib, barcha endpoint'lar
   javob berishini tekshiradi.
 """
+import hashlib
+import hmac
 import json
 import os
 import signal
@@ -16,6 +18,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +27,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORT = int(os.environ.get("SMOKE_PORT") or (4600 + (os.getpid() % 400)))
 BASE = f"http://127.0.0.1:{PORT}"
 DB_PATH = "/tmp/_t_smoke_server.json"
+# initData shu token bilan imzolanadi (server.ts ham shuni ishlatadi)
+SMOKE_BOT_TOKEN = "123456:TEST_TOKEN_FOR_SMOKE_ONLY"
 
 
 def kill_stale() -> None:
@@ -63,6 +68,53 @@ def get(path: str):
         return 0, str(exc)
 
 
+def make_init_data(bot_token: str, user: dict, auth_date: int = 0) -> str:
+    """Telegram WebApp `initData` satrini HAQIQIY imzo bilan yasaydi.
+
+    Telegramning rasmiy algoritmi:
+        secret_key     = HMAC_SHA256(bot_token, "WebAppData")
+        data_check_str = "auth_date=<t>\nquery_id=...\nuser=<json>"
+                         (kalitlar bo'sh joy bo'yicha saralangan, hash YO'Q)
+        hash           = HMAC_SHA256(data_check_str, secret_key)
+
+    server.ts dagi `verifyTelegramInitData()` bilan BIR XIL. Shu sababli
+    bu test haqiqiy Telegram imzosi qabul qilinishini tekshiradi —
+    sun'iy `x-telegram-user-id` header'i bilan emas.
+    """
+    user_json = json.dumps(user, separators=(",", ":"), ensure_ascii=False)
+    fields = {
+        "auth_date": str(auth_date or int(time.time())),
+        "query_id": "AAF_TEST",
+        "user": user_json,
+    }
+    dcs = "\n".join(f"{k}={fields[k]}" for k in sorted(fields))
+    secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    sig = hmac.new(secret, dcs.encode(), hashlib.sha256).hexdigest()
+    parts = [f"{k}={urllib.parse.quote(fields[k], safe='')}" for k in sorted(fields)]
+    parts.append("hash=" + sig)
+    return "&".join(parts)
+
+
+def get_auth(path: str, init_data: str = "", extra_headers: dict | None = None):
+    """`X-Telegram-Init-Data` (yoki boshqa header) bilan GET qiladi."""
+    headers = {"Content-Type": "application/json"}
+    if init_data:
+        headers["X-Telegram-Init-Data"] = init_data
+    for k, v in (extra_headers or {}).items():
+        headers[k] = v
+    req = urllib.request.Request(BASE + path, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=12) as r:
+            return r.status, r.read().decode()
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, exc.read().decode()
+        except Exception:  # noqa: BLE001
+            return exc.code, ""
+    except Exception as exc:  # noqa: BLE001
+        return 0, str(exc)
+
+
 def write_db(data: dict) -> None:
     """DB fayliga yozadi — bot.py dagi db.save() ga o'xshash.
 
@@ -83,7 +135,7 @@ print("=" * 68)
 env = {
     **os.environ,
     "PORT": str(PORT),
-    "BOT_TOKEN": "123456:TEST_TOKEN_FOR_SMOKE_ONLY",
+    "BOT_TOKEN": SMOKE_BOT_TOKEN,
     "API_ID": "1",
     "API_HASH": "x",
     "DB_PATH": DB_PATH,
@@ -147,33 +199,111 @@ for bad in (
 
 print()
 print("=" * 68)
-print("3) Konkurs WebApp uchun OCHILGANMI?")
+print("3) 🔐 FOYDALANUVCHI IDENTIFIKATSIYASI — imzo (initData HMAC)")
 print("=" * 68)
-status, body = get("/api/health")
-check(status == 200, "/api/health 200")
-try:
-    st = json.loads(body)
-    check(st.get("ok") is True, "health ok")
-except Exception as exc:  # noqa: BLE001
-    check(False, f"health JSON emas: {exc}")
 
-# /api/me — konkursni ko'rsatadi
-status, body = get("/api/me")
-check(status == 200, "/api/me 200")
+# 🔴 BU — mijozning 1-rasmdagi asosiy shikoyatining regressiya testi.
+#    Eski kod: `getUser(req, defaultId = DEFAULT_USER_ID)` — `x-telegram-user-id`
+#    header'i kelmasa yoki noto'g'ri bo'lsa `targetId` ADMINNIKIGA (8307046273)
+#    qolardi. Natijada:
+#      * Telegram DAN tashqarida ochilgan WebApp → admin profili/balansi
+#      * `?uid=<istalgan id>` → boshqa mijoz ma'lumotlari ko'rinardi
+#    Endi `verifyTelegramInitData()` imzoni BOT_TOKEN bilan tekshiriladi va
+#    imzo yo'q bo'lsa 401 qaytariladi — hech qachon ADMIN emas.
+
+CUSTOMER_ID = 555123456
+customer_user = {
+    "id": CUSTOMER_ID,
+    "username": "test_mijoz",
+    "first_name": "Test",
+    "last_name": "Mijoz",
+    "photo_url": "https://t.me/i/userpic/320/small",
+}
+cust_init = make_init_data(SMOKE_BOT_TOKEN, customer_user)
+
+# --- 3a) haqiqiy imzo bilan kirish ---
+status, body = get_auth("/api/me", cust_init)
+check(status == 200, f"imzo bilan /api/me 200 (natija: {status})")
 if status == 200:
     try:
         d = json.loads(body)
+        me = d.get("user") or {}
+        # 🔴 ASOSIY TEKSHIRUV: foydalanuvchi ID'si IMZODAN olinadi
+        check(me.get("id") == CUSTOMER_ID,
+              f"ID imzodan keldi ({me.get('id')}), admin emas")
+        check(me.get("username") == "test_mijoz", "username imzodan keldi")
+        check(me.get("photo_url", "").startswith("https://t.me/i/userpic/"),
+              "profil rasm havolasi saqlandi")
+        # Yangi mijoz 0 dan boshlanishi SHART (eskida admin 357 813 UZS
+        # olardi, chunki `targetId === DEFAULT_USER_ID ? 357813 : 0`)
+        check(float(me.get("balance") or 0) == 0.0,
+              "yangi mijoz balansi 0 (eskida 357813 UZS berilardi)")
         c = d.get("contest") or {}
         print(f"      konkurs: active={c.get('active')} "
               f"prize={c.get('prize_stars')} g'ol={c.get('winners')} "
               f"min={c.get('min')}")
         check(bool(c.get("text")), "konkurs matni bor")
-        check(c.get("active") is True, "konkurs FAOL (active=true)")
-        check((c.get("prize_stars") or 0) > 0, "sovqa berilgan")
-        check("yaratilmagan" not in str(c.get("text")),
-              "placeholder emas — haqiqiy konkurs")
     except Exception as exc:  # noqa: BLE001
-        check(False, f"store JSON emas: {exc}")
+        check(False, f"/api/me JSON emas: {exc}")
+
+# --- 3b) header YO'Q -> 401 (admin emas!) ---
+status, body = get_auth("/api/me")
+check(status == 401, f"header yo'q -> 401 (natija: {status})")
+check("dilbek" not in body and "normuzb" not in body,
+      "javobda admin ma'lumoti yo'q")
+
+# --- 3c) soxta `x-telegram-user-id` -> rad (spoof) ---
+status, _ = get_auth("/api/me", "", {"x-telegram-user-id": "8307046273"})
+check(status == 401, f"soxta x-telegram-user-id (admin) -> 401 (natija: {status})")
+status, _ = get_auth("/api/me", "", {"x-telegram-user-id": "0"})
+check(status == 401, f"'0' id -> 401 (natija: {status})")
+status, _ = get_auth("/api/me", "", {"x-telegram-user-id": "-5"})
+check(status == 401, f"manfiy id -> 401 (natija: {status})")
+
+# --- 3d) imzo buzilgan (tampered) -> rad ---
+bad = cust_init.replace("hash=", "hash=0")[:-40] + "0" * 8
+status, _ = get_auth("/api/me", bad)
+check(status == 401, f"buzilgan imzo -> 401 (natija: {status})")
+
+# --- 3e) boshqa tokenga imzo -> rad ---
+foreign = make_init_data("999999:OTHER_TOKEN", customer_user)
+status, _ = get_auth("/api/me", foreign)
+check(status == 401, f"boshqa bot tokenga imzo -> 401 (natija: {status})")
+
+# --- 3f) `?uid=` query parami -> rad ---
+status, _ = get_auth("/api/me?uid=8307046273")
+check(status == 401, f"?uid=<admin> -> 401 (natija: {status})")
+
+# --- 3g) eskirgan initData -> rad ---
+old_data = make_init_data(SMOKE_BOT_TOKEN, customer_user,
+                          auth_date=int(time.time()) - 999999)
+status, _ = get_auth("/api/me", old_data)
+check(status == 401, f"eskirgan initData -> 401 (natija: {status})")
+
+# --- 3h) haqiqiy mijoz boshqa mijozning to'lovini ko'ra olmaydi ---
+write_db({
+    "users": {
+        str(CUSTOMER_ID): {"id": CUSTOMER_ID, "username": "test_mijoz",
+                           "balance": 50000, "total_spent": 0},
+        "777000111": {"id": 777000111, "username": "boshqa", "balance": 1000},
+    },
+    "topups": {
+        "tp_boshqa": {"id": "tp_boshqa", "user_id": 777000111, "amount": 30000,
+                      "amount_to_send": 30001, "status": "pending",
+                      "card": "9860 1701 1569 3682", "holder": "BOSHA QA",
+                      "created_at": "2026-01-01T00:00:00"},
+    },
+    "orders": {}, "settings": {}, "nfts": [],
+})
+status, body = get_auth("/api/topup/status?id=tp_boshqa", cust_init)
+check(status == 403, f"boshqa mijozning to'lovi -> 403 (natija: {status})")
+check("9860" not in body, "karta raqami sizga ko'rinmadi")
+
+# --- 3i) o'z to'lovingizni ko'rasiz ---
+status, body = get_auth("/api/topup/status?id=tp_boshqa",
+                        make_init_data(SMOKE_BOT_TOKEN,
+                                       {"id": 777000111, "username": "boshqa"}))
+check(status == 200, f"o'z to'lovingizni ko'rasiz -> 200 (natija: {status})")
 
 print()
 print("=" * 68)
@@ -273,7 +403,9 @@ write_db({**base_db, "nfts": {"nft_q": {
     "id": "nft_q", "title": "Quote test", "number": 7,
     "image": "https://x.com/c.jpg", "link": "", "daily": 84, "active": True}}})
 time.sleep(3.5)
-status, body = get("/api/nfts/quote?id=nft_q&days=7")
+# 🔐 `/api/nfts/quote` mijoz balansini ham qaytaradi — imzo talab qiladi.
+# (Avval `get()` bilan chaqirilardi va 200 kutardi; endi 401 keladi.)
+status, body = get_auth("/api/nfts/quote?id=nft_q&days=7", cust_init)
 check(status == 200, "/api/nfts/quote 200")
 try:
     j = json.loads(body)

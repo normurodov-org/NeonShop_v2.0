@@ -1974,7 +1974,12 @@ class BuyStates(StatesGroup):
 
 
 class SellStates(StatesGroup):
+    # 🔴 `card` — mijoz Stars to'lagandan KEYIN karta yuboradi.
+    # Avval bu bosqich umuman yo'q edi: Stars yig'ilardi, lekin
+    # hech kim karta so'ramagan edi va UZS hech qachon yuborilmagan
+    # edi (mijozning Stars'i yo'qolgan holda qolardi).
     amount = State()
+    card = State()
 
 
 class NftStates(StatesGroup):
@@ -2137,9 +2142,10 @@ MENU_STYLES = {
     "m:support": "danger",   # Support — QIZIL
 }
 SUCCESS_CALLBACKS = {"buy_confirm", "svc_ok", "ref_wd", "buy_self", "svc_self", "refw_self"}
-SUCCESS_PREFIXES = ("ord_done:", "sale_pay:")
+SUCCESS_PREFIXES = ("ord_done:", "sale_pay:", "adm:sale_ok:", "adm:premium_ok:")
 DANGER_CALLBACKS = {"cancel", "adm:logout", "adm:ban:ban"}
-DANGER_PREFIXES = ("ord_refund:", "sale_refund:", "topup_cancel:")
+DANGER_PREFIXES = ("ord_refund:", "sale_refund:", "topup_cancel:",
+                    "adm:sale_refund:", "adm:premium_refund:")
 
 
 def button_style(button: Any) -> Optional[str]:
@@ -2270,6 +2276,10 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="♻️ Gift qayta yuborish", callback_data="adm:gift_retry")],
             [InlineKeyboardButton(text="➕ NFT qo'shish", callback_data="adm:nft_add"),
              InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list")],
+            [InlineKeyboardButton(text="💸 To'lanuvchi savdolar",
+                                  callback_data="adm:sales")],
+            [InlineKeyboardButton(text="💎 Premium buyurtmalari",
+                                  callback_data="adm:premium")],
             [InlineKeyboardButton(text="📨 Menedjerga xabar tekshiruvi",
                                   callback_data="adm:nft_ping")],
             [InlineKeyboardButton(text="🚫 Kutayotgan gift'larni bekor qilish",
@@ -3717,7 +3727,7 @@ async def pre_checkout(query: PreCheckoutQuery):
 
 
 @router.message(F.successful_payment)
-async def on_successful_payment(message: Message, db_user: dict):
+async def on_successful_payment(message: Message, state: FSMContext, db_user: dict):
     sp = message.successful_payment
     if sp.currency != "XTR" or not sp.invoice_payload.startswith("sell:"):
         return
@@ -3738,11 +3748,456 @@ async def on_successful_payment(message: Message, db_user: dict):
     db_user["pending_sale_card"] = sale_id
     db.save()
 
+    # 🔴 Ilgari shu yerda xabar chiqib, savdo "awaiting_card" da
+    # QOLIB KETARDI — karta hech qachon yig'ilmasdi, UZS hech qachon
+    # yuborilmasdi va hech kim ogohlantirilmagan edi.
+    # 🔴 Bu QADAM KERAK: state o'tkazilmasa, keyingi xabar
+    # `SellStates.card` handler'iga tushmaydi va karta hech qachon
+    # yig'ilmaydi (savdo `awaiting_card` da qolib ketadi).
+    await state.set_state(SellStates.card)
+
     await message.answer(
         f"✅ <b>{fmt(amt)} ⭐ qabul qilindi!</b>\n\n"
         f"💵 Sizga to'lanadi: <b>{fmt(uzs)} UZS</b>\n\n"
         f"💳 Iltimos, pul o'tkaziladigan <b>karta raqamingizni</b> (16 raqam) yuboring:"
     )
+    # 🔴 ADMINGA DARHOL xabar — aks holda savdo "homasiz" qolib ketadi
+    await notify_admins(
+        "💸 <b>YANGI STARS SOTUVI — to'lash kutilmoqda</b>\n\n"
+        f"👤 Mijoz: <b>@{esc(str(db_user.get('username') or db_user['id']))}</b>\n"
+        f"⭐ Berilgan: <b>{fmt(amt)}</b>\n"
+        f"💵 To'lanadi: <b>{fmt(uzs)} UZS</b>\n"
+        f"🆔 <code>{esc(sale_id)}</code>\n\n"
+        "<i>Karta kelgach avtomatik qayta xabar beriladi.\n"
+        "To'lagandan keyin: <code>/admin → 💸 To'lanuvchi savdolar</code></i>"
+    )
+
+
+# =============================================================================
+# STARS SOTUV — karta qabul qilish va to'lash (avval butunlay YO'Q edi)
+# =============================================================================
+# 🔴 NIMA BUZILGAN EDI:
+#   `on_successful_payment` Stars yig'ilardi va "karta yuboring" deb
+#   aytardi — lekin (a) karta uchun FSM state yo'q edi, (b) savdoni
+#   hech kim ishlovchi (worker) yo'q edi. Natija: mijozning Stars'i
+#   Telegram tomonidan yechilib, savdo `awaiting_card` da QOLIB KETARDI.
+#   UZS hech qachon yuborilmagan, admin esa xabarsiz edi.
+#
+# 🔴 Endi to'liq oqim:
+#   1) Stars to'lanadi           -> savdo `awaiting_card` + admin xabari
+#   2) Mijoz karta yuboradi      -> savdo `awaiting_payout` + admin xabari
+#   3) Admin to'laydi va tasdiqlaydi -> ✅ To'landi  (Stars qaytarilmaydi)
+#   4) Admin rad etsa             -> ❌ Bekor (Stars QAYTARILADI refund)
+
+def card_mask(card: str) -> str:
+    c = re.sub(r"\D", "", str(card or ""))
+    return (c[:4] + " **** **** " + c[-4:]) if len(c) >= 8 else ("*" * len(c))
+
+
+# 🔴 `NOT_MENU` SHART: aks holda karta kutilayotgan mijoz
+# asosiy menyu tugmasini bosganda, u "karta raqami" deb
+# qabul qilinib, "noto'g'ri karta" xabari chiqarardi.
+@router.message(StateFilter(SellStates.card), F.text, NOT_MENU)
+async def adm_sell_card(message: Message, state: FSMContext, db_user: dict):
+    """Mijoz to'lanadigan karta raqamini yuboradi."""
+    digits = re.sub(r"\D", "", message.text or "")
+    if not (12 <= len(digits) <= 20):
+        await message.answer(
+            "⚠️ Karta raqamini to'g'ri yuboring (12–20 raqam).\n"
+            "<i>Namuna: <code>9860 1701 1569 3682</code></i>"
+        )
+        return
+
+    sale_id = db_user.get("pending_sale_card")
+    sale = (db.data.get("sales") or {}).get(sale_id or "")
+    if not sale or sale.get("status") != "awaiting_card":
+        await state.clear()
+        await message.answer(
+            "ℹ️ Hozir to'lanish kutilayotgan savdo yo'q.\n"
+            "<i>Avval <b>💸 Stars sotish</b> orqali Stars yuboring.</i>"
+        )
+        return
+
+    sale["card"] = digits
+    sale["status"] = "awaiting_payout"
+    sale["card_at"] = now_iso()
+    db.data["sales"][sale_id] = sale
+    db_user["pending_sale_card"] = None
+    db.save()
+    await state.clear()
+
+    await message.answer(
+        "✅ <b>Karta qabul qilindi!</b>\n\n"
+        f"💵 To'lanadigan summa: <b>{fmt(num(sale.get('uzs')))} UZS</b>\n\n"
+        "⏳ Administrator shu summani 24 soat ichida kartangizga o'tkazadi.\n"
+        "<i>Savdo: <code>" + esc(str(sale_id)) + "</code></i>"
+    )
+
+    await notify_admins(
+        "💸 <b>TO'LASH KUTILMOQDA — Stars sotuv</b>\n\n"
+        f"👤 Mijoz: <b>@{esc(str(db_user.get('username') or db_user['id']))}</b>\n"
+        f"⭐ Berilgan: <b>{fmt(num(sale.get('stars')))}</b>\n"
+        f"💵 To'lanadi: <b>{fmt(num(sale.get('uzs')))} UZS</b>\n"
+        f"💳 Karta: <code>{card_mask(digits)}</code>\n"
+        f"🆔 <code>{esc(str(sale_id))}</code>\n\n"
+        "<i>O'zingiz o'tkazing, keyin: "
+        "<code>/admin → 💸 To'lanuvchi savdolar → ✅ To'landi</code></i>"
+    )
+
+
+@admin_router.callback_query(F.data == "adm:sales")
+async def adm_sales(call: CallbackQuery):
+    """To'lanish kutilayotgan Stars savdolar."""
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    pend = sorted(
+        (s for s in (db.data.get("sales") or {}).values()
+         if s.get("status") in ("awaiting_card", "awaiting_payout")),
+        key=lambda s: s.get("created_at") or "",
+    )
+    if not pend:
+        await call.message.answer(
+            "💸 <b>To'lanuvchi savdolar yo'q</b>\n\n"
+            "<i>Mijozlar «💸 Stars sotish» orqali Stars yuborganda "
+            "shu yerda paydo bo'ladi.</i>",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    lines = [f"💸 <b>To'lanuvchi savdolar</b> ({len(pend)} ta)\n"]
+    buttons = []
+    for i, s in enumerate(pend, 1):
+        u = db.get_user(num(s.get("user_id")))
+        who = u.get("username") if u else None
+        card = str(s.get("card") or "")
+        lines.append(
+            f"\n{i}. <b>{fmt(num(s.get('stars')))} ⭐</b> → "
+            f"<b>{fmt(num(s.get('uzs')))} UZS</b>"
+            f"\n   👤 @{esc(str(who or s.get('user_id')))}"
+            f"\n   💳 {esc(card_mask(card)) if card else '<i>karta kelmagan</i>'}"
+            f"\n   🆔 <code>{esc(str(s.get('id')))}</code>"
+            + ("\n   ⏳ <b>TO'LANISH KUTILMOQDA</b>"
+               if s.get("status") == "awaiting_payout"
+               else "\n   ⏳ <b>Karta kutilmoqda</b>")
+        )
+        row = [InlineKeyboardButton(
+            text="✅ To'landi", callback_data=f"adm:sale_ok:{s.get('id')}")]
+        if s.get("status") == "awaiting_payout":
+            row.append(InlineKeyboardButton(
+                text="↩️ Stars qaytarish", callback_data=f"adm:sale_refund:{s.get('id')}"))
+        else:
+            row.append(InlineKeyboardButton(
+                text="🔍 Eslatish", callback_data=f"adm:sale_nudge:{s.get('id')}"))
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅️ Admin", callback_data="adm:home")])
+    await call.message.answer(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),  # type: ignore[arg-type]
+    )
+
+
+@admin_router.callback_query(F.data.startswith("adm:sale_ok:"))
+async def adm_sale_ok(call: CallbackQuery):
+    """To'lab bo'ldi — savdo yopiladi."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    sid = call.data.split(":", 2)[2]
+    sale = (db.data.get("sales") or {}).get(sid)
+    if not sale or sale.get("status") not in ("awaiting_card", "awaiting_payout"):
+        await call.answer("Bu savdo allaqachon yopilgan.", show_alert=True)
+        return
+    sale["status"] = "paid"
+    sale["paid_at"] = now_iso()
+    sale["paid_by"] = call.from_user.id
+    db.save()
+    u = db.get_user(num(sale.get("user_id")))
+    if u:
+        try:
+            await bot.send_message(
+                u["id"],
+                "✅ <b>To'lov yuborildi!</b>\n\n"
+                f"💵 <b>{fmt(num(sale.get('uzs')))} UZS</b> kartangizga o'tkazildi.\n\n"
+                "<i>Summa 1–24 soat ichida balangizda ko'rinadi. "
+                "Ishonchingiz komil bo'lsa bank orqali tekshiring.</i>",
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Savdo xabari yuborilmadi: %s", exc)
+    await call.answer("✅ To'landi", show_alert=True)
+    await adm_sales(call)
+
+
+@admin_router.callback_query(F.data.startswith("adm:sale_refund:"))
+async def adm_sale_refund(call: CallbackQuery):
+    """To'lash rad etildi — mijozga Stars QAYTARILADI (refund)."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    sid = call.data.split(":", 2)[2]
+    sale = (db.data.get("sales") or {}).get(sid)
+    if not sale or sale.get("status") != "awaiting_payout":
+        await call.answer("Faqat to'lash kutilayotgan savdo refund qilinadi.",
+                          show_alert=True)
+        return
+    sale["status"] = "refunded"
+    sale["refunded_at"] = now_iso()
+    sale["refunded_by"] = call.from_user.id
+    db.save()
+    u = db.get_user(num(sale.get("user_id")))
+    if u:
+        try:
+            await bot.refund_star_payment(
+                user_id=u["id"], telegram_payment_charge_id=str(sale.get("charge_id"))
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Stars refund qilinmadi: %s", exc)
+            try:
+                await bot.send_message(
+                    u["id"],
+                    "⚠️ <b>Stars qaytarilmadi</b>\n\n"
+                    "Admin bilan bog'laning — summa qaytarilishi uchun "
+                    "qo'llab-quvvatlash kerak.",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            try:
+                await bot.send_message(
+                    u["id"],
+                    "↩️ <b>To'lash bekor qilindi</b> — Stars qaytarildi.",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+    await call.answer("↩️ Refund qilindi", show_alert=True)
+    await adm_sales(call)
+
+
+@admin_router.callback_query(F.data.startswith("adm:sale_nudge:"))
+async def adm_sale_nudge(call: CallbackQuery):
+    """Karta kelmagan — mijozga eslatma."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    sid = call.data.split(":", 2)[2]
+    sale = (db.data.get("sales") or {}).get(sid)
+    if not sale:
+        await call.answer("Savdo topilmadi.", show_alert=True)
+        return
+    u = db.get_user(num(sale.get("user_id")))
+    if not u:
+        await call.answer("Mijoz bazada yo'q.", show_alert=True)
+        return
+    try:
+        await bot.send_message(
+            u["id"],
+            "⏳ <b>Karta raqamingizni kutmoqdamiz.</b>\n\n"
+            f"💳 Iltimos, 16 raqamli karta raqamingizni yuboring "
+            f"(Stars: {fmt(num(sale.get('stars')))} ⭐).",
+        )
+        await call.answer("📤 Eslatma yuborildi", show_alert=True)
+    except Exception as exc:  # noqa: BLE001
+        await call.answer(f"Xato: {exc}"[:180], show_alert=True)
+
+
+# =============================================================================
+# TELEGRAM PREMIUM — yetkazib berish (avval butunlay YO'Q edi)
+# =============================================================================
+# 🔴 NIMA BUZILGAN EDI:
+#   WebApp `POST /api/order {kind:'premium'}` da balansni YECHIB, buyurtmani
+#   `status: "completed"` bilan yozardi va mijozga "yetkazildi" degan xabar
+#   yuborardi. Ammo Telegram Premiumni avtomatik beradigan hech qanday kod
+#   yo'q edi:
+#     * `star_order_worker()` faqat `kind == "stars"` ni qayta ishlaydi
+#     * gift worker faqat `kind == "gift"` ni
+#     * NFT worker faqat `kind == "nft_rent"` ni
+#   Ya'ni: mijoz 155 000 UZS to'lar, "yetkazildi" deb xabar oladi va
+#   TELEGRAM PREMIUM OLMAYDI. Bu — to'g'ridan-to'g'ri pul yo'qotish.
+#
+# 🔴 QANDAY ISHLATILADI (Premium qo'lda beriladigan xizmat):
+#   1) WebApp buyurtmasi -> balans yechiladi -> `status = "premium_wait"`
+#   2) Admin darhol xabar oladi (qabul qiluvchi + oy + reja + summa)
+#   3) Admin Premium beradi -> `adm:premium_ok:<id>` -> mijozga xabar
+#   4) Admin bera olmasa -> `adm:premium_refund:<id>` -> balans QAYTARILADI
+
+PREMIUM_MODE_TITLE = {"nologin": "Sovg'a", "login": "Kirib"}
+
+
+@router.callback_query(F.data == "adm:premium")
+async def adm_premium(call: CallbackQuery):
+    """Premium berish kutilayotgan buyurtmalar."""
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    pend = sorted(
+        (o for o in (db.data.get("orders") or {}).values()
+         if o.get("kind") == "premium" and o.get("status") == "premium_wait"),
+        key=lambda o: o.get("created_at") or "",
+    )
+    if not pend:
+        await call.message.answer(
+            "\U0001F48E <b>Premium buyurtmalari yo'q</b>\n\n"
+            "<i>Mijozlar WebApp'da Premium tanlaganda shu yerda paydo bo'ladi.</i>",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    lines = ["\U0001F48E <b>Premium berish kutilmoqda</b> (%d ta)\n" % len(pend)]
+    buttons = []
+    for i, o in enumerate(pend, 1):
+        u = db.get_user(num(o.get("user_id")))
+        who = (u or {}).get("username") or o.get("user_id")
+        mode = PREMIUM_MODE_TITLE.get(o.get("mode") or "nologin", "Sovg'a")
+        months = num(o.get("months") or o.get("amount") or 1)
+        lines.append(
+            "\n%d. <b>%d oy</b> \u2014 %s rejimi"
+            "\n   \U0001F464 Qabul qiluvchi: <b>@%s</b>"
+            "\n   \U0001F465 Xaridor: @%s"
+            "\n   \U0001F4B3 Yechilgan: <b>%s UZS</b>"
+            "\n   \U0001F194 <code>%s</code>"
+            % (i, months, esc(mode), esc(str(o.get("recipient") or "?")),
+               esc(str(who)), fmt(num(o.get("price"))), esc(str(o.get("id"))))
+        )
+        buttons.append([InlineKeyboardButton(
+            text="\u2705 Berildi", callback_data="adm:premium_ok:%s" % o.get("id")),
+            InlineKeyboardButton(
+                text="\u21A9\uFE0F Qaytarish", callback_data="adm:premium_refund:%s" % o.get("id")),
+        ])
+    buttons.append([InlineKeyboardButton(text="\u2B05\uFE0F Admin", callback_data="adm:home")])
+    await call.message.answer(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),  # type: ignore[arg-type]
+    )
+
+
+@admin_router.callback_query(F.data.startswith("adm:premium_ok:"))
+async def adm_premium_ok(call: CallbackQuery):
+    """Premium berib bo\u0027ldi \u2014 buyurtma yopiladi."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    oid = call.data.split(":", 2)[2]
+    order = (db.data.get("orders") or {}).get(oid)
+    if not order or order.get("kind") != "premium":
+        await call.answer("Buyurtma topilmadi.", show_alert=True)
+        return
+    if order.get("status") != "premium_wait":
+        await call.answer("Bu buyurtma allaqachon yopilgan.", show_alert=True)
+        return
+    order["status"] = "completed"
+    order["completed_at"] = now_iso()
+    order["fulfilled_by"] = call.from_user.id
+    order.pop("premium_notified", None)
+    db.save()
+    u = db.get_user(num(order.get("user_id")))
+    if u:
+        try:
+            await bot.send_message(
+                u["id"],
+                "\u2705 <b>Premium berildi!</b>\n\n"
+                "\U0001F48E <b>%s</b>\n"
+                "\U0001F464 <b>@%s</b> ga berildi.\n\n"
+                "<i>Telegram hisobingizni tekshiring \u2014 Premium allaqon faollashgan "
+                "bo\u0027lishi kerak.</i>"
+                % (esc(str(order.get("title") or "Telegram Premium")),
+                   esc(str(order.get("recipient") or ""))),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Premium xabari yuborilmadi: %s", exc)
+    await call.answer("\u2705 Berildi", show_alert=True)
+    await adm_premium(call)
+
+
+@admin_router.callback_query(F.data.startswith("adm:premium_refund:"))
+async def adm_premium_refund(call: CallbackQuery):
+    """Premium berib bo\u0027lmadi \u2014 balans qaytariladi."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    oid = call.data.split(":", 2)[2]
+    order = (db.data.get("orders") or {}).get(oid)
+    if not order or order.get("kind") != "premium":
+        await call.answer("Buyurtma topilmadi.", show_alert=True)
+        return
+    if order.get("status") != "premium_wait":
+        await call.answer("Faqat kutilayotgan buyurtma qaytariladi.", show_alert=True)
+        return
+    price = num(order.get("price") or order.get("price_uzs"))
+    order["status"] = "refunded"
+    order["refunded_at"] = now_iso()
+    order["refunded_by"] = call.from_user.id
+    order["failure_reason"] = "Premium berilmadi \u2014 balans qaytarildi"
+    order.pop("premium_notified", None)
+    u = db.get_user(num(order.get("user_id")))
+    if u:
+        u["balance"] = num(u.get("balance")) + price
+        try:
+            await bot.send_message(
+                u["id"],
+                "\u21A9\uFE0F <b>Buyurtma bekor qilindi \u2014 pulingiz qaytarildi</b>\n\n"
+                "\U0001F4B3 <b>%s UZS</b> balansingizga qo\u0027shildi.\n\n"
+                "<i>Sabab: Telegram Premium berilmadi. Xatolik uchun uzr so\u0027raymiz.</i>"
+                % fmt(price),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Refund xabari yuborilmadi: %s", exc)
+    db.save()
+    await call.answer("\u21A9\uFE0F %s UZS qaytarildi" % fmt(price), show_alert=True)
+    await adm_premium(call)
+
+
+async def premium_order_worker() -> None:
+    """WebApp'dan kelgan Premium buyurtmalarini adminga yetkazadi.
+
+    Stars/gift/NFT workerlaridan farqli o\u0107laroqi: Premiumni Telegram
+    botiga avtomatik berib bo\u0027lmaydi (Fragment/MTProto orqali Premium
+    sovg\u0027asi faqat rasmiy Telegram orqali sotiladi). Shuning uchun
+    bu yerda avtomatik "yuborish" emas, balki ANIQ VAQTLI admin xabari
+    chiqadi va buyurtma `premium_wait` holatida saqlanadi.
+    """
+    log.info("\U0001F48E Premium worker ishga tushdi")
+    await asyncio.sleep(6)
+    while True:
+        try:
+            await asyncio.sleep(4)
+            db.reload_if_changed()
+            for order_id, order in list((db.data.get("orders") or {}).items()):
+                if order.get("kind") != "premium":
+                    continue
+                if order.get("status") not in ("processing", "queued", "pending"):
+                    continue
+                if order.get("premium_notified"):
+                    continue
+
+                order["status"] = "premium_wait"
+                order["premium_notified"] = True
+                order["premium_wait_at"] = now_iso()
+                db.save()
+
+                u = db.get_user(num(order.get("user_id")))
+                who = (u or {}).get("username") or order.get("user_id")
+                mode = PREMIUM_MODE_TITLE.get(order.get("mode") or "nologin", "Sovg'a")
+                months = num(order.get("months") or order.get("amount") or 1)
+
+                log.info("\U0001F48E Premium buyurtma %s adminga yuborilmoqda", order_id)
+                await notify_admins(
+                    "\U0001F48E <b>PREMIUM BERISH KERAK!</b>\n\n"
+                    "\U0001F464 Xaridor: <b>@%s</b>\n"
+                    "\U0001F3AF Qabul qiluvchi: <b>@%s</b>\n"
+                    "\U0001F4C8 Rejim: <b>%s</b> \u2014 <b>%d oy</b>\n"
+                    "\U0001F4B3 Yechilgan: <b>%s UZS</b>\n"
+                    "\U0001F194 <code>%s</code>\n\n"
+                    "<i>Premium berib bo\u0027lgach: <code>/admin \u2192 \U0001F48E Premium "
+                    "buyurtmalari \u2192 \u2705 Berildi</code></i>"
+                    % (esc(str(who)), esc(str(order.get("recipient") or "?")),
+                       esc(mode), months, fmt(num(order.get("price"))),
+                       esc(str(order_id)))
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Premium worker xatosi: %s", exc)
+            await asyncio.sleep(5)
 
 
 def build_captcha(user: dict) -> InlineKeyboardMarkup:
@@ -7845,6 +8300,73 @@ def nft_notice() -> str:
     )
 
 
+# =============================================================================
+# TELEGRAM PREMIUM — bot menyusi (m:premium)
+# =============================================================================
+# 🔴 ILGARI: `msg.answer("💎 Premium bo'limi")` — bu STUB edi.
+# Tugma bosilgan hech narsa ko'rsatmasdi, hech qanday narx ham yo'q edi
+# va Premium qayerdan olinishi ham ma'lum emas edi.
+# Endi: tariflar, narxlari va to'g'ri havolalar.
+
+# 🔴 NARX MANBAI BITTAGA: yuqoridagi `PREMIUM_PLANS` (dict).
+# Bu yerda qayta ro'yxat yozilganda WebApp narxi bilan botdagi narx
+# kelib chiqishi mumkin edi — va kelib chiqdi ham: `webapp_config()`
+# `PREMIUM_PLANS.items()` ni `.items()` deb chaqiradi, `list` esa
+# `AttributeError` berib, butun bot ishga tushmasligiga olib kelardi.
+# Endi menyu XUDDI shu dict'dan quriladi — narx o'zgartirilsa, bot va
+# WebApp ham bir vaqtda yangilanadi.
+
+def _premium_menu_rows():
+    """`(label, months, price, mode)` ro'yxati — `PREMIUM_PLANS` dan."""
+    order = [("nologin", 3), ("nologin", 6), ("nologin", 12),
+             ("login", 1), ("login", 12)]
+    rows = []
+    for mode, months in order:
+        price = (PREMIUM_PLANS.get(mode) or {}).get(months)
+        if not price:
+            continue
+        rows.append((
+            "💎 Premium — %d oy (%s)" % (
+                months, "Sovg'a" if mode == "nologin" else "Kirib"),
+            months, int(price), mode,
+        ))
+    return rows
+
+
+async def premium_start(message: Message, state: FSMContext) -> None:
+    """Premium tariflarini ko'rsatadi va WebApp'ga yo'naltiradi.
+
+    Premium bot ichida avtomatik berilmaydi (Telegram'ning rasmiy
+    PremiumBot/Fragment oqimi kerak), shuning uchun xarid WebApp'da
+    qilinadi. Bot endi faqat to'g'ri narx va yo'nalishni ko'rsatadi
+    — avvalgi stub esa hech narsa ko'rsatmasdi.
+    """
+    await state.clear()
+    lines = [
+        "💎 <b>Telegram Premium</b>\n\n"
+        "<i>Premium berish qo'lda amalga oshiriladi (Telegram'ning rasmiy "
+        "Premium orqali). Xarid Web App orqali qilinadi — balansingizga "
+        "avval to'ldiring.</i>\n\n"
+    ]
+    for title, _months, price, _mode in _premium_menu_rows():
+        lines.append("\u2022 <b>%s</b> \u2014 <b>%s UZS</b>"
+                     % (esc(title), fmt(price)))
+    lines.append("\n<i>Barcha narxlarga 0,1% keshbek qo'shiladi.</i>")
+
+    rows = [
+        [InlineKeyboardButton(
+            text="📱 Web App orqali xarid qilish",
+            url=WEBAPP_URL, style="primary")],
+        [InlineKeyboardButton(text="💳 Balansni to'ldirish",
+                               callback_data="m:topup", style="success")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="m:home", style="danger")],
+    ]
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),  # type: ignore[arg-type]
+    )
+
+
 async def nft_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
@@ -7875,9 +8397,14 @@ async def main_menu_callback(call: CallbackQuery, state: FSMContext, bot: Bot, d
     await call.answer()
     msg = call.message
     actions = {
+        # 🔴 `home` AVVAL YO'Q EDI: `m:home` tugmalari (Premium
+        # ekrani va boshqalar) bosilganda HECH NARSA bo'lmasdi —
+        # `actions.get(...)` None qaytarib, `call.answer()`dan keyin
+        # jimgina tugilardi.
+        "home": lambda: send_main_menu(msg, db_user),
         "buy": lambda: buy_start(msg, state, db_user),
         "sell": lambda: sell_start(msg, state),
-        "premium": lambda: msg.answer("💎 Premium bo'limi"),
+        "premium": lambda: premium_start(msg, state),
         "gifts": lambda: gifts_start(msg, state),
         "nft": lambda: nft_start(msg, state),
         "topup": lambda: topup_start(msg, state, db_user),
@@ -7990,6 +8517,7 @@ async def main() -> None:
                 ("Gift worker", process_gift_orders()),
                 ("Stars worker", star_order_worker()),
                 ("NFT xabar worker", nft_notify_worker()),
+                ("Premium worker", premium_order_worker()),
                 ("USDT kursi", get_usdt_uzs_rate()),
                 ("Heartbeat", update_heartbeat()),
                 ("Userbot supervisor", userbot_supervisor()),

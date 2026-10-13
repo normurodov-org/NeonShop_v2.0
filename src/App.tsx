@@ -12,7 +12,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { LiquidPointer } from './components/LiquidPointer';
 import { toastText } from './lib/telegramText';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { CheckCircle2, ArrowLeft, PauseCircle } from 'lucide-react';
+import { CheckCircle2, ArrowLeft, PauseCircle, ShieldAlert } from 'lucide-react';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('home');
@@ -26,6 +26,10 @@ export default function App() {
     return (localStorage.getItem('apple_theme') as 'dark' | 'light') || 'dark';
   });
   const isDark = theme === 'dark';
+
+  // Botga o'tish havolasi (401 ekrani uchun)
+  const BOT_WEBAPP_URL =
+    `https://t.me/${import.meta.env.VITE_BOT_USERNAME || 'NeonStarsStoreBot'}?start=webapp`;
 
   // Tema klassi faqat asosiy `<div>` da bo'lsa, `document.body` ga
   // PORTAL qilingan modal (NftRentView) tema ranglarini OLMAYDI:
@@ -43,6 +47,14 @@ export default function App() {
   const [history, setHistory] = useState<Order[]>([]);
   const [activeTopup, setActiveTopup] = useState<Topup | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  // 🔴 Server "Telegram orqali kiring" dedi (401) — bu holatda
+  // ilovani bo'sh qoldirmaslik kerak, chunki aks holda mijoz
+  // NIMAGANI bilmay qoladi.
+  const [needTelegram, setNeedTelegram] = useState<string | null>(null);
+  // 🔴 Poller ham o'ziga IMZO yuborishi SHART — aks holda server
+  // identifikatsiyani topa olmay, 401 qaytaradi (yoki eski kodda —
+  // ADMIN bo'lib qolardi va mijozning ekrani "dilbek"ga aylanardi).
+  const [initData, setInitData] = useState<string>('');
 
   // Admin condition: ONLY user ID 8307046273 (or settings.admin_id)
   const isAdmin = user?.id === 8307046273 || (Boolean(settings?.admin_id) && user?.id === settings?.admin_id);
@@ -63,7 +75,8 @@ export default function App() {
     tgId?: number,
     tgUsername?: string,
     photoUrl?: string,
-    firstName?: string
+    firstName?: string,
+    initData?: string
   ) => {
     try {
       let url = '/api/me';
@@ -78,6 +91,8 @@ export default function App() {
 
       const res = await fetch(url, {
         headers: {
+          // 🔴 Asosiy (imzolangan) identifikatsiya
+          'x-telegram-init-data': initData || '',
           'x-telegram-user-id': tgId ? tgId.toString() : '',
           'x-telegram-username': tgUsername || '',
           'x-telegram-photo-url': photoUrl || '',
@@ -85,6 +100,10 @@ export default function App() {
         },
       });
       const data = await res.json();
+      if (res.status === 401 || data.need_telegram) {
+        setNeedTelegram(data.error || 'Telegram orqali kiring');
+        return;
+      }
       if (data.ok) {
         setUser(data.user);
         setHistory(data.history || []);
@@ -114,6 +133,22 @@ export default function App() {
     let parsedUn: string | undefined;
     let parsedFirst: string | undefined;
     let parsedPhoto: string | undefined;
+    // 🔴 IMZOLI identifikatsiya. Server shuni BOT_TOKEN bilan
+    // tekshiradi va FAQAT undan foydalanuvchi id'sini oladi.
+    // Boshqa manbalar (?uid=, header) ishonchsiz — ularni
+    // hujjatlashtirish uchun ham yuboramiz (server ALLOW_UNSIGNED_USER
+    // yoqiqda e'tiborsiz qoldiradi).
+    let initDataRaw = '';
+
+    // 0. 🔴 IMRZO SATRI — server shuni tekshiradi
+    try {
+      initDataRaw =
+        (window as any).Telegram?.WebApp?.initData ||
+        (document.querySelector('script[data-webapp-initdata]') as any)?.textContent ||
+        '';
+    } catch {
+      initDataRaw = '';
+    }
 
     // 1. Direct WebApp object
     if (tg?.initDataUnsafe?.user?.id) {
@@ -174,13 +209,16 @@ export default function App() {
     const queryPhoto = urlParams.get('photo_url');
 
     if (!parsedId && queryUid && !isNaN(Number(queryUid))) {
+      // 🔴 Bu ISHONCHSIZ (server tasdiqlamaydi). Faqat Telegram
+      // initData bo'lmaganda ko'rsatish uchun.
       parsedId = Number(queryUid);
     }
     if (queryUn) parsedUn = queryUn;
     if (queryFirst) parsedFirst = queryFirst;
     if (queryPhoto) parsedPhoto = queryPhoto;
 
-    fetchUserData(parsedId, parsedUn, parsedPhoto, parsedFirst);
+    setInitData(initDataRaw);
+    fetchUserData(parsedId, parsedUn, parsedPhoto, parsedFirst, initDataRaw);
   }, []);
 
   const triggerHaptic = (type: 'light' | 'medium' | 'heavy' | 'success' = 'medium') => {
@@ -248,7 +286,10 @@ export default function App() {
     const poll = async () => {
       try {
         const res = await fetch('/api/me', {
-          headers: { 'x-telegram-user-id': user?.id?.toString() || '' },
+          headers: {
+            'x-telegram-init-data': initData,
+            'x-telegram-user-id': user?.id?.toString() || '',
+          },
         });
         const data = await res.json();
         if (!alive || !data.ok) return;
@@ -291,7 +332,7 @@ export default function App() {
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [processingCount, user?.id]);
+  }, [processingCount, user?.id, initData]);
 
   const handleTopupSuccess = (newBalance: number, msg: string) => {
     if (user) {
@@ -300,6 +341,61 @@ export default function App() {
     setActiveTopup(null);
     showToast(msg);
   };
+
+  // 🔴 Telegram orqali KIRISH KERAK (401)
+  // Telegram ichida ochilganda `initData` bo'ladi va server imzosini
+  // tekshiradi. Brauzerda ochilganda imzo yo'q — avvalgi kabi "ADMIN
+  // sifatida" ochilmas, balki bu ekran chiqadi.
+  if (needTelegram) {
+    return (
+      <div
+        className={`${theme} min-h-screen flex flex-col items-center justify-center text-center p-8 relative overflow-hidden ${
+          isDark ? 'bg-[#000000] text-white' : 'bg-[#f2f2f7] text-neutral-900'
+        }`}
+      >
+        <div className="aurora-blob aurora-1 -top-24 -left-20 w-96 h-96" />
+        <div className="aurora-blob aurora-2 -bottom-24 -right-20 w-96 h-96" />
+        <div className="noise-overlay" />
+        <div className="relative z-10 liquid-glass-card rounded-[36px] p-8 max-w-xs w-full sheet-in">
+          <div
+            className={`w-16 h-16 mx-auto rounded-[22px] liquid-glass-pill flex items-center justify-center mb-5 ${
+              isDark ? 'text-amber-300' : 'text-amber-600'
+            }`}
+          >
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h2 className={`text-base font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+            Telegram orqali kiring
+          </h2>
+          <p
+            className={`text-[12px] mt-2 leading-relaxed ${
+              isDark ? 'text-neutral-400' : 'text-neutral-500'
+            }`}
+          >
+            Bu ilova Telegram ichida ishlaydi. Botdagi{' '}
+            <b>📱 Web App</b> tugmasidan oching.
+          </p>
+          <a
+            href={BOT_WEBAPP_URL}
+            className="mt-5 block py-3.5 rounded-[20px] text-sm font-bold apple-spring cursor-pointer bg-[var(--accent)] text-white"
+          >
+            Botga o&apos;tish
+          </a>
+          <button
+            onClick={() => {
+              setNeedTelegram(null);
+              window.location.reload();
+            }}
+            className={`mt-2.5 w-full py-2.5 text-[12px] font-semibold apple-spring cursor-pointer ${
+              isDark ? 'text-neutral-400' : 'text-neutral-500'
+            }`}
+          >
+            Qayta urinish
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Admin botni to'xtatgan bo'lsa — WebApp ham javov bermaydi (Liquid Glass ekran)
   if (settings && settings.bot_active === false) {

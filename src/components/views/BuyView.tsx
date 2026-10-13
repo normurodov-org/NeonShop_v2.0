@@ -4,6 +4,7 @@ import { Lang, translations } from '../../i18n';
 import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check, Wallet, Layers, ChevronRight } from 'lucide-react';
 import AEmoji from '../AEmoji';
 import NftRentView from './NftRentView';
+import { tgHeaders } from '../../lib/tgAuth';
 
 interface BuyViewProps {
   user: User | null;
@@ -29,6 +30,11 @@ export const BuyView: React.FC<BuyViewProps> = ({
 }) => {
   const t = translations[lang];
   const [subTab, setSubTab] = useState<'stars' | 'premium' | 'gifts' | 'nft'>(initialTab);
+
+  // 🔴 Telegram username'i bo'lmagan akkauntlar uchun "O'zimga" ishlashmaydi.
+  // `user_XXXX` kabi sun'iy qiymatni HECH QACHON ishlatmaymiz — u
+  // server tomonida qabul qilinib, UZS yechilib, Fragment ishlamaydi.
+  const myUsername = (user?.username || '').trim().replace(/^@/, '');
 
   // Chuqur menyu (masalan Premium/Gifts) tanlangan katoriya bilan sinxron bolsin
   React.useEffect(() => {
@@ -207,10 +213,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
 
       const res = await fetch('/api/order', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-telegram-user-id': user?.id?.toString() || '',
-        },
+        headers: tgHeaders(),
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -312,12 +315,37 @@ export const BuyView: React.FC<BuyViewProps> = ({
         <div className="flex items-center justify-between">
           <label className={`text-xs font-semibold ${isDark ? 'text-neutral-300' : 'text-neutral-700'}`}>{t.recipient}</label>
           <div className="flex items-center gap-1.5">
+            {/* 🔴 ILGAR BU TUGMA HECH NARSA QILMASDI.
+                Sabab: `user.username` Telegram akkauntlarida ko'p
+                hollarda `null` bo'ladi (username yo'q). U holda
+                `setRecipient('')` — holat o'zgarmasdi, `resolvedProfile`
+                null bo'lib qolardi va ternary yana XUDDI SHU inputni
+                chizardi. Ko'rinishda "hech narsa bo'lmadi".
+                Endi:
+                  • username yo'q bo'lsa tugma O'CHIRILADI + sabab
+                  • username bo'lsa: `resolvedProfile` va `photoFailed`
+                    ham tozalanadi (avvalgi xato chizilgan bo'lsa,
+                    "o'zgarmadi" degan taassurot qolardi)} */}
             <button
               onClick={() => {
-                setRecipient(user?.username || '');
-                setIsEditingRecipient(false);
+                if (!myUsername) return;
+                setRecipient(myUsername);
+                // 🔴 Eski xato holati tozalanadi — aks holda eski
+                // avatar ko'rinib turadi va tugma "ishlamadi" degan
+                // taassurot qoldiradi.
+                setResolvedProfile(null);
+                setPhotoFailed(false);
+                setIsEditingRecipient(true);
               }}
-              className="flex items-center gap-1 px-3 py-1 rounded-full liquid-glass-pill text-[11px] font-semibold apple-spring cursor-pointer"
+              disabled={!myUsername}
+              title={
+                myUsername
+                  ? t.myself
+                  : 'Telegram akkauntingizda username yo\'q. Botga /start yozing.'
+              }
+              className={`flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-semibold apple-spring ${
+                myUsername ? 'liquid-glass-pill cursor-pointer' : 'opacity-40 cursor-not-allowed'
+              }`}
             >
               <UserCheck className="w-3 h-3" />
               <span>{t.myself}</span>
@@ -643,7 +671,12 @@ export const BuyView: React.FC<BuyViewProps> = ({
         </div>
       )}
 
-      {/* Main Buy Button */}
+      {/* 🔴 NFT TABDA BU TUGMA KO'RSATILMAYDI.
+          Sabab: `handleBuy` `kind` yubormaydi (faqat `{ username }`),
+          shuning uchun server `400 "Noma'lum xizmat turi."` qaytarardi.
+          NFT ijaraga olish — alohida oqim (`NftRentView` ichida
+          `POST /api/nfts/rent`), o'z CTA'si bilan. */}
+      {subTab !== 'nft' && (
       <button
         onClick={handleBuy}
         disabled={loading}
@@ -658,8 +691,15 @@ export const BuyView: React.FC<BuyViewProps> = ({
         ) : (
           <Star className="w-4 h-4 fill-current" />
         )}
-        <span>{subTab === 'stars' ? t.buyStars : subTab === 'premium' ? (t.premium + ' sotib olish') : ('Gift yuborish')}</span>
+        <span>
+          {subTab === 'stars'
+            ? t.buyStars
+            : subTab === 'premium'
+              ? t.premium + ' sotib olish'
+              : 'Gift yuborish'}
+        </span>
       </button>
+      )}
     </div>
   );
 };

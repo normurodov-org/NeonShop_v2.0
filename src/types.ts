@@ -14,11 +14,21 @@ export interface User {
 export interface Topup {
   id: string;
   user_id: number;
+  /** Mijoz so'ragan summa */
   amount: number;
+  /**
+   * 🔴 Kartaga YUBORILISHI KERAK BO'LGAN ANIQ SUMMA.
+   * `amount` + ketma-ket raqam. Bot aynan shu raqamni bank
+   * xabaridan qidiradi — `amount` yuborilsa, topup topilmaydi va
+   * mijozning puli qolib ketadi.
+   */
+  amount_to_send?: number;
   status: 'pending' | 'completed' | 'cancelled' | 'expired';
-  card: string;
-  holder: string;
-  expires_in: number;
+  /** Bot yaratgan to'lovlarda bo'lmasligi mumkin — ixtiyoriy */
+  card?: string;
+  /** Bot yaratgan to'lovlarda bo'lmasligi mumkin — ixtiyoriy */
+  holder?: string;
+  expires_in?: number;
   created_at: string;
 }
 

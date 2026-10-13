@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, StoreSettings } from '../types';
 import { Users, Star, Copy, Check, ArrowRight, Gift, AlertCircle } from 'lucide-react';
+import { telegramInitData } from '../lib/tgAuth';
 
 interface ReferralTabProps {
   user: User | null;
@@ -39,7 +40,7 @@ export const ReferralTab: React.FC<ReferralTabProps> = ({
     try {
       const res = await fetch('/api/referral/withdraw', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': telegramInitData() },
       });
       const data = await res.json();
       if (!data.ok) {

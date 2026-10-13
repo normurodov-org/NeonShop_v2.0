@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, StoreSettings, BotChatMessage } from '../types';
 import { Send, Bot, Sparkles, RefreshCw, ExternalLink, ShieldCheck, Play, Square, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { telegramInitData } from '../lib/tgAuth';
 
 interface BotSimulatorProps {
   user: User | null;
@@ -105,7 +106,7 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
     try {
       const res = await fetch('/api/bot/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': telegramInitData() },
         body: JSON.stringify({
           token: botTokenInput.trim(),
           webappUrl: botWebappUrlInput.trim() || window.location.origin,
@@ -167,7 +168,7 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
     try {
       const res = await fetch('/api/bot/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': telegramInitData() },
         body: JSON.stringify({ message: queryText, action: actionName }),
       });
       const data = await res.json();
