@@ -173,6 +173,47 @@ function channelOrderText(o: {
   return lines.join('\n');
 }
 
+/**
+ * Bot.py diskga yozgan yangi ma'lumotni (masalan admin panel orqali
+ * qo'shilgan NFT) server xotirasiga olib keladi.
+ *
+ * MUHIM: `store` faqat ishga tushganda o'qiladi. Agar admin keyin
+ * NFT qo'shsa, server eski ro'yxatni qaytarib berardi va WebApp'da
+ * hech narsa ko'rinmasdi. Bu funksiya har so'rovda nechta daqiqada
+ * bir diskni tekshiradi (mtime orqali) — har so'rovda o'qimaydi,
+ * chunki bu og'ir.
+ */
+let lastNftScan = 0;
+const NFT_SCAN_MS = 3000;
+let lastDbMtime = 0;
+try {
+  lastDbMtime = fs.statSync(DB_FILE).mtimeMs;
+} catch {
+  lastDbMtime = 0;
+}
+
+/** Diskdagi `nfts` bo'limini `store.nfts` ga singdirib qo'yadi. */
+export function refreshNftsFromDisk() {
+  const now = Date.now();
+  if (now - lastNftScan < NFT_SCAN_MS) return;
+  lastNftScan = now;
+  let mtime = 0;
+  try {
+    mtime = fs.statSync(DB_FILE).mtimeMs;
+  } catch {
+    return;
+  }
+  if (mtime === lastDbMtime) return;
+  lastDbMtime = mtime;
+  try {
+    const fresh = loadDatabase();
+    store.nfts = new Map<string, any>(Object.entries(fresh.nfts || {}));
+    lastSynced = { ...(lastSynced ?? {}), nfts: clone(store.nfts ? Object.fromEntries(store.nfts) : {}) };
+  } catch (e) {
+    console.error('refreshNftsFromDisk: bazani o‘qib bo‘lmadi:', e);
+  }
+}
+
 export function syncAndSaveDb() {
   let fresh: any;
   try {
@@ -552,6 +593,34 @@ function nftQuote(daily: number, days: number) {
   };
 }
 
+/**
+ * Telegram `file_id` ni brauzerda ochiladigan URL ga aylantiradi.
+ *
+ * MUHIM: admin rasm YUBORSA (t.me/nft/... emas), `image` maydoniga
+ * Telegram `file_id` saqlanadi. `<img src="AgACAgIAA...">` esa
+ * hech qachon rasm ko'rsatmaydi — brauzer undan URL ni tushunmaydi.
+ * Shu sabab `/api/nft-image/:id` orqali o'tkazamiz: u Bot API
+ * `getFile` orqali haqiqiy CDN havolasini topadi va 302 qiladi.
+ */
+function isTelegramFileId(v: string): boolean {
+  if (!v || /^https?:\/\//i.test(v)) return false;
+  // Havola yoki boshqa matn (masalan "t.me/nft/xxx") — file_id emas
+  if (/[\/\s]/.test(v)) return false;
+  // file_id — base64url belgilaridan iborat, odatda 40+ belgi
+  return /^[A-Za-z0-9_-]{20,}$/.test(v);
+}
+
+/** WebApp uchun rasm manzilini tayyorlaydi (to'g'ridan-to'g'ri yoki proxy). */
+function nftImageUrl(n: any): string {
+  const raw = String(n?.image || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (isTelegramFileId(raw)) return `/api/nft-image/${encodeURIComponent(n.id)}`;
+  // t.me/nft/... kabi link — bu rasm EMAS, shuning uchun bo'sh qoldiramiz
+  // (WebApp placeholder ko'rsatadi).
+  return '';
+}
+
 function nftPublicList(): any[] {
   const items = [...store.nfts.values()]
     .filter((n: any) => n?.active !== false)
@@ -559,13 +628,60 @@ function nftPublicList(): any[] {
       id: n.id,
       title: String(n.title || 'NFT sovg\'a'),
       number: n.number ?? null,
-      image: n.image || '',
+      image: nftImageUrl(n),
       link: n.link || '',
       daily: Number(n.daily) || 0,
     }))
     .sort((a, b) => a.daily - b.daily);
   return items;
 }
+
+/**
+ * Telegram fayl havolasini topish va keshlash.
+ * Bot API `file_path` havolasi ~1 soatda muddati tugadi, shuning uchun
+ * 30 daqiqa bilan qayta so'raymiz (har karta uchun emas — bitta misol uchun).
+ */
+const fileUrlCache = new Map<string, { url: string; at: number }>();
+const FILE_URL_TTL = 30 * 60 * 1000;
+
+async function telegramFileUrl(fileId: string): Promise<string | null> {
+  const hit = fileUrlCache.get(fileId);
+  if (hit && Date.now() - hit.at < FILE_URL_TTL) return hit.url;
+  const token = (process.env.BOT_TOKEN || '').trim();
+  if (!token) return null;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`, {
+      signal: AbortSignal.timeout(12000),
+    });
+    const j: any = await r.json();
+    const path = j?.result?.file_path;
+    if (!j?.ok || !path) return null;
+    const url = `https://api.telegram.org/file/bot${token}/${path}`;
+    fileUrlCache.set(fileId, { url, at: Date.now() });
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+/** NFT rasmini beradi (Telegram faylidan yoki havoladan). */
+app.get('/api/nft-image/:id', async (req: Request, res: Response) => {
+  refreshNftsFromDisk();
+  const item: any = store.nfts.get(String(req.params.id || ''));
+  const raw = String(item?.image || '').trim();
+  if (!raw) return res.status(404).json({ ok: false, error: 'Rasm yo\'q' });
+  if (/^https?:\/\//i.test(raw)) return res.redirect(302, raw);
+  if (!isTelegramFileId(raw)) return res.status(404).json({ ok: false, error: 'Rasm yo\'q' });
+  const url = await telegramFileUrl(raw);
+  if (!url) {
+    return res.status(404).json({
+      ok: false,
+      error: 'Rasmni Telegram dan olib bo\'lmadi. Bot token tekshirilsin.',
+    });
+  }
+  // Brauzer rasmni to'g'ridan-to'g'ri yuklaydi (server orasidan o\'tmaydi)
+  res.redirect(302, url);
+});
 
 app.post('/api/topup', (req: Request, res: Response) => {
   const user = getUser(req);
@@ -919,6 +1035,7 @@ app.post('/api/order', async (req: Request, res: Response) => {
 /** NFT ro'yxati (WebApp NFT Rent bo'limi uchun) */
 app.get('/api/nfts', (_req: Request, res: Response) => {
   getUser(_req);
+  refreshNftsFromDisk();
   res.json({
     ok: true,
     items: nftPublicList(),
@@ -932,6 +1049,7 @@ app.get('/api/nfts', (_req: Request, res: Response) => {
 /** NFT ijaraga olish hisobi (muddat -> to'liq summa) */
 app.get('/api/nfts/quote', (req: Request, res: Response) => {
   getUser(req);
+  refreshNftsFromDisk();
   const id = String(req.query.id || '');
   const days = Number(req.query.days) || NFT_MIN_DAYS;
   const item: any = store.nfts.get(id);
@@ -942,7 +1060,7 @@ app.get('/api/nfts/quote', (req: Request, res: Response) => {
   const u = getUser(req);
   res.json({ ok: true, quote: q, balance: Number(u.balance) || 0, item: {
     id: item.id, title: item.title, number: item.number ?? null,
-    image: item.image || '', link: item.link || '',
+    image: nftImageUrl(item), link: item.link || '',
   } });
 });
 
@@ -963,6 +1081,7 @@ const NFT_MANAGER = (process.env.NFT_MANAGER_USERNAME || '@saidovmanajer').trim(
  */
 app.post('/api/nfts/rent', async (req: Request, res: Response) => {
   const user = getUser(req);
+  refreshNftsFromDisk();
   const id = String(req.body?.id || '');
   const days = Number(req.body?.days) || NFT_MIN_DAYS;
 

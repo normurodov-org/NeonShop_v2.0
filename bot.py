@@ -571,6 +571,25 @@ NFT_NETWORK_FEE = 1700
 NFT_QUICK_DAYS = (3, 7, 14, 30)
 
 
+def nft_has_viewable_image(item: dict) -> bool:
+    """NFT rasmi WebApp'da ko'rinadimi?
+
+    DIQQAT: Telegram `file_id` brauzerda to'g'ridan-to'g'ri ochilmaydi —
+    shuning uchun server uni `/api/nft-image/<id>` orqali proxy qiladi
+    (server.ts). Shuning uchun file_id ham "ko'rinadi" deb hisoblanadi.
+    Faqat `t.me/nft/...` kabi link rasm EMAS.
+    """
+    img = str(item.get("image") or "").strip()
+    if not img:
+        return False
+    if img.startswith("http://") or img.startswith("https://"):
+        return True
+    # Telegram file_id — server proxy orqali ko'rsatadi
+    if not any(c.isspace() or c in "/." for c in img) and len(img) >= 20:
+        return True
+    return False
+
+
 def nft_rent_quote(daily: Any, days: Any) -> dict:
     """Ijaraning to'liq hisobini qaytaradi.
 
@@ -1752,6 +1771,7 @@ class SellStates(StatesGroup):
 
 class NftStates(StatesGroup):
     link = State()      # NFT linki / rasmi
+    photo = State()     # ALDIYI NFT ga rasm biriktirish
     title = State()    # nomi (ixtiyoriy)
     number = State()    # raqami (ixtiyoriy)
     daily = State()     # 1 kunlik narx
@@ -5302,18 +5322,87 @@ async def adm_nft_daily(message: Message, state: FSMContext):
 
     q3 = nft_rent_quote(daily, NFT_MIN_DAYS)
     q30 = nft_rent_quote(daily, 30)
+    # Rasm ko'rinadimi? t.me/nft/... — bu sahifa havolasi, rasm EMAS.
+    has_img = nft_has_viewable_image(item)
+    warn = "" if has_img else (
+        "⚠️ <b>Rasm biriktirilmagan</b> — WebApp'da bo'sh kvadrat ko'rinadi.\n"
+        f"   <code>{esc(str(item.get('link') or 'link'))}</code> bu rasm EMAS "
+        "(Telegram NFT sahifasi).\n"
+        "   Rasmni <b>rasm sifatida yuboring</b> yoki rasim havolasi "
+        "(https://...jpg) qo'ying.\n\n"
+    )
     await message.answer(
         "✅ <b>NFT qo'shildi!</b>\n\n"
         f"🖼 <b>{esc(item['title'])}</b>"
         + (f" <code>#{item['number']}</code>" if item.get("number") else "") + "\n"
-        f"💰 1 kun: <b>{fmt(daily)} UZS</b>\n\n"
-        f"📊 <b>Mijozga ko'rinadigan hisob:</b>\n"
-        f"├ 3 kun: <b>{fmt(q3['total'])} UZS</b> "
-        f"({fmt(daily)}×3 + {fmt(NFT_NETWORK_FEE)})\n"
-        f"├ 30 kun: <b>{fmt(q30['total'])} UZS</b>\n"
-        f"├ Muddat: <b>{NFT_MIN_DAYS}–{NFT_MAX_DAYS} kun</b>\n"
-        f"└ Network fee: <b>{fmt(NFT_NETWORK_FEE)} UZS</b>\n\n"
-        "<i>WebApp → NFT Rent bo'limida ko'rinadi.</i>",
+        + f"💰 1 kun: <b>{fmt(daily)} UZS</b>\n\n"
+        + "📊 <b>Mijozga ko'rinadigan hisob:</b>\n"
+        + f"├ 3 kun: <b>{fmt(q3['total'])} UZS</b> "
+        + f"({fmt(daily)}×3 + {fmt(NFT_NETWORK_FEE)})\n"
+        + f"├ 30 kun: <b>{fmt(q30['total'])} UZS</b>\n"
+        + f"├ Muddat: <b>{NFT_MIN_DAYS}–{NFT_MAX_DAYS} kun</b>\n"
+        + f"└ Network fee: <b>{fmt(NFT_NETWORK_FEE)} UZS</b>\n\n"
+        + warn
+        + "<i>WebApp → NFT Rent bo'limida ko'rinadi.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            # Rasm ko'rinmaydigan bo'lsa — darhol tuzatishga imkon beramiz.
+            *([] if has_img else [[
+                InlineKeyboardButton(text="🖼 Rasm qo'shish", callback_data=f"adm:nft_photo:{nid}"),
+            ]]),
+            [InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list"),
+             InlineKeyboardButton(text="⬅️ Admin", callback_data="adm:home")],
+        ]),
+    )
+
+
+@admin_router.callback_query(F.data.startswith("adm:nft_photo:"))
+async def adm_nft_photo_ask(call: CallbackQuery, state: FSMContext):
+    """ALDIYI bir NFT ga rasm biriktirish (ko'rsatish uchun)."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    await call.answer()
+    nid = call.data.split(":", 2)[2]
+    n = db.data.get("nfts", {}).get(nid)
+    if not n:
+        await call.message.answer("❌ NFT topilmadi.")
+        return
+    await state.set_state(NftStates.photo)
+    await state.update_data(nft_id=nid)
+    await call.message.answer(
+        "🖼 <b>Rasm biriktirish</b>\n\n"
+        f"NFT: <b>{esc(str(n.get('title')))}</b>\n\n"
+        "Endi <b>rasmni shu yerga yuboring</b> (Telegram'dan).\n\n"
+        "<i>Rasm server orqali yuboriladi va WebApp'da ko'rinadi.\n"
+        "Bekor qilish uchun /cancel.</i>",
+        reply_markup=cancel_inline_kb("adm:nft_list"),
+    )
+
+
+@admin_router.message(StateFilter(NftStates.photo), F.photo)
+async def adm_nft_photo_save(message: Message, state: FSMContext):
+    """Yuborilgan rasmni NFT ga biriktiradi (Telegram file_id)."""
+    if not is_admin_authed(message.from_user.id):
+        return
+    db.reload_if_changed()
+    data = await state.get_data()
+    nid = str(data.get("nft_id") or "")
+    n = db.data.get("nfts", {}).get(nid)
+    if not n:
+        await state.clear()
+        await message.answer("❌ Jarayon eskirgan. \n<i>«📋 NFT ro'yxati» dan qayta boshlang.</i>")
+        return
+    # Eng katta o'lchamdagi rasmni olamiz
+    n["image"] = message.photo[-1].file_id
+    n["has_photo"] = True
+    db.save()
+    await state.clear()
+    await message.answer(
+        "✅ <b>Rasm biriktirildi!</b>\n\n"
+        f"🖼 <b>{esc(str(n.get('title')))}</b>\n\n"
+        "<i>WebApp → NFT Rent bo'limida 1–3 soniyada ko'rinadi.\n"
+        "Agar ko'rinmasa — sahifani yangilang.\n"
+        "</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list"),
             InlineKeyboardButton(text="⬅️ Admin", callback_data="adm:home"),
@@ -5340,16 +5429,22 @@ async def adm_nft_list(call: CallbackQuery):
     buttons = []
     for i, n in enumerate(items, 1):
         st = "✅" if n.get("active", True) else "⏸"
+        has_img = nft_has_viewable_image(n)
         lines.append(
             f"\n{i}. {st} <b>{esc(str(n.get('title')))}</b>"
             + (f" <code>#{n.get('number')}</code>" if n.get("number") else "")
             + f"\n   💰 1 kun: <b>{fmt(num(n.get('daily')))} UZS</b>"
             f" · {NFT_MIN_DAYS} kun: <b>{fmt(nft_rent_quote(n.get('daily'), NFT_MIN_DAYS)['total'])}</b>"
+            + ("" if has_img else "\n   🚫 <b>Rasm yo'q</b> — WebApp'da bo'sh kvadrat ko'rinadi")
         )
-        buttons.append([InlineKeyboardButton(
+        row = []
+        if not has_img:
+            row.append(InlineKeyboardButton(
+                text="🖼 Rasm", callback_data=f"adm:nft_photo:{n.get('id')}"))
+        row.append(InlineKeyboardButton(
             text=f"{'⏸️' if n.get('active', True) else '▶️'} {str(n.get('title'))[:22]}",
-            callback_data=f"adm:nft_toggle:{n.get('id')}",
-        )])
+            callback_data=f"adm:nft_toggle:{n.get('id')}"))
+        buttons.append(row)
     lines.append("\n\n<i>Bosish orqali yoqish/ochish</i>")
     buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="adm:home")])
     await call.message.answer(

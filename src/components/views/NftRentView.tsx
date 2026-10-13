@@ -41,6 +41,21 @@ const COLLECTIONS = ['All collections', 'Regular gifts', 'Upgrades', 'Unique'];
 
 const fmt = (n: number) => Number(n || 0).toLocaleString('uz-UZ').replace(/,/g, ' ');
 
+/**
+ * Rasm manzilini tekshiradi.
+ *
+ * DIQQAT: server endi rasmlarni ikki xil ko'rinishda beradi:
+ *   • to'g'ridan-to'g'ri havolа (https://...) — admin link yuborgan
+ *   • nisbiy proxy yo'l (/api/nft-image/<id>) — admin RASM yuborgan
+ *     (Telegram file_id brauzerda ochilmaydi, shuning uchun proxy orqali)
+ * Eski kod faqat `^https?://` ni qabul qilardi va proxy rasmni
+ * YASHIRIB qo'yardi — shuning uchun NFT rasm chiqmay qolgan.
+ */
+const isImageUrl = (v?: string): boolean => {
+  if (!v) return false;
+  return /^https?:\/\//i.test(v) || v.startsWith('/');
+};
+
 export const NftRentView: React.FC<NftProps> = ({
   isDark,
   userId,
@@ -301,7 +316,7 @@ export const NftRentView: React.FC<NftProps> = ({
                               apple-view-animate cursor-pointer group`}
                 >
                   <div className="relative aspect-square overflow-hidden">
-                    {n.image && /^https?:\/\//i.test(n.image) ? (
+                    {isImageUrl(n.image) ? (
                       <img
                         src={n.image}
                         alt={n.title}
@@ -384,7 +399,7 @@ export const NftRentView: React.FC<NftProps> = ({
                   isDark ? 'bg-white/[0.06]' : 'bg-black/[0.04]'
                 }`}
               >
-                {sel.image && /^https?:\/\//i.test(sel.image) ? (
+                {isImageUrl(sel.image) ? (
                   <img src={sel.image} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
