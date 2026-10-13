@@ -4,108 +4,114 @@
 set -e
 cd "$(dirname "$0")/.."
 
-echo "=== 1/17 Avto to'ldirish (bank xabari parsing + balansga qo'shish) ==="
+echo "=== 1/18 Avto to'ldirish (bank xabari parsing + balansga qo'shish) ==="
 rm -f /tmp/_t_topup.json /tmp/_t_topup.json.bak /tmp/_t_topup.json.tmp
 DB_PATH=/tmp/_t_topup.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   CARD_NUMBER="${CARD_NUMBER:-9860 1701 1569 3682}" \
   python3 tests/test_topup.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
-echo "=== 2/17 Qisman to‘ldirish (boshqa summa) ==="
+echo "=== 2/18 Qisman to‘ldirish (boshqa summa) ==="
 rm -f /tmp/_t_partial.json /tmp/_t_partial.json.bak /tmp/_t_partial.json.tmp
 DB_PATH=/tmp/_t_partial.json BOT_TOKEN=123:F API_ID=0 API_HASH= \
   python3 tests/test_partial_topup.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
-echo "=== 3/17 HAQIQIY HUMO format (sizning bank xabaringiz) ==="
+echo "=== 3/18 HAQIQIY HUMO format (sizning bank xabaringiz) ==="
 rm -f /tmp/_t_real.json /tmp/_t_real.json.bak /tmp/_t_real.json.tmp
 DB_PATH=/tmp/_t_real.json API_ID=1 API_HASH=x \
   python3 tests/test_real_humo.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
 echo
-echo "=== 4/17 Userbot ulash (telefon / 2FA / QR) ==="
+echo "=== 4/18 Userbot ulash (telefon / 2FA / QR) ==="
 rm -f /tmp/_t_login.json /tmp/_t_partial.json
 DB_PATH=/tmp/_t_login.json /tmp/_t_partial.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_login.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
-echo "=== 5/17 Gift worker (userbot orqali yuborish) ==="
+echo "=== 5/18 Gift worker (userbot orqali yuborish) ==="
 rm -f /tmp/_t_gift.json /tmp/_t_gift.json.bak /tmp/_t_gift.json.tmp
 DB_PATH=/tmp/_t_gift.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_gift.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
-echo "=== 6/17 Gift tanlash (emos bo‘yicha), xabar matni, anonim ==="
+echo "=== 6/18 Gift tanlash (emos bo‘yicha), xabar matni, anonim ==="
 rm -f /tmp/_t_giftmatch.json /tmp/_t_giftmatch.json.bak /tmp/_t_giftmatch.json.tmp
 DB_PATH=/tmp/_t_giftmatch.json API_ID=0 API_HASH= BOT_TOKEN=123:F \
   python3 tests/test_gift_matching.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING|ERROR"
 
 echo
-echo "=== 7/17 BITTA userbot + kanal xabari formati ==="
+echo "=== 7/18 BITTA userbot + kanal xabari formati ==="
 rm -f /tmp/_t_giftacct.json /tmp/_t_giftacct.json.bak /tmp/_t_giftacct.json.tmp
 DB_PATH=/tmp/_t_giftacct.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_gift_account.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
-echo "=== 8/17 Gift xatolari: doimiy vs ichki (buyurtma yopilmasin) ==="
+echo "=== 8/18 Gift xatolari: doimiy vs ichki (buyurtma yopilmasin) ==="
 rm -f /tmp/_t_ge.json /tmp/_t_ge.json.bak /tmp/_t_ge.json.tmp
 DB_PATH=/tmp/_t_ge.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_gift_errors.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING|ERROR"
 
 echo
-echo "=== 9/17 SESSION_STRING validatsiyasi (362 belgi) ==="
+echo "=== 9/18 SESSION_STRING validatsiyasi (362 belgi) ==="
 rm -f /tmp/_t_sess.json /tmp/_t_sess.json.bak /tmp/_t_sess.json.tmp
 DB_PATH=/tmp/_t_sess.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_session.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
-echo "=== 10/17 MENYULAR — /start va Giftlar chiziladimi? ==="
+echo "=== 10/18 MENYULAR — /start va Giftlar chiziladimi? ==="
 rm -f /tmp/_t_menu.json /tmp/_t_menu.json.bak /tmp/_t_menu.json.tmp
 DB_PATH=/tmp/_t_menu.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_menus.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
-echo "=== 11/17 Gift avtomatik yuborilishi (matn, anonim, t.me, tiklash) ==="
+echo "=== 11/18 Gift avtomatik yuborilishi (matn, anonim, t.me, tiklash) ==="
 rm -f /tmp/_t_as.json /tmp/_t_as.json.bak /tmp/_t_as.json.tmp
 DB_PATH=/tmp/_t_as.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_gift_autosend.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING|ERROR"
 
 echo
-echo "=== 12/17 SESSION bazada saqlanadi + gift diagnostikasi ==="
+echo "=== 12/18 SESSION bazada saqlanadi + gift diagnostikasi ==="
 rm -f /tmp/_t_sd.json /tmp/_t_sd.json.bak /tmp/_t_sd.json.tmp
 DB_PATH=/tmp/_t_sd.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_session_db.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
-echo "=== 13/17 Gift bekor qilish (pul qaytariladi) ==="
+echo "=== 13/18 Gift bekor qilish (pul qaytariladi) ==="
 rm -f /tmp/_t_gc.json /tmp/_t_gc.json.bak /tmp/_t_gc.json.tmp
 DB_PATH=/tmp/_t_gc.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_gift_cancel.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING|ERROR"
 
 echo
-echo "=== 14/17 Sessiya kaliti bekor qilingan (AUTH_KEY_UNREGISTERED) ==="
+echo "=== 14/18 Sessiya kaliti bekor qilingan (AUTH_KEY_UNREGISTERED) ==="
 rm -f /tmp/_t_sr.json /tmp/_t_sr.json.bak /tmp/_t_sr.json.tmp
 DB_PATH=/tmp/_t_sr.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_session_revoked.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING|ERROR"
 
 echo
-echo "=== 15/17 SERVER HAQIQATAN ISHGA TUSHADI? (TDZ crash ga qarshi) ==="
+echo "=== 15/18 SERVER HAQIQATAN ISHGA TUSHADI? (TDZ crash ga qarshi) ==="
 # Bu test server.ts ni REAL ishga tushiradi. td/tsx build runtime
 # xatolarini (masalan "Cannot access X before initialization") ushlab
 # olmaydi — production'da esa butun serverni o'ldiradi.
 python3 tests/test_server_boot.py 2>&1 | grep -vE "TgCrypto"
 
 echo
-echo "=== 16/17 BEKOR QILISH TUGMASI — bosilishidan natijagacha ==="
+echo "=== 16/18 BEKOR QILISH TUGMASI — bosilishidan natijagacha ==="
 rm -f /tmp/_t_cu.json /tmp/_t_cu.json.bak /tmp/_t_cu.json.tmp
 DB_PATH=/tmp/_t_cu.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_gift_cancel_ui.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING|ERROR"
 
 echo
-echo "=== 17/17 TO'LOV BEKOR QILISH + MUDDAT (0:00 muammosi) ==="
+echo "=== 17/18 TO'LOV BEKOR QILISH + MUDDAT (0:00 muammosi) ==="
 rm -f /tmp/_t_tc.json /tmp/_t_tc.json.bak /tmp/_t_tc.json.tmp
 DB_PATH=/tmp/_t_tc.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
   python3 tests/test_topup_cancel.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING|ERROR"
+
+echo
+echo "=== 18/18 NFT RENT — hisob, admin oqimi, WebApp bo'limi ==="
+rm -f /tmp/_t_nft.json /tmp/_t_nft.json.bak /tmp/_t_nft.json.tmp
+DB_PATH=/tmp/_t_nft.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
+  python3 tests/test_nft_rent.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 rm -f /tmp/_t_*.json /tmp/_t_*.json.bak /tmp/_t_*.json.tmp

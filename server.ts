@@ -31,6 +31,10 @@ export const store = {
   topups: new Map<string, any>(
     Object.entries(dbSnapshot.topups)
   ),
+  /** NFT sovg'alar (ijara) — admin panel orqali qo'shiladi */
+  nfts: new Map<string, any>(
+    Object.entries(dbSnapshot.nfts || {})
+  ),
   contest: dbSnapshot.contest,
 };
 
@@ -53,11 +57,14 @@ function currentSnapshot() {
   for (const [id, o] of store.orders.entries()) ordersObj[id] = o;
   const topupsObj: Record<string, any> = {};
   for (const [id, t] of store.topups.entries()) topupsObj[id] = t;
+  const nftsObj: Record<string, any> = {};
+  for (const [id, n] of store.nfts.entries()) nftsObj[id] = n;
   return {
     settings: store.settings,
     users: usersObj,
     orders: ordersObj,
     topups: topupsObj,
+    nfts: nftsObj,
     contest: store.contest,
   };
 }
@@ -180,6 +187,7 @@ export function syncAndSaveDb() {
     users: { ...(fresh.users || {}) },
     orders: { ...(fresh.orders || {}) },
     topups: { ...(fresh.topups || {}) },
+    nfts: { ...(fresh.nfts || {}) },
     contest: { ...(fresh.contest || {}) },
   };
 
@@ -196,6 +204,7 @@ export function syncAndSaveDb() {
     ['users', store.users],
     ['orders', store.orders],
     ['topups', store.topups],
+    ['nfts', store.nfts],
   ];
   for (const [key, map] of sections) {
     for (const [k, v] of map.entries()) {
@@ -222,6 +231,7 @@ export function syncAndSaveDb() {
   for (const [k, u] of Object.entries(merged.users)) store.users.set(Number(k), u);
   for (const [k, o] of Object.entries(merged.orders)) store.orders.set(k, o);
   for (const [k, t] of Object.entries(merged.topups)) store.topups.set(k, t);
+  for (const [k, n] of Object.entries(merged.nfts || {})) store.nfts.set(k, n);
 }
 
 // Boshlang'ich holatni "o'zgartirilmagan" deb belgilaymiz
@@ -516,6 +526,45 @@ function expiresMs(t: any): number {
 function isExpired(t: any): boolean {
   const e = expiresMs(t);
   return e > 0 && Date.now() > e;
+}
+
+/**
+ * NFT RENT — narx hisobi (bot.py bilan BIR XIL).
+ * Mijozga: per day / rent / network fee / total.
+ */
+const NFT_MIN_DAYS = 3;
+const NFT_MAX_DAYS = 50;
+const NFT_NETWORK_FEE = 1700;
+const NFT_QUICK_DAYS = [3, 7, 14, 30];
+
+function nftQuote(daily: number, days: number) {
+  const d = Math.max(NFT_MIN_DAYS, Math.min(NFT_MAX_DAYS, Number(days) || NFT_MIN_DAYS));
+  const perDay = Math.max(0, Number(daily) || 0);
+  const rent = perDay * d;
+  return {
+    days: d,
+    per_day: perDay,
+    rent,
+    network_fee: NFT_NETWORK_FEE,
+    total: rent + NFT_NETWORK_FEE,
+    min_days: NFT_MIN_DAYS,
+    max_days: NFT_MAX_DAYS,
+  };
+}
+
+function nftPublicList(): any[] {
+  const items = [...store.nfts.values()]
+    .filter((n: any) => n?.active !== false)
+    .map((n: any) => ({
+      id: n.id,
+      title: String(n.title || 'NFT sovg\'a'),
+      number: n.number ?? null,
+      image: n.image || '',
+      link: n.link || '',
+      daily: Number(n.daily) || 0,
+    }))
+    .sort((a, b) => a.daily - b.daily);
+  return items;
 }
 
 app.post('/api/topup', (req: Request, res: Response) => {
@@ -867,6 +916,37 @@ app.post('/api/order', async (req: Request, res: Response) => {
 });
 
 // USDT (TON) kursi — live API + ENV zaxira
+/** NFT ro'yxati (WebApp NFT Rent bo'limi uchun) */
+app.get('/api/nfts', (_req: Request, res: Response) => {
+  getUser(_req);
+  res.json({
+    ok: true,
+    items: nftPublicList(),
+    min_days: NFT_MIN_DAYS,
+    max_days: NFT_MAX_DAYS,
+    network_fee: NFT_NETWORK_FEE,
+    quick_days: NFT_QUICK_DAYS,
+  });
+});
+
+/** NFT ijaraga olish hisobi (muddat -> to'liq summa) */
+app.get('/api/nfts/quote', (req: Request, res: Response) => {
+  getUser(req);
+  const id = String(req.query.id || '');
+  const days = Number(req.query.days) || NFT_MIN_DAYS;
+  const item: any = store.nfts.get(id);
+  if (!item || item.active === false) {
+    return res.status(404).json({ ok: false, error: 'NFT topilmadi.' });
+  }
+  const q = nftQuote(Number(item.daily) || 0, days);
+  const u = getUser(req);
+  res.json({ ok: true, quote: q, balance: Number(u.balance) || 0, item: {
+    id: item.id, title: item.title, number: item.number ?? null,
+    image: item.image || '', link: item.link || '',
+  } });
+});
+
+
 app.get('/api/rate', async (_req: Request, res: Response) => {
   try {
     const snapshot = await getUsdtUzsRate();

@@ -47,10 +47,19 @@ def handlers():
 
 
 def matches(filt: str, data: str) -> bool:
+    """filter shartiga mos keladimi?
+
+    DIQQAT: `startswith` uchun `prefix + "X"` usuli ishlaydi, lekin
+    `==` uchun ishlamaydi — aniq qiymatni solishtirish kerak.
+    """
     if f'F.data == "{data}"' in filt:
         return True
     m = re.search(r'startswith\("([^"]+)"\)', filt)
-    return bool(m and data.startswith(m.group(1)))
+    if m and data.startswith(m.group(1)):
+        return True
+    # "{id}" shablonli (f-string) tugmalar uchun
+    tmpl = re.search(r'startswith\("([^"]*)"\)', filt)
+    return False
 
 
 print("=" * 68)
@@ -60,8 +69,18 @@ hs = handlers()
 cbs = sorted(set(re.findall(r'cancel_inline_kb\(f?"([^"]+)"', SRC)))
 print(f"      topup_cancel tugmalari: {cbs}")
 for tmpl in cbs:
-    prefix = tmpl.split("{")[0]
-    hit = next((n for f, n in hs if matches(f, prefix + "X")), None)
+    # "{id}" qismi bor yoki yo'qligiga qarab mos filtrni izlaymiz
+    hit = None
+    for f, n in hs:
+        if "{x}" in tmpl or "{" in tmpl:
+            prefix = tmpl.split("{")[0]
+            if matches(f, prefix + "X"):
+                hit = n
+                break
+        else:
+            if matches(f, tmpl):
+                hit = n
+                break
     check(hit is not None, f"{tmpl} -> " + (hit or "HANDLER YO'Q!"))
 
 check("topup_cancel" in SRC and

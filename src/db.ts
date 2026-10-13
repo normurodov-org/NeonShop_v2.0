@@ -39,6 +39,20 @@ export interface TopupRecord {
   created_at: string;
 }
 
+export interface NftItem {
+  id: string;
+  title: string;
+  number: number | null;
+  /** Rasim havolasi yoki Telegram file_id */
+  image: string;
+  /** NFT linki */
+  link: string;
+  /** 1 kunlik narx (so'm) */
+  daily: number;
+  active: boolean;
+  created_at: string;
+}
+
 export interface DatabaseSchema {
   settings: {
     bot_active: boolean;
@@ -58,6 +72,8 @@ export interface DatabaseSchema {
   users: Record<string, UserRecord>;
   orders: Record<string, OrderRecord>;
   topups: Record<string, TopupRecord>;
+  /** NFT sovg'alar (ijara) — admin panel orqali qo'shiladi */
+  nfts: Record<string, NftItem>;
   contest: {
     id: string;
     text: string;
@@ -171,6 +187,7 @@ const defaultData: DatabaseSchema = {
     },
   },
   topups: {},
+  nfts: {},
   // Hali konkurs yaratilmagan — admin panel orqali yaratiladi
   contest: {
     id: 'contest_none',
@@ -198,6 +215,7 @@ export function loadDatabase(): DatabaseSchema {
         users: { ...(parsed.users || {}) },
         orders: { ...(parsed.orders || {}), ...(parsed.sales || {}) },
         topups: { ...(parsed.topups || {}) },
+        nfts: { ...(parsed.nfts || {}) },
         contest: { ...defaultData.contest, ...(parsed.contest || {}) },
       };
     }
@@ -214,6 +232,7 @@ export function loadDatabase(): DatabaseSchema {
           users: { ...(parsed.users || {}) },
           orders: { ...(parsed.orders || {}) },
           topups: { ...(parsed.topups || {}) },
+          nfts: { ...(parsed.nfts || {}) },
           contest: { ...defaultData.contest, ...(parsed.contest || {}) },
         };
       }

@@ -558,6 +558,50 @@ def now() -> datetime:
     return datetime.now(TZ)
 
 
+# =============================================================================
+# NFT RENT (ijara) — narx hisobi
+# =============================================================================
+# Ijara muddati cheklovlari (mijoz tanlaydi)
+NFT_MIN_DAYS = 3
+NFT_MAX_DAYS = 50
+# Telegram tarmog'ida bir tranzaksiya uchun to'lanadigan xarajat.
+# Bu foydalanuvchiga alohida ko'rsatiladi — u ijaraga QO'SHILMAYDI.
+NFT_NETWORK_FEE = 1700
+# Tez tanlash uchun qulay muddatlar
+NFT_QUICK_DAYS = (3, 7, 14, 30)
+
+
+def nft_rent_quote(daily: Any, days: Any) -> dict:
+    """Ijaraning to'liq hisobini qaytaradi.
+
+    Rasmdagi kabi:
+        Per day        = kunlik narx
+        Rent (N days) = kunlik × muddat
+        Network fee    = 1 700
+        Total          = Rent + Network fee
+    """
+    d = max(NFT_MIN_DAYS, min(NFT_MAX_DAYS, num(days, NFT_MIN_DAYS)))
+    per_day = max(0, num(daily))
+    rent = per_day * d
+    total = rent + NFT_NETWORK_FEE
+    return {
+        "days": d,
+        "per_day": per_day,
+        "rent": rent,
+        "network_fee": NFT_NETWORK_FEE,
+        "total": total,
+    }
+
+
+def active_nfts() -> list[dict]:
+    """WebApp va botda ko'rsatiladigan NFT'lar (arzon xilidan)."""
+    items = [
+        n for n in db.data.get("nfts", {}).values()
+        if n.get("active", True)
+    ]
+    return sorted(items, key=lambda n: num(n.get("daily"), 10 ** 9))
+
+
 def now_ms() -> float:
     """Hozirgi vaqt — MILLISEKUND.
 
@@ -686,7 +730,7 @@ class JsonDB:
         self.path = path
         self._file_lock = threading.Lock()
         self.data: dict[str, Any] = self._load()
-        for key in ("users", "topups", "sales", "orders"):
+        for key in ("users", "topups", "sales", "orders", "nfts"):
             self.data.setdefault(key, {})
         self.data.setdefault("processed_bank_msgs", [])
         self.data.setdefault("settings", {"bot_active": True})
@@ -1706,6 +1750,13 @@ class SellStates(StatesGroup):
     amount = State()
 
 
+class NftStates(StatesGroup):
+    link = State()      # NFT linki / rasmi
+    title = State()    # nomi (ixtiyoriy)
+    number = State()    # raqami (ixtiyoriy)
+    daily = State()     # 1 kunlik narx
+
+
 class TopupStates(StatesGroup):
     amount = State()
 
@@ -1795,6 +1846,19 @@ def num(value: Any, default: int = 0) -> int:
     try:
         if value is None or value == "":
             return default
+        if isinstance(value, str):
+            # "84 so'm", "1 000", "84.5", "84,5" kabi matnlarni tozalaymiz.
+            # Aks holda int("84 so'm") xato berib, butun bo'lim ishlamaydi.
+            v = re.sub(r"[^0-9.,]", "", value)
+            if not v:
+                return default
+            # "1 000,50" / "1,000.50" ni bitta kasr separatorga keltiramiz
+            if "," in v and "." in v:
+                v = v.replace(",", "") if v.rindex(".") > v.rindex(",") else v.replace(".", "").replace(",", ".")
+            elif "," in v:
+                # vergul: agar 3 ta raqamli qism bo'lsa -> minglar, aks holda kasr
+                v = v.replace(",", "") if len(v.split(",")[-1]) == 3 else v.replace(",", ".")
+            return int(float(v))
         return int(float(value))
     except (TypeError, ValueError):
         return default
@@ -1972,6 +2036,8 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="📤 Session zaxirasi", callback_data="adm:ub_export")],
             [InlineKeyboardButton(text="🔎 Gift diagnostikasi", callback_data="adm:gift_diag"),
              InlineKeyboardButton(text="♻️ Gift qayta yuborish", callback_data="adm:gift_retry")],
+            [InlineKeyboardButton(text="➕ NFT qo'shish", callback_data="adm:nft_add"),
+             InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list")],
             [InlineKeyboardButton(text="🚫 Kutayotgan gift'larni bekor qilish",
                                   callback_data="adm:gift_cancel:gone", style="danger")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
@@ -5135,6 +5201,194 @@ async def adm_gift_retry_one(call: CallbackQuery):
         f"⏳ Gift worker <b>{int(GIFT_POLL_INTERVAL)} soniya</b> ichida yana urinishadi.",
         reply_markup=admin_back_kb(),
     )
+
+
+# =============================================================================
+# ADMIN: NFT qo'shish va ro'yxat
+# =============================================================================
+@admin_router.callback_query(F.data == "adm:nft_add")
+async def adm_nft_add(call: CallbackQuery, state: FSMContext):
+    """NFT qo'shishni boshlaydi: link -> nom -> raqam -> kunlik narx."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    await call.answer()
+    await state.set_state(NftStates.link)
+    await call.message.answer(
+        "🖼 <b>NFT qo'shish — 1/4</b>\n\n"
+        "🔗 <b>NFT linkini</b> yuboring (t.me/nft/... yoki rasim havolasi).\n\n"
+        "<i>Rasm havolasi bo'lsa (https://...) — WebApp'da shu rasm ko'rinadi. "
+        "Agar link Telegram'dan bo'lsa, rasmni avval yuklab olib havolani yuboring.</i>",
+        reply_markup=cancel_inline_kb("adm:nft_cancel"),
+    )
+
+
+@admin_router.message(StateFilter(NftStates.link), F.photo)
+async def adm_nft_photo(message: Message, state: FSMContext):
+    """Admin rasm yuborsa — eng katta o'lchamdagi fayl ID olinadi."""
+    file_id = message.photo[-1].file_id
+    data = await state.get_data()
+    await state.set_state(NftStates.title)
+    await message.answer(
+        "🖼 <b>Rasm qabul qilindi</b>\n\n"
+        "📝 <b>2/4</b> — NFT nomini yuboring (masalan: Jack-in-the-Box).\n\n"
+        "<i>Rasm Telegram serverida saqlanadi. Bu o'rniga havolaviy rasm "
+        "ishlatmoqchi bo'lsangiz /start ni bosing.</i>",
+        reply_markup=cancel_inline_kb("adm:nft_cancel"),
+    )
+    await state.update_data(link=file_id, image=file_id, from_photo=True)
+
+
+@admin_router.message(StateFilter(NftStates.link), F.text)
+async def adm_nft_link(message: Message, state: FSMContext):
+    link = (message.text or "").strip()
+    if not re.match(r"^(https?://|tg://|t\.me/)", link, re.I):
+        await message.answer("⚠️ Havola <code>https://...</code> ko'rinishida bo'lishi kerak.")
+        return
+    await state.set_state(NftStates.title)
+    await state.update_data(link=link, image=link, from_photo=False)
+    await message.answer(
+        "🔗 <b>Havola qabul qilindi</b>\n\n"
+        "📝 <b>2/4</b> — NFT nomini yuboring (masalan: Jack-in-the-Box).",
+        reply_markup=cancel_inline_kb("adm:nft_cancel"),
+    )
+
+
+@admin_router.message(StateFilter(NftStates.title), F.text)
+async def adm_nft_title(message: Message, state: FSMContext):
+    await state.set_state(NftStates.number)
+    await state.update_data(title=(message.text or "").strip()[:64])
+    await message.answer(
+        "🏷 <b>Nom qabul qilindi</b>\n\n"
+        "🔢 <b>3/4</b> — NFT raqamini yuboring (masalan: 22810).",
+        reply_markup=cancel_inline_kb("adm:nft_cancel"),
+    )
+
+
+@admin_router.message(StateFilter(NftStates.number), F.text)
+async def adm_nft_number(message: Message, state: FSMContext):
+    raw = re.sub(r"\D", "", message.text or "")
+    await state.set_state(NftStates.daily)
+    await state.update_data(number=int(raw) if raw else None)
+    await message.answer(
+        "🔢 <b>Raqam qabul qilindi</b>\n\n"
+        "💰 <b>4/4</b> — <b>1 kunlik narxini</b> yuboring (so'mda, masalan: 84).",
+        reply_markup=cancel_inline_kb("adm:nft_cancel"),
+    )
+
+
+@admin_router.message(StateFilter(NftStates.daily), F.text)
+async def adm_nft_daily(message: Message, state: FSMContext):
+    daily = parse_uzs_amount(message.text or "")
+    if daily is None or daily < 1:
+        await message.answer("⚠️ Narxni butun son ko'rinishida yuboring (masalan: 84).")
+        return
+    data = await state.get_data()
+    await state.clear()
+
+    nid = new_id("nft")
+    item = {
+        "id": nid,
+        "title": data.get("title") or "NFT sovg'a",
+        "number": data.get("number"),
+        "link": data.get("link") or "",
+        "image": data.get("image") or "",
+        "daily": daily,
+        "active": True,
+        "created_at": now_iso(),
+    }
+    db.data.setdefault("nfts", {})[nid] = item
+    db.save()
+
+    q3 = nft_rent_quote(daily, NFT_MIN_DAYS)
+    q30 = nft_rent_quote(daily, 30)
+    await message.answer(
+        "✅ <b>NFT qo'shildi!</b>\n\n"
+        f"🖼 <b>{esc(item['title'])}</b>"
+        + (f" <code>#{item['number']}</code>" if item.get("number") else "") + "\n"
+        f"💰 1 kun: <b>{fmt(daily)} UZS</b>\n\n"
+        f"📊 <b>Mijozga ko'rinadigan hisob:</b>\n"
+        f"├ 3 kun: <b>{fmt(q3['total'])} UZS</b> "
+        f"({fmt(daily)}×3 + {fmt(NFT_NETWORK_FEE)})\n"
+        f"├ 30 kun: <b>{fmt(q30['total'])} UZS</b>\n"
+        f"├ Muddat: <b>{NFT_MIN_DAYS}–{NFT_MAX_DAYS} kun</b>\n"
+        f"└ Network fee: <b>{fmt(NFT_NETWORK_FEE)} UZS</b>\n\n"
+        "<i>WebApp → NFT Rent bo'limida ko'rinadi.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list"),
+            InlineKeyboardButton(text="⬅️ Admin", callback_data="adm:home"),
+        ]]),
+    )
+
+
+@admin_router.callback_query(F.data == "adm:nft_list")
+async def adm_nft_list(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    items = sorted(db.data.get("nfts", {}).values(),
+                   key=lambda n: -num(n.get("daily")))
+    if not items:
+        await call.message.answer(
+            "📋 <b>NFT ro'yxati bo'sh</b>\n\n"
+            "➕ NFT qo'shish uchun: <code>/admin → ➕ NFT qo'shish</code>",
+            reply_markup=admin_back_kb(),
+        )
+        return
+    lines = [f"📋 <b>NFT'lar</b> ({len(items)} ta)\n"]
+    buttons = []
+    for i, n in enumerate(items, 1):
+        st = "✅" if n.get("active", True) else "⏸"
+        lines.append(
+            f"\n{i}. {st} <b>{esc(str(n.get('title')))}</b>"
+            + (f" <code>#{n.get('number')}</code>" if n.get("number") else "")
+            + f"\n   💰 1 kun: <b>{fmt(num(n.get('daily')))} UZS</b>"
+            f" · {NFT_MIN_DAYS} kun: <b>{fmt(nft_rent_quote(n.get('daily'), NFT_MIN_DAYS)['total'])}</b>"
+        )
+        buttons.append([InlineKeyboardButton(
+            text=f"{'⏸️' if n.get('active', True) else '▶️'} {str(n.get('title'))[:22]}",
+            callback_data=f"adm:nft_toggle:{n.get('id')}",
+        )])
+    lines.append("\n\n<i>Bosish orqali yoqish/ochish</i>")
+    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="adm:home")])
+    await call.message.answer(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),  # type: ignore[arg-type]
+    )
+
+
+@admin_router.callback_query(F.data.startswith("adm:nft_toggle:"))
+async def adm_nft_toggle(call: CallbackQuery):
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    nid = call.data.split(":", 2)[2]
+    n = db.data.get("nfts", {}).get(nid)
+    if not n:
+        await call.message.answer("❌ NFT topilmadi.")
+        return
+    n["active"] = not n.get("active", True)
+    db.save()
+    await call.message.answer(
+        f"{'✅ Yoqildi' if n['active'] else '⏸️ To' + chr(39) + 'xtatildi'}: "
+        f"<b>{esc(str(n.get('title')))}</b>"
+    )
+
+
+@admin_router.callback_query(F.data == "adm:nft_cancel")
+async def adm_nft_add_cancel(call: CallbackQuery, state: FSMContext):
+    """«Bekor qilish» — NFT qo'shishdan chiqish."""
+    if not await _admin_guard(call):
+        return
+    await state.clear()
+    await call.answer("Bekor qilindi")
+    try:
+        await call.message.edit_text("❌ NFT qo'shish bekor qilindi.")
+    except Exception:  # noqa: BLE001
+        pass
+
 
 
 @admin_router.callback_query(F.data == "adm:logout")

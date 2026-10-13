@@ -3,6 +3,7 @@ import { User, StoreSettings, Order, UsdtRate } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check, Wallet, Layers, ChevronRight } from 'lucide-react';
 import AEmoji from '../AEmoji';
+import NftRentView from './NftRentView';
 
 interface BuyViewProps {
   user: User | null;
@@ -620,95 +621,14 @@ export const BuyView: React.FC<BuyViewProps> = ({
         </div>
       )}
 
-      {/* NFT Gift ijarasi — alohida xizmat (boshqa menejer boshqaradi) */}
+      {/* NFT RENT — ro'yxat, muddat tanlash va hisob (2-rasmdagi dizayn) */}
       {subTab === 'nft' && (
-        <div className="space-y-4">
-          {/* Xizmat haqida — kontrast uchun KO'K rang ishlatildi:
-              sariq rang yorug' rejimda deyarli ko'rinmasdi.
-              DIQQAT: ilovada `dark:` variant ishlamaydi (index.html da
-              <html class="dark"> doim turadi) — shuning uchun `isDark`
-              orqali rang beriladi, boshqa bo'limlardagi kabi. */}
-          <div className={`rounded-[26px] border p-5 space-y-3 ${
-            isDark
-              ? 'bg-blue-500/[0.10] border-blue-400/30'
-              : 'bg-blue-500/[0.08] border-blue-500/25'
-          }`}>
-            <div className="flex items-start gap-3">
-              <div className={`w-10 h-10 rounded-[14px] border flex items-center
-                              justify-center shrink-0 text-xl ${
-                                isDark
-                                  ? 'bg-blue-400/20 border-blue-400/30'
-                                  : 'bg-blue-500/15 border-blue-500/25'
-                              }`}>
-                ⚠️
-              </div>
-              <div className="min-w-0">
-                <h3 className={`text-xs font-bold ${
-                  isDark ? 'text-blue-200' : 'text-blue-800'
-                }`}>
-                  Xizmat haqida
-                </h3>
-                <p className={`text-[11px] leading-relaxed mt-1 ${
-                  isDark ? 'text-slate-200' : 'text-slate-700'
-                }`}>
-                  🔹 Bu xizmat <b>@saidovManajer</b> ga tegishli.
-                  <br />🔹 Bu xizmat bo&apos;yicha biror muammo yuz bersa,
-                  <b> @saidovManajer</b> bilan bog&apos;laning.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Asosiy karta */}
-          <div className="rounded-[28px] liquid-glass-card p-6 space-y-4 text-center">
-            <div className="w-16 h-16 mx-auto rounded-[22px] bg-gradient-to-br from-amber-500/25
-                            to-rose-500/25 border border-amber-500/30 flex items-center
-                            justify-center text-3xl">
-              🎭
-            </div>
-            <div>
-              <h2 className={`text-base font-bold ${
-                isDark ? 'text-white' : 'text-neutral-900'
-              }`}>
-                NFT Gift Ijarasi
-              </h2>
-              <p className={`text-[11px] mt-1 leading-relaxed ${
-                isDark ? 'text-neutral-400' : 'text-neutral-500'
-              }`}>
-                NFT sovg&apos;a vaqtincha ijara qilish. Rasmiy xizmat
-                <b> @rentnftlarr </b> kanalida.
-              </p>
-            </div>
-
-            <a
-              href="https://t.me/rentnftlarr"
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`w-full py-3.5 rounded-[18px] font-semibold text-xs flex items-center
-                          justify-center gap-2 apple-spring cursor-pointer ${
-                            isDark
-                              ? 'bg-white text-black hover:bg-neutral-100'
-                              : 'bg-black text-white hover:bg-neutral-800'
-                          }`}
-            >
-              <Layers className="w-4 h-4" />
-              <span>@rentnftlarr kanalini ochish</span>
-              <ChevronRight className="w-4 h-4" />
-            </a>
-
-            <div className="flex items-center justify-center gap-1.5 text-[10px] text-neutral-400">
-              <span>💬 Muammo bo&apos;lsa:</span>
-              <a
-                href="https://t.me/saidovManajer"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-semibold text-cyan-500 hover:underline"
-              >
-                @saidovManajer
-              </a>
-            </div>
-          </div>
-        </div>
+        <NftRentView
+          isDark={isDark}
+          userId={user?.id}
+          balance={user?.balance || 0}
+          onGoToTopup={onGoToTopup}
+        />
       )}
 
       {/* Error display */}
