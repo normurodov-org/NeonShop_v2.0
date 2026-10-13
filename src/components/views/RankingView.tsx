@@ -24,7 +24,6 @@ interface LeaderItem {
 
 export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, isDark, onGoToBuy }) => {
   const t = translations[lang];
-  const [viewMode, setViewMode] = useState<'ranking' | 'contest'>('ranking');
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | '3days' | '7days'>('all');
 
   const [leaders, setLeaders] = useState<LeaderItem[]>([]);
@@ -89,67 +88,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
         <p className={`text-xs mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>{t.topBuyers}</p>
       </div>
 
-      {/* Contest vs Ranking switch (Apple Segmented Style) */}
-      <div className="flex items-center gap-1 p-1 rounded-full liquid-glass">
-        <button
-          onClick={() => setViewMode('contest')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer apple-spring ${
-            viewMode === 'contest'
-              ? isDark ? 'bg-white text-black shadow-md' : 'bg-black text-white shadow-md'
-              : isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-600 hover:text-black'
-          }`}
-        >
-          <Trophy className="w-3.5 h-3.5" />
-          <span>{t.contest}</span>
-        </button>
-
-        <button
-          onClick={() => setViewMode('ranking')}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer apple-spring ${
-            viewMode === 'ranking'
-              ? isDark ? 'bg-white text-black shadow-md' : 'bg-black text-white shadow-md'
-              : isDark ? 'text-neutral-400 hover:text-white' : 'text-neutral-600 hover:text-black'
-          }`}
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>{t.ranking}</span>
-        </button>
-      </div>
-
-      {viewMode === 'contest' && contest && (
-        <div className="rounded-[28px] liquid-glass-card p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="px-3 py-1 rounded-full text-[11px] font-bold liquid-glass-pill">
-              {contest.prize_stars} ⭐ SOVRIN
-            </span>
-            <span className="text-xs font-mono text-neutral-400 flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" />
-              <span>3 kun qoldi</span>
-            </span>
-          </div>
-
-          <h3 className={`text-sm font-semibold leading-relaxed ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-            {contest.text.replace(/<[^>]*>?/gm, '')}
-          </h3>
-
-          <div className={`p-4 rounded-[18px] space-y-2 text-xs ${isDark ? 'bg-black/30' : 'bg-white/60'} border border-white/10`}>
-            <div className="flex justify-between text-neutral-400">
-              <span>G'oliblar soni:</span>
-              <b className={isDark ? 'text-white' : 'text-neutral-900'}>{contest.winners} ta</b>
-            </div>
-            <div className="flex justify-between text-neutral-400">
-              <span>Qatnashuvchilar:</span>
-              <b className={isDark ? 'text-white' : 'text-neutral-900'}>{contest.participants} kishi</b>
-            </div>
-            <div className="flex justify-between text-neutral-400">
-              <span>Holat:</span>
-              <b className="text-emerald-500 font-bold">Faol qatnashyapsiz</b>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {viewMode === 'ranking' && (
+      {(
         <>
           {/* Time filter pills */}
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1">

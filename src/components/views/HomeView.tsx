@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { User, StoreSettings } from '../../types';
 import { Lang, translations, fromPrice } from '../../i18n';
-import { ShoppingBag, Star, Sparkles, Gift, ChevronRight, Zap } from 'lucide-react';
+import { ShoppingBag, Star, Sparkles, Gift, Boxes, ChevronRight, Zap } from 'lucide-react';
 
 interface HomeViewProps {
   user: User | null;
@@ -186,6 +186,38 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
         </div>
+
+        {/* NFT Rent Card — asosiy 3 ta xizmat ostida */}
+        <a
+          href="https://t.me/rentnftlarr"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-5 cursor-pointer"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${
+              isDark ? 'bg-white/[0.08] text-neutral-300' : 'bg-black/[0.04] text-neutral-700'
+            }`}>
+              <Boxes className="w-5 h-5 drop-shadow-sm" />
+            </div>
+            <div>
+              <h3 className={`text-xs font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+                NFT Rent
+              </h3>
+              <p className={`text-[11px] mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
+                NFT sovg&apos;alar ijarasi
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
+              isDark ? 'text-neutral-200' : 'text-neutral-800'
+            }`}>
+              {lang === 'uz' ? '@rentnftlarr' : '@rentnftlarr'}
+            </span>
+            <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
+          </div>
+        </a>
       </div>
     </div>
   );

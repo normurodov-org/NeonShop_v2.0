@@ -10,6 +10,7 @@ import { RankingView } from './components/views/RankingView';
 import { ProfileView } from './components/views/ProfileView';
 import { AdminPanel } from './components/AdminPanel';
 import { LiquidPointer } from './components/LiquidPointer';
+import { toastText } from './lib/telegramText';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CheckCircle2, ArrowLeft, PauseCircle } from 'lucide-react';
 
@@ -187,9 +188,13 @@ export default function App() {
     }
   };
 
+  // DIQQAT: server.ts xabarlarni Telegram HTML formatida yuboradi
+  // (<b>, <code> ...). Toast oddiy matn sifatida ko'rsatadi, shuning
+  // uchun teglarni TOZA MATNGA aylantiramiz — aks holda foydalanuvchi
+  // "<b>Buyurtmangiz qabul qilindi!</b>" deb XOM teglarni ko'radi.
   const showToast = (msg: string) => {
     triggerHaptic('success');
-    setToastMsg(msg);
+    setToastMsg(toastText(msg));
     setTimeout(() => setToastMsg(null), 4000);
   };
 

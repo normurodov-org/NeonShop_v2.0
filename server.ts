@@ -139,6 +139,14 @@ async function postToOrdersChannel(text: string, buttonLabel = '📊 NeonShop') 
 }
 
 /** Rasmdagi kanal formati (3-rasm). */
+/** Usernamni kanalda yashiradi: @odilbek -> @ode**** */
+function maskUsername(name: string | number | null | undefined): string {
+  const t = String(name ?? '').trim().replace(/^@+/, '');
+  if (!t) return '@user';
+  if (t.length <= 4) return `@${t.slice(0, 1)}***`;
+  return `@${t.slice(0, 3)}****`;
+}
+
 function channelOrderText(o: {
   title: string;
   username: string;
@@ -149,7 +157,7 @@ function channelOrderText(o: {
 }): string {
   const lines = [
     `⭐ <b>${o.title}</b> `,
-    `👤 <b>${o.username} </b>`,
+    `👤 <b>${maskUsername(o.username)} </b>`,
     '',
     `📦 <b>${o.amountText}</b>`,
     `💵 <b>Summasi:</b> ${o.price.toLocaleString()} so'm`,
@@ -449,6 +457,46 @@ app.get('/api/me', async (req: Request, res: Response) => {
   });
 });
 
+/**
+ * To'lovga UNIQUE qo'shimcha qo'shadi (mijoz shu summani yuboradi).
+ *
+ * Nima uchun: bir nechta mijoz bir vaqtda bir xil summani yuborsa,
+ * avtomatik moslashtirish chalkashadi — kimning to'lovi ekanini
+ * aniqlab bo'lmaydi. Shu sababli har bir so'rovga ketma-ket raqam
+ * qo'shiladi:
+ *
+ *     mijoz 1 000 so'm so'raydi  ->  1 000 + 1  =  1 001 so'm yuboradi
+ *     mijoz 1 000 so'm so'raydi  ->  1 000 + 2  =  1 002 so'm yuboradi
+ *
+ * Mijoz balansiga FAQAT so'ralgan summa qo'shiladi (qo'shimcha
+ * faqat moslashtirish uchun tegish hisoblanadi).
+ */
+let TOPUP_SEQ = 0;
+
+/**
+ * Chaqiruv BARCHA deklaratsiyalardan KEYIN bo'lishi shart —
+ * aks holda TDZ: "Cannot access 'TOPUP_SEQ' before initialization"
+ * (bu serverni butunlay o'ldiradi).
+ */
+loadTopupSequence();
+
+function nextTopupSequence(): number {
+  // Noldan boshlanmaslik uchun birga qo'shiladi
+  return ++TOPUP_SEQ;
+}
+
+function loadTopupSequence(): number {
+  // DB'da eng katta ketma-ket raqamni topamiz (restart'dan keyin
+  // raqam qayta ishlatilmasligi kerak)
+  let max = 0;
+  for (const t of store.topups.values()) {
+    const n = Number((t as any)?.seq) || 0;
+    if (n > max) max = n;
+  }
+  TOPUP_SEQ = max;
+  return max;
+}
+
 app.post('/api/topup', (req: Request, res: Response) => {
   const user = getUser(req);
   const amount = Number(req.body.amount);
@@ -465,17 +513,26 @@ app.post('/api/topup', (req: Request, res: Response) => {
   }
 
   const id = 'top_' + Math.random().toString(36).slice(2, 9);
-  const expires_at = Date.now() + 5 * 60 * 1000; // 5 minutes
+  // 60 daqiqa (eski 5 min edi — mijoz kartadan to'lab, keyin
+  // "tekshirish" bosishi uchun vaqt yetmasdi)
+  const expires_at = Date.now() + 60 * 60 * 1000;
+
+  // Ketma-ket raqam: har bir so'rovga unikal qo'shimcha qo'shiladi
+  // (masalan 1000 + 39 = 1039) — avtomatik moslashtirish chalkashmasligi uchun
+  const seq = nextTopupSequence();
+  const amountToSend = amount + seq;
 
   const newTopup = {
     id,
     user_id: user.id,
-    amount,
+    amount,            // mijoz so'ragan (balansga SHU qo'shiladi)
+    seq,               // ketma-ket raqam
+    amount_to_send: amountToSend,  // mijoz kartaga yuborishi KERAK
     status: 'pending',
     card: store.settings.card_number,
     holder: store.settings.card_holder,
     expires_at,
-    expires_in: 300,
+    expires_in: 3600,
     created_at: new Date().toISOString(),
   };
 

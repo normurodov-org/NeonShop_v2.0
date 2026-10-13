@@ -475,7 +475,7 @@ GIFTS_BY_KEY = {g[0]: g for g in GIFTS}
 MANUAL_FALLBACK = os.getenv("MANUAL_FALLBACK", "1").strip().lower() not in ("0", "false", "no", "")
 MIN_TOPUP = 1_000
 MAX_TOPUP = 10_000_000
-TOPUP_TIMEOUT_SEC = 5 * 60
+TOPUP_TIMEOUT_SEC = 60 * 60  # 60 daqiqa (eski: 5 min — yetarli emas edi)
 TOPUP_GRACE_SEC = 60
 TON_FEE_RESERVE_NANO = 50_000_000
 
@@ -556,6 +556,31 @@ log.info("💎 To'lov usuli: FAQAT USDT (TON) — Fragment")
 # =============================================================================
 def now() -> datetime:
     return datetime.now(TZ)
+
+
+def now_ms() -> float:
+    """Hozirgi vaqt — MILLISEKUND.
+
+    Nima uchun: server.ts va WebApp `Date.now()` ishlatadi (ms), lekin
+    bot.py avval `time.time()` (sekund) ishlatardi. Bitta DB maydoniga
+    ikki xil birlik yozilardi va natijada:
+      • botda yaratilgan so'rovni server.ts DARHOL "expired" deb hisoblar
+        (1.79e9 < 1.79e12)
+      • WebApp'da yaratilgan so'rov bot.py hech qachon muddati
+        o'tgan deb hisoblamaydi
+    Bu — "qabul qilish" tugmasi "eskirgan" deydigan asl sabab edi.
+    Endi HAMMA joyda ms.
+    """
+    return time.time() * 1000
+
+
+def to_ms(value: Any, default: float = 0.0) -> float:
+    """DB'dan olingan muddatni ms ga keltiradi (eski sekund qiymatlar uchun)."""
+    v = num(value, 0)
+    if v <= 0:
+        return default
+    # 10^11 dan kichik = sekund (1973-yildan keyingi vaqt sekundda)
+    return v * 1000 if v < 1e11 else v
 
 
 def now_iso() -> str:
@@ -2937,6 +2962,24 @@ async def post_order_to_channel(order: dict, title: str, username: str,
 CHANNEL_OK: dict[str, Any] = {"ok": False}
 
 
+def mask_username(name: Any) -> str:
+    """Usernamni kanalda yashiradi: @odilbek -> @ode****
+
+    Nima uchun: ORDERS_CHANNEL kanal ochiq bo'lishi mumkin, mijoz
+    usernami ko'rinib qolsa (shaxsiy ma'lumot). Faqat bosh harflar
+    ko'rinadi — mijozni aniqlab bo'lmaydi, lekin xabar tushunarli.
+    """
+    t = str(name or "").strip()
+    if not t:
+        return "@user"
+    t = t.lstrip("@")
+    # Juda qisqa nomlarni umuman yashirmaymiz ( "@ab" ni yashirish
+    # ma'nosiz — u allaqachon deyarli ochiq)
+    if len(t) <= 4:
+        return "@" + t[0] + "***"
+    return "@" + t[:3] + "****"
+
+
 def format_order_channel_text(*, title: str, who: str, amount_text: str,
                               price: int, cashback: int = 0) -> str:
     """ORDERS_CHANNEL uchun xabar matni (mijoz rasmidagi format).
@@ -2952,7 +2995,8 @@ def format_order_channel_text(*, title: str, who: str, amount_text: str,
     """
     lines = [
         f"⭐ <b>{esc(title)}</b> ",
-        f"👤 <b>{esc(who)} </b>",
+        # Kanalda usernam YASHIRILADI (shaxsiy ma'lumot himoyasi)
+        f"👤 <b>{esc(mask_username(who))} </b>",
         "",
         f"📦 <b>{esc(amount_text)}</b>",
         f"💵 <b>Summasi:</b> {fmt(price)} so'm",
@@ -3304,19 +3348,21 @@ async def on_humo_message(client: UserbotClient, message) -> None:
         if msg_id in db.data["processed_bank_msgs"]:
             return
         db.data["processed_bank_msgs"].append(msg_id)
-        now = time.time()
+        now = now_ms()
         # WebApp'dan yaratilgan to'lovlar ham ko'rinishi uchun bazani yangilaymiz
         db.reload_if_changed()
 
-        # Muddati o'tgan so'rovlarni tozalaymiz
+        # Muddati o'tgan so'rovlarni tozalaymiz.
+        # DIQQAT: expires_at BIRLIGI — millisekund (server.ts bilan bir xil).
+        # Eski sekund qiymatlari to_ms() orqali avtomatik konvert qilinadi.
         for t in db.data["topups"].values():
-            if t.get("status") == "pending" and float(t.get("expires_at", 0)) < now:
+            if t.get("status") == "pending" and to_ms(t.get("expires_at"), now) < now:
                 t["status"] = "expired"
 
         # Faol so'rovlar: mijoz aynan shu summani to'lashini kutamiz
         pending = [
             t for t in db.data["topups"].values()
-            if t.get("status") == "pending" and float(t.get("expires_at", 0)) > now
+            if t.get("status") == "pending" and to_ms(t.get("expires_at"), now) > now
         ]
 
         # Karta tekshiruvi: o'z kartamizdan tushgan to'lovni tasdiqlaymiz
@@ -3325,11 +3371,24 @@ async def on_humo_message(client: UserbotClient, message) -> None:
         if card and our_digits:
             card_ok = card in our_digits or our_digits.endswith(card)
 
-        matches = [
+        # Aniq moslik. DIQQAT: mijoz kartaga `amount_to_send`
+        # (so'ralgan summa + ketma-ket raqam) yuboradi, shuning uchun
+        # IKKALA qiymat ham tekshiriladi:
+        #   1) amount_to_send == kelgan summa  (eng ishonchli)
+        #   2) amount == kelgan summa           (eskiroq usul / qo'lda
+        #                                        to'lov yuborgan bo'lsa)
+        matches_exact = [
             t for t in pending
-            if int(t.get("amount", 0)) == amount
+            if t.get("amount_to_send") and int(t["amount_to_send"]) == amount
             and (card_ok or not card)
         ]
+        matches_plain = [
+            t for t in pending
+            if (not t.get("amount_to_send"))
+            and int(t.get("amount", 0)) == amount
+            and (card_ok or not card)
+        ]
+        matches = matches_exact or matches_plain
 
         # Aniq moslik topilmasa: kartamizga kelgan to'lov bo'lsa va
         # faqat BITTA kutilayotgan so'rov bo'lsa — mijoz to'lagan
@@ -3355,6 +3414,9 @@ async def on_humo_message(client: UserbotClient, message) -> None:
             t["payment_method"] = "humocard"
             # Balansga MIJOZ TO'LAGAN haqiqiy summa qo'shiladi
             # (qisman to'ldirishda so'ralgan summa emas).
+            # To'liq moslik: mijoz kartaga amount_to_send yuborgan
+            # (qo'shimcha biz qo'shgan edik) — balansga esa SO'RALGAN
+            # summa qo'shiladi. Qisman moslikda — HAQIQIY yuborilgan.
             credit = amount if partial else int(t["amount"])
             t["requested_amount"] = int(t.get("amount", 0))
             t["amount"] = credit
@@ -4363,7 +4425,7 @@ async def topup_start(message: Message, state: FSMContext, db_user: dict):
     await state.clear()
     existing = next((t for t in pending_topups() if t["user_id"] == db_user["id"]), None)
     if existing:
-        left = max(0, int(existing["expires_at"] - time.time()))
+        left = max(0, int((to_ms(existing.get("expires_at")) - now_ms()) // 1000))
         await message.answer(
             f"⏳ Sizda faol so'rov bor: <b>{fmt(existing['amount'])} UZS</b>\n"
             f"💳 Karta: <code>{CARD_NUMBER}</code>\nQolgan vaqt: {left // 60}:{left % 60:02d}",
@@ -4377,6 +4439,20 @@ async def topup_start(message: Message, state: FSMContext, db_user: dict):
     )
 
 
+def next_topup_seq() -> int:
+    """To'lov so'rovi uchun ketma-ket raqam.
+
+    Nima uchun: mijoz so'ragan summa + bu raqam = kartaga yuboriladigan
+    summa. Masalan 1 000 so'm so'raydi, #39-so'rov bo'lsa ->
+    1 039 so'm yuboradi. Shu bilan bir xil summali to'lovlar chalkashmaydi
+    va userbot aniq qaysi mijoz ekanini aniqlaydi.
+    """
+    settings = db.data.setdefault("settings", {})
+    n = int(num(settings.get("topup_seq"))) + 1
+    settings["topup_seq"] = n
+    return n
+
+
 @router.message(StateFilter(TopupStates.amount), F.text, NOT_MENU)
 async def topup_amount(message: Message, state: FSMContext, db_user: dict):
     amount = parse_uzs_amount(message.text)
@@ -4385,13 +4461,17 @@ async def topup_amount(message: Message, state: FSMContext, db_user: dict):
         return
     await state.clear()
     topup_id = new_id("t")
+    seq = next_topup_seq()
+    amount_to_send = amount + seq
     topup = {
         "id": topup_id,
         "user_id": db_user["id"],
-        "amount": amount,
+        "amount": amount,                 # balansga SHU qo'shiladi
+        "seq": seq,                       # ketma-ket raqam
+        "amount_to_send": amount_to_send,  # kartaga yuborilishi kerak
         "status": "pending",
         "created_at": now_iso(),
-        "expires_at": time.time() + TOPUP_TIMEOUT_SEC,
+        "expires_at": now_ms() + TOPUP_TIMEOUT_SEC * 1000,
     }
     db.data["topups"][topup_id] = topup
     db.save()
@@ -4399,9 +4479,12 @@ async def topup_amount(message: Message, state: FSMContext, db_user: dict):
     await message.answer(
         f"💳 <b>To'lov ma'lumotlari</b>\n\n"
         f"Karta: <code>{CARD_NUMBER}</code>\n"
-        f"Egasi: {esc(CARD_HOLDER)}\n"
-        f"Summa: <b>{fmt(amount)} UZS</b>\n\n"
-        f"⏱ <b>{TOPUP_TIMEOUT_SEC // 60} daqiqa</b> ichida o'tkazing.",
+        f"Egasi: {esc(CARD_HOLDER)}\n\n"
+        f"💰 <b>Kartaga yuboring:</b> <code>{fmt(amount_to_send)} UZS</code>\n"
+        f"   <i>(so'ragan: {fmt(amount)} UZS · №{seq})</i>\n\n"
+        f"⏱ <b>{TOPUP_TIMEOUT_SEC // 60} daqiqa</b> ichida o'tkazing.\n"
+        f"⚠️ <i>Aynan {fmt(amount_to_send)} so'm yuboring — boshqa summa "
+        f"avtomatik tanib bo'lmaydi.</i>",
         reply_markup=cancel_inline_kb(f"topup_cancel:{topup_id}"),
     )
 
