@@ -2204,6 +2204,8 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="♻️ Gift qayta yuborish", callback_data="adm:gift_retry")],
             [InlineKeyboardButton(text="➕ NFT qo'shish", callback_data="adm:nft_add"),
              InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list")],
+            [InlineKeyboardButton(text="📨 Menedjerga xabar tekshiruvi",
+                                  callback_data="adm:nft_ping")],
             [InlineKeyboardButton(text="🚫 Kutayotgan gift'larni bekor qilish",
                                   callback_data="adm:gift_cancel:gone", style="danger")],
             [InlineKeyboardButton(text="🚪 Chiqish", callback_data="adm:logout", style="danger")],
@@ -3179,23 +3181,109 @@ async def ub_cb_nft_action(call) -> None:
 
 
 
+def unblock_pending_nft_notifications() -> int:
+    """Userbot ulanganda — BERKITILGAN NFT xabarlarini qayta ochadi.
+
+    🔴 NIMA UCHUN?
+    Bot ishga tushganda userbot hali ulanmagan bo'lishi mumkin.
+    Shu vaqt ichida navbatdagi buyurtmalar "yuborib bo'lmadi"
+    deb belgilangan va `gave_up` qo'yilgan. Keyin userbot ulansa
+    ham ular BUTUNLAY yuborilmasdi — admin esa "xabar kelmayapti"
+    deb o'ylab, sababsiz izohlaydi.
+
+    Bu funksiya userbot ulangan har safar chaqiriladi.
+    """
+    n = 0
+    db.reload_if_changed()
+    # 🔴 Eski versiyalarda qolgan "jimgina" xatolar ham tozalanadi:
+    # eski kod `input_peer_resolve_username` ga murojaat qilgan
+    # (pyrofork'da YO'Q funksiya) — shuning uchun har bir urinish
+    # AttributeError berib, 8 urinishdan keyin berkitilgan edi.
+    for order in (db.data.get("orders") or {}).values():
+        if order.get("kind") != "nft_rent":
+            continue
+        if order.get("status") not in ("pending", "claimed", ""):
+            continue
+        if order.get("nft_notified"):
+            continue
+        # 🔴 Har bir buyurtma FAQAT BIR MARTA hisoblanadi. Avval
+        # `gave_up` va eski xato alohida tekshirilgan edi — bir
+        # buyurtma ikkalasiga ham tegsa 2 marta qo'shilardi va
+        # logdagi son haqiqiy emas edi.
+        touched = False
+        if order.get("nft_notify_gave_up"):
+            order.pop("nft_notify_gave_up", None)
+            touched = True
+        # Eski AttributeError xatolari — yangi kod bilan
+        # muvaffaqiyatli bo'lishi mumkin
+        err = str(order.get("nft_notify_error") or "")
+        if "InputPeerResolveUsername" in err or "resolve_username" in err:
+            order["nft_notify_error"] = ""
+            touched = True
+        if touched:
+            order["nft_notify_tries"] = 0
+            n += 1
+        order.pop("nft_notify_wait_ub", None)
+    if n:
+        db.save()
+        log.info("📨 %d ta NFT xabari qayta navbatga qaytarildi", n)
+    return n
+
+
 async def _ub_resolve_chat(username: str) -> int:
-    """Username -> chat_id (userbot orqali)."""
+    """Username -> chat_id (userbot orqali).
+
+    🔴 BU YERDA XATO BO'LGAN: fallback `raw.functions.InputPeerResolveUsername`
+    bu pyrofork versiyasida YO'Q (`AttributeError`) — ya'ni birinchi
+    usul ishlamasa, keyingilari umuman ishga tushmasdi va xabar
+    hech qachon yuborilmasdi.
+
+    Endi uchta mustaqil usul bor (birinchisi ishlamasa keyingisi):
+      1. `get_chat(username)`   — dialog mavjud bo'lsa
+      2. `resolve_peer(username)` — MTProto darajasida resolve
+      3. `t.me/<username>` linki orqali — resolve_peer buni qabul qiladi
+    """
     ub = userbot
-    if ub is None:
+    if ub is None or not getattr(ub, "is_connected", False):
         raise RuntimeError("userbot ulanmagan")
     uname = str(username or "").strip().lstrip("@")
     if not uname:
         raise ValueError("username bo'sh")
+
+    errors = []
+
+    # 1) To'g'ridan-to'g'ri
     try:
         chat = await ub.get_chat(uname)
-    except Exception:
-        # get_chat ba'zi username'lar uchun ishlamaydi — peer dialog
-        # orqali urinib ko'ramiz.
-        from pyrogram import raw as _raw
-        peer = await ub.invoke(_raw.functions.InputPeerResolveUsername(uname, uname))
-        chat = await ub.get_chat(peer)
-    return chat.id
+        if chat is not None and getattr(chat, "id", None):
+            return int(chat.id)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"get_chat: {type(exc).__name__}: {exc}")
+
+    # 2) MTProto resolve
+    for target in (uname, f"https://t.me/{uname}"):
+        try:
+            peer = await ub.resolve_peer(target)
+            pid = getattr(peer, "user_id", None) or getattr(peer, "channel_id", None)
+            if pid:
+                return int(pid)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"resolve_peer({target[:20]}): {type(exc).__name__}: {exc}")
+
+    # 3) Aniq tushuntirish bilan xato
+    hint = ""
+    joined = " | ".join(errors)
+    if "PeerIdInvalid" in joined or "USERNAME_NOT_OCCUPIED" in joined:
+        hint = (f"\n\n🔍 <b>Sabab:</b> <code>{esc(NFT_MANAGER)}</code> topilmadi.\n"
+                "   Username ni tekshiring — Telegram username'larda "
+                "registrga sezgir.")
+    elif "Forbidden" in joined or "CHAT_WRITE_FORBIDDEN" in joined:
+        hint = (f"\n\n🔍 <b>Sabab:</b> {esc(NFT_MANAGER)} sizga xabar yuborishga "
+                "TO'G'RIQ qo'ygan (maxfiylik).\n"
+                "   Yechim: uni sizga xabar yuborishni so'rang yoki "
+                "Settings → Privacy → Last Seen & Online → "
+                "\"Everybody\" qiling.")
+    raise RuntimeError(f"chat topilmadi: {joined}{hint}")
 
 
 async def send_nft_notify_via_userbot(order: dict) -> dict:
@@ -3268,16 +3356,40 @@ async def nft_notify_worker() -> None:
                     log.info("📨 NFT xabari %s ga yuborildi (order %s)",
                              NFT_MANAGER, order_id)
                 except Exception as exc:  # noqa: BLE001
-                    # Userbot hali ulanmagan bo'lishi mumkin — keyin
-                    # urinib ko'ramiz (silamiz, lekin cheksiz emas).
+                    # 🔴 USERBOT ULANMAGAN BO'LSA URINISH SONINI
+                    # OSHKARMAYDI. Sabab: bot ishga tushganda userbot
+                    # hali ulanmagan bo'ladi (telefon bilan ulash
+                    # keyin), shu vaqt ichida 8 urinish sarflanib
+                    # `gave_up` qo'yilardi — keyin userbot ulansa ham
+                    # xabar butunlay YUBORILMASDI.
+                    # Endi: ulanmagan holat hisobga OLINMAYDI.
+                    offline = (userbot is None
+                               or not getattr(userbot, "is_connected", False))
+                    if offline:
+                        order["nft_notify_wait_ub"] = True
+                        continue          # urinishni sarflamaymiz
+                    order["nft_notify_wait_ub"] = False
+
                     tries = num(order.get("nft_notify_tries")) + 1
                     order["nft_notify_tries"] = tries
                     order["nft_notify_error"] = str(exc)[:200]
+                    order["nft_notify_error_at"] = now_iso()
                     if tries >= 8:
                         order["nft_notify_gave_up"] = True
                         log.warning(
                             "NFT xabari yuborilmadi (8 urinish, order %s): %s",
                             order_id, exc,
+                        )
+                        # 🔴 Jim qolmaslik — admin xabarning KETMADI
+                        #ligini bilishi kerak, aks holda "xabar
+                        # kelmayapti" degan savol doimiy bo'ladi.
+                        await notify_admins(
+                            "⚠️ <b>NFT xabari yuborilmadi</b>\n\n"
+                            f"👤 Menedjer: <b>{esc(NFT_MANAGER)}</b>\n"
+                            f"🆔 Buyurtma: <code>{esc(str(order_id))}</code>\n"
+                            f"🔍 <code>{esc(str(exc)[:300])}</code>\n\n"
+                            "<i>Muddat o'tib ketmasligi uchun buyurtmani "
+                            "qo'lda yopishingiz mumkin.</i>"
                         )
                     db.save()
         except asyncio.CancelledError:
@@ -4601,6 +4713,9 @@ def maybe_start_userbot() -> None:
                 )
                 return
             log.info("👤 Userbot ishga tushdi (%s), bank xabarlari kuzatilmoqda...", who)
+            # 🔴 Agar xabarlar userbot ulanishidan OLDIN berkitilgan
+            # bo'lsa (gave_up), endi qayta urinib ko'ramiz.
+            unblock_pending_nft_notifications()
             set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
             asyncio.create_task(ub_idle())
             # Bizning xatomiz tufayli yutilgan gift'larni tikla
@@ -6141,6 +6256,95 @@ async def _handle_nft_action(call, actor: str, actor_label: str) -> None:
 
     msg, _ = await _nft_apply_action(order, action, actor_label)
     await call.answer(msg, show_alert=True)
+
+
+@admin_router.callback_query(F.data == "adm:nft_ping")
+async def adm_nft_ping(call: CallbackQuery):
+    """📨 Menedjerga xabar YUBORISHNI tekshirish (diagnostika).
+
+    Nima uchun kerak: userbot orqali xabar yuborish ko'p sababga
+    bog'liq (ulanmagan, maxfiylik, noto'g'ri username). Bu tugma
+    barchasini bir zumda ko'rsatadi va xabar yuborib ko'radi.
+    """
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    await call.answer("⏳ Tekshirilmoqda...")
+    status = await call.message.answer("🔍 <i>Tekshirilmoqda…</i>")
+
+    ub = userbot
+    if ub is None or not getattr(ub, "is_connected", False):
+        await status.edit_text(
+            "🔴 <b>Userbot ulanmagan</b>\n\n"
+            "Shu sababdan @saidovManajer ga xabar yuborilmaydi.\n\n"
+            "🔧 <b>Yechim:</b> <code>/admin → 📱 Raqam bilan ulash</code>\n"
+            "<i>Sessiya avtomatik bazaga saqlanadi — Railway ENV kerak "
+            "bo'lmaydi.</i>"
+        )
+        return
+
+    try:
+        me = await ub.get_me()
+    except Exception as exc:  # noqa: BLE001
+        await status.edit_text(
+            "🔴 <b>Userbot xato javob berdi</b>\n\n"
+            f"<code>{esc(str(exc)[:300])}</code>"
+        )
+        return
+
+    # Navbatdagi (yuborilmagan) buyurtmalar
+    queue = [
+        (oid, o) for oid, o in (db.data.get("orders") or {}).items()
+        if o.get("kind") == "nft_rent" and not o.get("nft_notified")
+        and o.get("status") in ("pending", "claimed", "")
+    ]
+
+    lines = [
+        "✅ <b>Userbot ulangan</b>",
+        f"👤 Akkaunt: <b>@{esc(getattr(me, 'username', '') or me.id)}</b>",
+        f"📨 Menedjer: <b>{esc(NFT_MANAGER)}</b>",
+        f"📦 Navbatda: <b>{len(queue)}</b> ta yuborilmagan xabar",
+    ]
+
+    # Faqat MAVJUD bo'lgan buyurtmani xabar qilamiz
+    if queue:
+        target_id = queue[0][0]
+        try:
+            info = await send_nft_notify_via_userbot(db.data["orders"][target_id])
+            lines += [
+                "",
+                f"✅ <b>Xabar yuborildi!</b> ({esc(NFT_MANAGER)})",
+                f"🆔 <code>{esc(str(target_id))}</code>",
+                "<i>Navbatdagi qolgan xabarlar ham navbat bilan "
+                "ketma-ket yuboriladi.</i>",
+            ]
+        except Exception as exc:  # noqa: BLE001
+            lines += [
+                "",
+                f"🔴 <b>Yuborilmadi:</b> <code>{esc(str(exc)[:400])}</code>",
+            ]
+    else:
+        # Test xabar — navbat bo'lmasa ham tekshiramiz
+        lines += ["", "ℹ️ Navbat bo'sh — test xabar yuborilmaydi."]
+        try:
+            chat_id = await _ub_resolve_chat(NFT_MANAGER)
+            lines += [
+                "",
+                f"✅ <b>{esc(NFT_MANAGER)} topildi</b> (chat id: <code>{chat_id}</code>)",
+                "🎁 Test uchun «Bajarildi / Bekor qilish» tugmalari "
+                "faqat haqiqiy buyurtmada ishlaydi.",
+            ]
+        except Exception as exc:  # noqa: BLE001
+            lines += ["", f"🔴 <b>Chat topilmadi:</b> <code>{esc(str(exc)[:400])}</code>"]
+
+    kb = None
+    if queue:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔄 Qayta urinish", callback_data="adm:nft_ping"),
+            InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list"),
+        ]])
+    await status.edit_text("\n".join(lines), reply_markup=kb,
+                           disable_web_page_preview=True)
 
 
 @admin_router.callback_query(F.data == "adm:nft_list")
