@@ -138,6 +138,13 @@ from aiogram.types import (
 )
 from pyrogram import Client as UserbotClient
 from pyrogram.enums import ParseMode as UbParseMode
+# 🔴 Pyrofork'ning o'z klaviatura turlari. Aiogram'nikini ishlatib
+# bo'lmaydi — pyrofork ichida `.write()` metodi yo'q va Telegram
+# javob beradi:
+#     AttributeError: 'InlineKeyboardMarkup' object has no attribute 'write'
+# Shu sabab userbot uchun ALohIDA tuzilmalar kerak.
+from pyrogram.types import InlineKeyboardMarkup as UbInlineKeyboardMarkup
+from pyrogram.types import InlineKeyboardButton as UbInlineKeyboardButton
 from pyrogram import idle as ub_idle
 from pyrogram import filters as ub_filters
 from pyrogram import raw as ub_raw
@@ -3304,7 +3311,8 @@ async def send_nft_notify_via_userbot(order: dict) -> dict:
     text = await nft_order_summary(order)
     sent = await ub.send_message(
         chat_id, text,
-        reply_markup=nft_action_kb(order.get("id", "")),
+        # 🔴 pyrofork KLAVIATURASI kerak (aiogram niki emas)
+        reply_markup=ub_nft_action_kb(order.get("id", "")),
         # 🔴 pyrofork STRING kutadi, enum emas (Invalid parse mode)
         parse_mode=UB_PARSE_HTML,
         disable_web_page_preview=True,
@@ -6052,16 +6060,37 @@ def nft_order_by_id(order_id: str) -> Optional[dict]:
 
 
 def nft_action_kb(order_id: str) -> InlineKeyboardMarkup:
-    """✅ Bajarildi / ❌ Bekor qilish tugmalari.
+    """✅ Bajarildi / ❌ Bekor qilish — BOT (aiogram) uchun.
 
-    callback: `nftok:<order_id>:<actor>` — `actor` = `adm` yoki `mgr`.
-    Bu bizning xabarimiz (bot yoki userbot), shuning uchun faqat o'sha
-    yo'l bosadi.
+    callback: `nftok:<order_id>:<done|cancel>`
     """
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Bajarildi", callback_data=f"nftok:{order_id}:done"),
         InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"nftok:{order_id}:cancel"),
     ]])
+
+
+def ub_nft_action_kb(order_id: str):
+    """✅ Bajarildi / ❌ Bekor qilish — USERBOT (pyrofork) uchun.
+
+    🔴 Nima uchun alohida funksiya?
+    Pyrofork `send_message` ichida tugmalarni `keyboard.write(...)`
+    orqali yuboradi. Aiogram'ning `InlineKeyboardMarkup`ida bu metod
+    YO'Q — va xabar butunlab "AttributeError: 'InlineKeyboardMarkup'
+    object has no attribute 'write'" bilan rad qilinadi.
+
+    Ya'ni tugmalar xabar matni bilan birga yuborilishi uchun
+    HAR IKKI KUTUBXONA UCHUN alohida tuzilma kerak.
+    """
+    return UbInlineKeyboardMarkup([[
+        UbInlineKeyboardButton("✅ Bajarildi", callback_data=f"nftok:{order_id}:done"),
+        UbInlineKeyboardButton("❌ Bekor qilish", callback_data=f"nftok:{order_id}:cancel"),
+    ]])
+
+
+def ub_empty_kb():
+    """USERBOT uchun bo'sh tugmalar (tugmalarni olib tashlash)."""
+    return UbInlineKeyboardMarkup([])
 
 
 async def nft_order_summary(order: dict, status_line: str = "") -> str:
@@ -6124,7 +6153,8 @@ async def _patch_nft_notices(order: dict, text: str) -> None:
                 # va xabar umuman yuborilmaydi.
                 await userbot.edit_message_text(
                     n["chat"], n["msg"], text,
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
+                    # 🔴 pyrofork KLAVIATURASI (aiogram niki emas)
+                    reply_markup=ub_empty_kb(),
                     parse_mode=UB_PARSE_HTML,
                 )
             else:

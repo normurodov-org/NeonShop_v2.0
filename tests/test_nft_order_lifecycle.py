@@ -158,8 +158,11 @@ for frag, label in (
 check('order.get("customer_username")' in sm, "mijoz username'i")
 check('order.get("admin_username")' in sm, "admin nomi (kim yubordi)")
 # Tugmalar summary'da emas — yuboruvchida (ikkala yo'l ham)
-check("reply_markup=nft_action_kb" in BSRC,
-      "tugmalar userbot xabariga ulangan")
+# 🔴 USERBOT uchun PYROFORK klaviaturasi kerak (aiogram niki
+# ishlamaydi: "object has no attribute 'write'"). 23-testda
+# haqiqiy .write() bilan tekshiriladi.
+check("reply_markup=ub_nft_action_kb" in BSRC,
+      "tugmalar userbot xabariga ulangan (pyrofork klaviatura)")
 
 print()
 print("=" * 70)

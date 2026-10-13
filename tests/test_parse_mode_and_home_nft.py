@@ -212,6 +212,56 @@ except Exception as exc:  # noqa: BLE001
 
 print()
 print("=" * 70)
+print("7) 🔴 KLAVIATURA — aiogram TURI userbotda ISHLAMAYDI")
+print("=" * 70)
+# XABAR: "'InlineKeyboardMarkup' object has no attribute 'write'"
+check("from pyrogram.types import InlineKeyboardMarkup as UbInlineKeyboardMarkup"
+      in BSRC, "pyrofork InlineKeyboardMarkup import qilingan")
+check("from pyrogram.types import InlineKeyboardButton as UbInlineKeyboardButton"
+      in BSRC, "pyrofork InlineKeyboardButton import qilingan")
+check("def ub_nft_action_kb(" in BSRC, "ub_nft_action_kb()")
+check("def ub_empty_kb(" in BSRC, "ub_empty_kb()")
+check("reply_markup=ub_nft_action_kb(" in BSRC, "userbot xabari -> pyrofork klaviatura")
+check("reply_markup=ub_empty_kb()" in BSRC, "userbot edit -> pyrofork bo'sh klaviatura")
+check("reply_markup=nft_action_kb(" not in send_fn,
+      "🔴 userbot ga aiogram klaviaturasi yuborilmaydi")
+
+try:
+    import asyncio
+
+    sys.path.insert(0, ROOT)
+    import bot as B
+
+    async def _kb():
+        out = {}
+        for label, kb in (("aiogram", B.nft_action_kb("nft_x")),
+                          ("pyrofork", B.ub_nft_action_kb("nft_x")),
+                          ("pyrofork_empty", B.ub_empty_kb())):
+            try:
+                raw_kb = await kb.write(None)   # pyrofork ichida shuni qiladi
+                out[label] = ("OK",
+                              [b.text for b in raw_kb.rows[0].buttons] if raw_kb.rows else [])
+            except Exception as exc:  # noqa: BLE001
+                out[label] = ("XATO", type(exc).__name__)
+        return out
+
+    kb_res = asyncio.run(_kb())
+    print(f"      aiogram (eski)      -> {kb_res['aiogram'][0]}: {kb_res['aiogram'][1]}")
+    print(f"      pyrofork (yangi)    -> {kb_res['pyrofork'][0]}: {kb_res['pyrofork'][1]}")
+    print(f"      pyrofork (bo'sh)    -> {kb_res['pyrofork_empty'][0]}: {kb_res['pyrofork_empty'][1]}")
+    check(kb_res["pyrofork"][0] == "OK",
+          f"🔴 pyrofork klaviatura ishlaydi ({kb_res['pyrofork'][1]})")
+    check(kb_res["pyrofork"][1] == ["✅ Bajarildi", "❌ Bekor qilish"],
+          "ikki tugma ham to'g'ri")
+    check(kb_res["pyrofork_empty"][0] == "OK",
+          "tugmalarni olib tashlash ishlaydi")
+    check(kb_res["aiogram"][0] == "XATO",
+          "aiogram klaviatura userbotda ISHLAMAYDI (AttributeError)")
+except Exception as exc:  # noqa: BLE001
+    check(False, f"klaviatura tekshiruvi: {exc}")
+
+print()
+print("=" * 70)
 print("NATIJA:", "✅ BARCHASI TO'G'RI" if ok else "❌ MUAMMO BOR")
 print("=" * 70)
 sys.exit(0 if ok else 1)
