@@ -191,9 +191,22 @@ async def run():
             and any("sign_in(phone_code,phone_code_hash,phone_number)" in c for c in calls))
     ok &= good
     print(" ", "✅ telefon → kod → sign_in" if good else "❌")
-    good2 = any("SESSION_STRING=" in o for o in out)
+    # DIQQAT: eski versiya "SESSION_STRING=..." matnini talab qilardi.
+    # Endi sessiya AVTOMATIK bazaga saqlanadi (`settings.userbot_session`),
+    # shuning uchun Railway ENV ga qo'yish shart emas.
+    # Ikkalasini ham qabul qilamiz — aslida nima bo'lganini tekshiramiz.
+    saved_to_db = any("avtomatik saqlandi" in o for o in out)
+    shown_env = any("SESSION_STRING=" in o for o in out)
+    good2 = saved_to_db or shown_env
     ok &= good2
-    print(" ", "✅ SESSION_STRING berildi" if good2 else "❌ SESSION_STRING yo'q")
+    print(" ", "✅ Session saqlandi (baza)" if saved_to_db
+          else ("✅ SESSION_STRING ko'rsatildi (ENV)" if shown_env
+                else "❌ Session hech qanday saqlanmadi"))
+    # Haqiqiy tekshiruv: sessiya bazada bormi?
+    sess = (B.db.data.get("settings", {}) or {}).get(B.SESSION_KEY, "")
+    ok &= bool(sess)
+    print(" ", f"✅ Bazada saqlandi ({len(sess)} belgi)" if sess
+          else "❌ Bazada sessiya yo'q")
     print("  ", out[-1].split("\n")[0] if out else "")
 
     print()

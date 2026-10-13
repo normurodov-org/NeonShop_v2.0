@@ -13,6 +13,8 @@ interface BuyViewProps {
   initialTab?: 'stars' | 'premium' | 'gifts' | 'nft';
   onOrderSuccess: (order: Order, newBalance: number, msg: string) => void;
   onGoToTopup: () => void;
+  /** NFT ijaraga olish yuborilganda — toast ko'rsatish uchun */
+  onRented?: (msg: string, newBalance?: number) => void;
 }
 
 export const BuyView: React.FC<BuyViewProps> = ({
@@ -23,6 +25,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
   initialTab = 'stars',
   onOrderSuccess,
   onGoToTopup,
+  onRented,
 }) => {
   const t = translations[lang];
   const [subTab, setSubTab] = useState<'stars' | 'premium' | 'gifts' | 'nft'>(initialTab);
@@ -628,6 +631,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
           userId={user?.id}
           balance={user?.balance || 0}
           onGoToTopup={onGoToTopup}
+          onRented={onRented}
         />
       )}
 

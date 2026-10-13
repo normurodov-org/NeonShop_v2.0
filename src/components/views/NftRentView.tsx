@@ -24,6 +24,8 @@ interface NftProps {
   userId?: number;
   balance?: number;
   onGoToTopup: () => void;
+  /** Buyurtma yuborilganda chaqiriladi (toast + tab yopish) */
+  onRented?: (msg: string, newBalance?: number) => void;
 }
 
 const TABS = [
@@ -44,6 +46,7 @@ export const NftRentView: React.FC<NftProps> = ({
   userId,
   balance = 0,
   onGoToTopup,
+  onRented,
 }) => {
   const [items, setItems] = useState<NftItem[]>([]);
   const [minDays, setMinDays] = useState(3);
@@ -61,6 +64,8 @@ export const NftRentView: React.FC<NftProps> = ({
   const [days, setDays] = useState(3);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [qLoading, setQLoading] = useState(false);
+  const [renting, setRenting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -130,8 +135,45 @@ export const NftRentView: React.FC<NftProps> = ({
   const [, setLiveBalance] = useState(balance);
   const onBalance = (b: number) => setLiveBalance(b);
 
+  /** "Sotib olish" — buyurtma yaratadi va menejer/adminga xabar boradi. */
+  const rent = async () => {
+    if (!sel || !quote || renting) return;
+    setRenting(true);
+    setErr(null);
+    try {
+      const r = await fetch('/api/nfts/rent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-telegram-user-id': userId?.toString() || '',
+        },
+        body: JSON.stringify({ id: sel.id, days: quote.days }),
+      });
+      const j = await r.json();
+      if (!j.ok) {
+        // Balans yetarli emas -> to'ldirishga yo'naltiramiz
+        if (j.need_topup || r.status === 402) {
+          setErr(j.error || 'Balans yetarli emas');
+          onGoToTopup();
+        } else {
+          setErr(j.error || 'Xatolik yuz berdi');
+        }
+        return;
+      }
+      onBalance(Number(j.balance) || 0);
+      onRented?.(j.message || 'NFT ijaraga olish so&apos;rovi yuborildi', Number(j.balance) || 0);
+      setSel(null);
+      load();
+    } catch {
+      setErr('Server bilan bog‘lanib bo‘lmadi');
+    } finally {
+      setRenting(false);
+    }
+  };
+
   const open = (item: NftItem) => {
     setSel(item);
+    setErr(null);
     setDays(minDays);
     loadQuote(item, minDays);
   };
@@ -473,14 +515,23 @@ export const NftRentView: React.FC<NftProps> = ({
               </div>
             </div>
 
+            {err && (
+              <div className="rounded-[18px] bg-red-500/10 border border-red-500/25 px-3 py-2.5">
+                <div className="text-[11px] font-bold text-red-400">{err}</div>
+              </div>
+            )}
             <button
-              disabled={insufficient || qLoading}
-              onClick={onGoToTopup}
+              disabled={renting || qLoading}
+              onClick={insufficient ? onGoToTopup : rent}
               className={`w-full py-4 rounded-[22px] text-[15px] font-black apple-spring
-                          disabled:opacity-40 cursor-pointer
+                          disabled:opacity-50 cursor-pointer
                           bg-[var(--accent)] text-white shadow-lg`}
             >
-              Top up · {fmt(quote?.total ?? 0)} UZS
+              {insufficient
+                ? `Top up · ${fmt(quote?.total ?? 0)} UZS`
+                : renting
+                  ? 'Yuborilmoqda…'
+                  : `Sotib olish · ${fmt(quote?.total ?? 0)} UZS`}
             </button>
             <p className={`text-[10px] text-center leading-relaxed ${isDark ? 'text-neutral-500' : 'text-neutral-400'}`}>
               To&apos;lovdan keyin NFTni Fragment hisobingizga ulaysiz. Muddat tugach

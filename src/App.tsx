@@ -192,6 +192,15 @@ export default function App() {
   // (<b>, <code> ...). Toast oddiy matn sifatida ko'rsatadi, shuning
   // uchun teglarni TOZA MATNGA aylantiramiz — aks holda foydalanuvchi
   // "<b>Buyurtmangiz qabul qilindi!</b>" deb XOM teglarni ko'radi.
+  // NFT ijaraga olish yuborilganda — balans darhol yangilanadi
+  // (server allaqon yechgan) va toast chiqadi.
+  const handleNftRented = (msg: string, newBalance?: number) => {
+    if (user && typeof newBalance === 'number') {
+      setUser({ ...user, balance: newBalance });
+    }
+    showToast(msg);
+  };
+
   const showToast = (msg: string) => {
     triggerHaptic('success');
     setToastMsg(toastText(msg));
@@ -402,6 +411,7 @@ export default function App() {
             initialTab={initialBuyCategory}
             onOrderSuccess={handleOrderSuccess}
             onGoToTopup={() => setCurrentTab('topup')}
+            onRented={handleNftRented}
           />
         )}
         </ErrorBoundary>

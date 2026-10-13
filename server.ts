@@ -947,6 +947,149 @@ app.get('/api/nfts/quote', (req: Request, res: Response) => {
 });
 
 
+/** @saidovManajer — NFT ijarani rasmiy yopish. */
+const NFT_MANAGER = (process.env.NFT_MANAGER_USERNAME || '@saidovmanajer').trim();
+
+/**
+ * NFT ijaraga olish buyurtmasi.
+ *
+ * Mijoz "Sotib olish" bosganida:
+ *   • balansdan summa yechiladi
+ *   • buyurtma yaratiladi (status: pending)
+ *   • ADMIN va @saidovManajer ga xabar boradi:
+ *       NFT linki, muddat, narx, mijoz username
+ * Menejer mijoz bilan tez orada bog'lanadi va Fragment orqali
+ * ulaydi.
+ */
+app.post('/api/nfts/rent', async (req: Request, res: Response) => {
+  const user = getUser(req);
+  const id = String(req.body?.id || '');
+  const days = Number(req.body?.days) || NFT_MIN_DAYS;
+
+  const item: any = store.nfts.get(id);
+  if (!item || item.active === false) {
+    return res.status(404).json({ ok: false, error: 'NFT topilmadi.' });
+  }
+
+  const q = nftQuote(Number(item.daily) || 0, days);
+  if (q.days < NFT_MIN_DAYS || q.days > NFT_MAX_DAYS) {
+    return res.status(400).json({
+      ok: false,
+      error: `Muddat ${NFT_MIN_DAYS}–${NFT_MAX_DAYS} kun oralig'ida bo'lishi kerak.`,
+    });
+  }
+
+  if (Number(user.balance) < q.total) {
+    return res.status(402).json({
+      ok: false,
+      error: `Balans yetarli emas. Kerak: ${q.total.toLocaleString()} UZS, `
+           + `balansingiz: ${Number(user.balance).toLocaleString()} UZS.`,
+      need_topup: true,
+      required: q.total,
+      balance: Number(user.balance),
+    });
+  }
+
+  // Balansdan yechamiz
+  user.balance = Number(user.balance) - q.total;
+  user.total_spent = Number(user.total_spent || 0) + q.total;
+
+  // Botdagi "📜 Tarix" ro'yxatiga ham yozamiz — mijoz WebApp'da
+  // ko'rmagan amalini bot orqali ko'ra olsin.
+  // Formati bot.py dagi JsonDB.add_history bilan BIR XIL.
+  try {
+    const hist: any[] = Array.isArray(user.history) ? user.history : [];
+    hist.push({
+      type: 'nft_rent',
+      amount: -q.total,
+      details: `NFT ijarasi: ${item.title}${item.number != null ? ` #${item.number}` : ''} · ${q.days} kun`,
+      date: new Date().toISOString(),
+    });
+    user.history = hist.slice(-100); // bot.py dagi HISTORY_LIMIT bilan bir xil
+  } catch {
+    /* tarix — qo'shimcha, xatoga olib kelmasligi kerak */
+  }
+
+  const orderId = 'nft_' + Math.random().toString(36).slice(2, 9);
+  const who = `@${user.username || user.id}`;
+  const newOrder = {
+    id: orderId,
+    user_id: user.id,
+    kind: 'nft_rent',
+    title: `${item.title}${item.number != null ? ` #${item.number}` : ''}`,
+    nft_id: item.id,
+    nft_link: item.link || '',
+    nft_title: item.title,
+    nft_number: item.number ?? null,
+    days: q.days,
+    per_day: q.per_day,
+    rent: q.rent,
+    network_fee: q.network_fee,
+    price: q.total,
+    price_uzs: q.total,
+    amount: q.days,
+    status: 'pending',
+    source: 'webapp',
+    created_at: new Date().toISOString(),
+  };
+  store.orders.set(orderId, newOrder);
+  syncAndSaveDb();
+
+  // --- Admin va menejerga xabar ---
+  const text =
+    `🎁 <b>NFT ijaraga olish so'rovi</b>\n\n`
+    + `🖼 <b>${item.title}</b>${item.number != null ? ` <code>#${item.number}</code>` : ''}\n`
+    + (item.link
+        ? `🔗 Link: <a href="${item.link}">${item.link}</a>\n`
+        : '🔗 Link: <i>yuborilmagan</i>\n')
+    + `👤 Mijoz: <b>${who}</b> (ID: <code>${user.id}</code>)\n`
+    + `📅 Muddat: <b>${q.days} kun</b>\n\n`
+    + `💰 Hisob:\n`
+    + `├ 1 kunlik: ${q.per_day.toLocaleString()} UZS\n`
+    + `├ Ijara (${q.days} kun): ${q.rent.toLocaleString()} UZS\n`
+    + `├ Network fee: ${q.network_fee.toLocaleString()} UZS\n`
+    + `└ <b>Jami: ${q.total.toLocaleString()} UZS</b>\n\n`
+    + `🆔 <code>${orderId}</code>\n\n`
+    + `⚡ <i>${NFT_MANAGER} — mijoz bilan tez orada bog'laning va `
+    + `Fragment orqali ulang.</i>`;
+
+  const token = (process.env.BOT_TOKEN || '').trim();
+  const targets = [
+    { id: store.settings.admin_id || 8307046273, name: 'ADMIN' },
+    { id: NFT_MANAGER, name: 'MENEDJER' },
+  ];
+  for (const t of targets) {
+    if (!t.id || !token) continue;
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: t.id,
+          text: `${text}\n\n<i>${t.name}</i>`,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const j: any = await r.json();
+      if (!j.ok) console.warn('[nft-rent] xabar yuborilmadi:', j?.description);
+    } catch (e) {
+      console.error('[nft-rent] xabar yuborishda xato:', e);
+    }
+  }
+
+  res.json({
+    ok: true,
+    order: newOrder,
+    balance: user.balance,
+    message: `✅ NFT ijaraga olish so'rovi yuborildi!\n\n`
+      + `🖼 ${item.title}\n`
+      + `📅 ${q.days} kun · ${q.total.toLocaleString()} UZS\n\n`
+      + `📞 Menejer siz bilan tez orada bog'lanadi.`,
+  });
+});
+
 app.get('/api/rate', async (_req: Request, res: Response) => {
   try {
     const snapshot = await getUsdtUzsRate();

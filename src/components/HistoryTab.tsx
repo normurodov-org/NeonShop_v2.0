@@ -1,6 +1,6 @@
 import React from 'react';
 import { Order } from '../types';
-import { Clock, CheckCircle2, AlertCircle, ShoppingBag, Star, Gift, Sparkles } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, ShoppingBag, Star, Gift, Sparkles, Boxes, Clock3 } from 'lucide-react';
 
 interface HistoryTabProps {
   orders: Order[];
@@ -29,6 +29,8 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ orders }) => {
         return <Sparkles className="w-5 h-5 text-purple-400" />;
       case 'gift':
         return <Gift className="w-5 h-5 text-pink-400" />;
+      case 'nft_rent':
+        return <Boxes className="w-5 h-5 text-violet-400" />;
       default:
         return <ShoppingBag className="w-5 h-5 text-cyan-400" />;
     }
@@ -66,8 +68,19 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ orders }) => {
                 <div>
                   <div className="text-sm font-bold text-white">{order.title}</div>
                   <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
-                    <span>Qabul qiluvchi: <b className="text-slate-300">@{order.recipient}</b></span>
-                    <span>•</span>
+                    {/* NFT ijarada qabul qiluvchi yo'q — muddat ko'rsatiladi.
+                        Aks holda "@undefined" chiqardi (bu xato bo'lgan). */}
+                    {(order as any).kind === 'nft_rent' ? (
+                      <>
+                        <span>NFT ijarasi: <b className="text-slate-300">{(order as any).days ?? '?'} kun</b></span>
+                        <span>•</span>
+                      </>
+                    ) : order.recipient ? (
+                      <>
+                        <span>Qabul qiluvchi: <b className="text-slate-300">@{order.recipient}</b></span>
+                        <span>•</span>
+                      </>
+                    ) : null}
                     <span>{dateStr}</span>
                   </div>
                 </div>
@@ -81,10 +94,17 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ orders }) => {
                   <div className="text-[10px] font-mono text-slate-500">ID: {order.id}</div>
                 </div>
 
-                <div className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Bajarildi</span>
-                </div>
+                {order.status === 'pending' ? (
+                  <div className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    <Clock3 className="w-3.5 h-3.5" />
+                    <span>Menejer bog'lanmoqda</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Bajarildi</span>
+                  </div>
+                )}
               </div>
             </div>
           );
