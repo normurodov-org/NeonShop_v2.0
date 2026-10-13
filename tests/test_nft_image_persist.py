@@ -33,6 +33,9 @@ import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from helpers import strip_code as _strip  # noqa: E402
+
 VIEW = open(f"{ROOT}/src/components/views/NftRentView.tsx", encoding="utf-8").read()
 CSS = open(f"{ROOT}/src/index.css", encoding="utf-8").read()
 SRV = open(f"{ROOT}/server.ts", encoding="utf-8").read()
@@ -51,21 +54,16 @@ print("1) 🔴 ISTATILGAN MUDDATLI TAYMER BO'LMASIN")
 print("=" * 70)
 # 🔴 IZOHLARNI OLIB TASHLAMISHI SHART — aks holda bu test o'z
 # izohimizni ("eski xato shunday edi") xato deb o'ylab qizil bo'ladi.
-def strip_comments(text: str) -> str:
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)      # /* ... */
-    text = re.sub(r"//[^\n]*", "", text)                  # // ...
-    return text
-
 raw = VIEW[VIEW.index("const NftImage:"):VIEW.index("export const NftRentView")]
-img = strip_comments(raw)
+img = _strip(raw)
 timers = re.findall(r"setTimeout\([^)]*\)", img)
 check(not timers,
       f"KODDA setTimeout yo'q ({len(timers)} ta) — izohlardan keyin")
 check("stopTimer" not in img, "stopTimer ham yo'q")
 check("timerRef" not in img, "timerRef ham yo'q")
-check("setState('failed'), 6000" not in strip_comments(VIEW),
+check("setState('failed'), 6000" not in _strip(VIEW),
       "6s da o'ldirish qoldig'i yo'q")
-check("setState('failed'), 20000" not in strip_comments(VIEW),
+check("setState('failed'), 20000" not in _strip(VIEW),
       "20s da o'ldirish qoldig'i yo'q")
 
 print()
@@ -90,8 +88,14 @@ check(".nft-shimmer {" in CSS, "shimmer CSS bor")
 check("@keyframes nftShimmer" in CSS, "shimmer animatsiyasi")
 check("prefers-reduced-motion" in CSS,
       "qurilma talablariga mos (harakat kamaytirilgan)")
-check("nft-img w-full h-full nft-shimmer" in img,
-      "shimmer rasm o'lchamini saqlaydi (CLS = 0)")
+check("absolute inset-0 nft-shimmer" in img,
+      "🔴 shimmer <img> ORTIDA (absolut), uni almashtirmaydi")
+# DEADLOCK: shimmer <img> ni almashtirsa, onLoad hech qachon chiqmaydi
+_shim = img[img.index("if (ok && loading)") if "if (ok && loading)" in img else len(img):]
+check("if (ok && loading)" not in img,
+      "🔴 shimmer <img> ni ALMASHTIRMAYDI (onLoad deadlock)")
+check("loading=\"eager\"" in img,
+      "🔴 loading=\"eager\" — \"lazy\" bu layout'da ISHLAMAYDI")
 
 print()
 print("=" * 70)

@@ -644,6 +644,55 @@ def nft_slug_from_url(url: str) -> tuple:
     return (slug, None)
 
 
+# Fragment CDN — 1500x1500 rasmlar (og.image dan 9 MARTA katta)
+# -----------------------------------------------------------------------------
+# `og:image` har doim 160x160 THUMBNAIL beradi. Bu telefon ekranida
+# (devicePixelRatio 3) juda xira ko'rinadi.
+#
+# Fragment'ning o'z CDN'i esa TO'LIQ o'lchamdagi rasmni beradi:
+#     https://nft.fragment.com/gift/finepen-18272.webp  ->  1500x1500
+#
+# ⚠️ Slug qoidasi: KICHIK harf + so'zlar BIRGA (chiziqcha YO'Q)
+#     FinePen-18272       -> finepen-18272        ✅
+#     HomemadeCake-2976  -> homemadecake-2976    ✅
+#     homemade-cake-2976  -> 404                  ❌
+NFT_HD_BASE = "https://nft.fragment.com/gift/"
+
+
+def nft_hd_url(link: str) -> str:
+    """T.me NFT havolasidan 1500px rasm havolasini yasaydi.
+
+    `resolve_nft_page()` da havolani `nft_hd_link()` orqali tekshiriladi
+    (HEAD so'rovi) — 404 chiqsa, `og:image` (160px) ishlatiladi.
+    """
+    # 🔴 TO'LIQ slug kerak (nom + raqam), `nft_slug_from_url` esa faqat
+    # NOMNI qaytaradi. `finepen` -> 404, `finepen-18272` -> 200.
+    try:
+        path = urlsplit(link.strip()).path or ""
+    except ValueError:
+        return ""
+    m = re.search(r"/nft/([^/?#]+)", path)
+    if not m:
+        return ""
+    return f"{NFT_HD_BASE}{m.group(1).lower()}.webp"
+
+
+async def nft_hd_exists(url: str) -> bool:
+    """Fragment CDN'da rasm borligini HEAD bilan tekshiradi (arzon)."""
+    if not url:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True,
+                                    headers={"User-Agent": NFT_UA}) as client:
+            r = await client.head(url)
+            if r.status_code != 200:
+                return False
+            ct = (r.headers.get("content-type") or "").lower()
+            return ct.startswith("image/")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def resolve_nft_page(url: str) -> Optional[dict]:
     """Telegram NFT sahifasidan rasm + nom + tavsifni oladi.
 
@@ -677,7 +726,16 @@ async def resolve_nft_page(url: str) -> Optional[dict]:
             )
         return m.group(1).strip() if m else ""
 
-    image = meta("og:image")
+    # 🔴 AVVAL 160x160 og:image, endi 1500x1500 Fragment CDN.
+    # Tartib muhim: HD ni birinchi sinab ko'ramiz, topilmasa
+    # 160px ga qaytamiz (ba'zi giftlarda HD yo'q).
+    hd = nft_hd_url(url)
+    image = ""
+    hd_ok = False
+    if hd and await nft_hd_exists(hd):
+        image, hd_ok = hd, True
+    if not image:
+        image = meta("og:image")
     if not image or not image.startswith("http"):
         return None
 
@@ -697,6 +755,7 @@ async def resolve_nft_page(url: str) -> Optional[dict]:
 
     return {
         "image": image,
+        "image_hd": hd_ok,          # 1500px yoki 160px thumbnail
         "title": title or "",
         "number": number,
         "description": meta("og:description"),

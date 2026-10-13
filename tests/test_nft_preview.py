@@ -79,7 +79,12 @@ except Exception as exc:  # noqa: BLE001
 
 if online:
     check(got["image"].startswith("https://"), f"rasm havolasi: {got['image'][:58]}...")
-    check("telesco.pe" in got["image"], "Telegram CDN (cdn*.telesco.pe)")
+    if got.get("image_hd"):
+        check("nft.fragment.com" in got["image"],
+              "🔴 1500x1500 Fragment CDN (tiniq rasm)")
+    else:
+        check("telesco.pe" in got["image"],
+              "HD yo'q -> 160px Telegram CDN (og:image)")
     check(got["title"] == "Fine Pen", f"nom: {got['title']}")
     check(got["number"] == 18272, f"raqam: {got['number']}")
     check("Backdrop" in got["description"], "tavsifda Backdrop bor")

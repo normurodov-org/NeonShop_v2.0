@@ -435,9 +435,22 @@
   .nft-menu-in { animation-duration: 0.01ms; }
 }
 
+/* 🔴 XAVFSIZLIK: bazaviy holat `opacity: 1`.
+   Avval `opacity: 0` + `forwards` edi. Agar animatsiya ishlamasa
+   (fon rejimi, qurilma tezligi, `prefers-reduced-motion`) karta
+   `opacity: 0` da QOLIB KETARDI — mijoz uchun butun bo'lim
+   ko'rinmas bo'lardi.
+
+   Endi: `forwards` YO'Q. Animatsiya tugagach element o'z baza
+   holatiga (`opacity: 1`, transformsiz) qaytadi. Animatsiya
+   umuman ishlamasa ham karta KO'RINADI — bu "fail-safe".
+
+   Stagger uchun `backwards` ishlatiladi: `animation-delay` davomida
+   `from` holati ko'rinadi (chiroyli ketma-ket paydo bo'lish), lekin
+   tugagach baza holatga qaytadi. */
 .nft-card-in {
-  opacity: 0;
-  animation: nftCardIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  opacity: 1;
+  animation: nftCardIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) backwards;
   animation-delay: calc(var(--i, 0) * 0.035s);
 }
 

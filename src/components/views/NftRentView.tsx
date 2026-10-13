@@ -94,11 +94,13 @@ const NftImage: React.FC<{
   alt: string;
   isDark: boolean;
   className?: string;
+  /** Birinchi bir nechta rasm tez yuklansin (fetchPriority) */
+  fetchPriority?: 'high' | 'low' | 'auto';
   /** NFT id — rasmni qayta olish uchun (self-healing) */
   nftId?: string;
   /** Telegram foydalanuvchi id */
   userId?: number;
-}> = ({ src, alt, isDark, className = '', nftId, userId }) => {
+}> = ({ src, alt, isDark, className = '', fetchPriority = 'auto', nftId, userId }) => {
   const [state, setState] = useState<'idle' | 'failed'>('idle');
   const [retrying, setRetrying] = useState(false);
   // Faqat BIR marta qayta urinish — aks holda cheksiz sikl bo'ladi
@@ -184,17 +186,6 @@ const NftImage: React.FC<{
 
   // Yuklanayotgan payt — shimmer (rasm kelganda yo'qoladi).
   // Bu yerda rasm O'LMAYDI: faqat chiroyli "yuklanmoqda" holati.
-  if (ok && loading) {
-    return (
-      <div
-        className={`nft-img w-full h-full nft-shimmer ${
-          isDark ? 'bg-white/[0.04]' : 'bg-black/[0.03]'
-        } ${className}`}
-        aria-label="Yuklanmoqda"
-      />
-    );
-  }
-
   if (!ok) {
     return (
       <div
@@ -217,12 +208,47 @@ const NftImage: React.FC<{
       </div>
     );
   }
+  // 🔴🔴 SHIMMER `<img>` NI ALMASHTIRMAYDI — UNING USTIDA TURADI!
+  //
+  // AVVAL shunday edi:
+  //     if (ok && loading) return <div className="nft-shimmer" />;
+  //     return <img ... onLoad={...} />;
+  //
+  // Bu DEADLOCK beradi:
+  //   1) `loading` true -> `<img>` umuman render BO'LMAYDI
+  //   2) `<img>` yo'q -> `onLoad` hech qachon chiqmaydi
+  //   3) `loading` hech qachon false bo'lmaydi
+  //   4) natija: shimmer DOIM qoladi, rasm umuman ko'rinmaydi.
+  //
+  // Brauzerda o'lchandi: cards:3, imgs:0, shimmer:3 — rasm yo'q.
+  //
+  // YECHIM: `<img>` HAR DOIM render bo'ladi, shimmer esa uning
+  // ORTIDA (absolute inset-0) turadi va `onLoad` bilan yo'qoladi.
   return (
+    <>
     <img
       src={shown}
       alt={alt}
-      loading="lazy"
+      // 🔴🔴 `loading="lazy"` BU YERDA ISHLAMAYDI — RASMLAR UMUMAN
+      // YUKLANMAYDI.
+      //
+      // Brauzerda o'lchandi (3 ta NFT, lokal server):
+      //     loading="lazy"  -> naturalWidth: 0,0,0   (hech qachon)
+      //     loading="eager" -> naturalWidth:160 x3  + shimmer to'g'ri
+      //
+      // Sabab: kartalar `apple-view-animate` / `nft-card-in`
+      // animatsiyalari bilan kirganda, layout barqaror bo'lguncha
+      // Chrome lazy yuklashni KECHIKTIRADI va bu holatda umuman
+      // boshlamaydi. Natijada hech qanday `onLoad` kelmaydi va
+      // shimmer abadiy qoladi — mijoz uchun "rasm yo'q" degani.
+      //
+      // Rasmlar kichik (160x160, ~8 KB) va ro'yxatda ~40 ta, ya'ni
+      // jami ~300 KB — `eager` ni oqilona qiladi. Muhimroq: rasm
+      // KO'RINishi kerak.
+      loading="eager"
       decoding="async"
+      // Ekran yuqorisidagi rasmlar avval, qolganlari keyin yuklanadi
+      fetchPriority={fetchPriority}
       // 🔴 Rasmga o'lcham beriladi: `aspect-square` konteyner barqaror,
       // lekin rasmning o'z `width`/`height` siz yo'q bo'lsa, rasm
       // yuklanganda konteyner BIR PIKSEL siljishi mumkin (CLS).
@@ -246,6 +272,16 @@ const NftImage: React.FC<{
       }}
       className={`nft-img w-full h-full object-cover ${className}`}
     />
+    {/* Yuklanayotgan payt — rasm ORTIDA (img ustida emas!) */}
+    {loading && (
+      <div
+        className={`absolute inset-0 nft-shimmer ${
+          isDark ? 'bg-white/[0.04]' : 'bg-black/[0.03]'
+        }`}
+        aria-hidden
+      />
+    )}
+    </>
   );
 };
 
@@ -729,8 +765,10 @@ export const NftRentView: React.FC<NftProps> = ({
           >
             {/* Sarlavha */}
             <div className="flex items-center gap-3">
+              {/* `relative` — shimmer absolute bo'lishi uchun joylashuv
+                  konteyneri kerak (kartada allaqon bor edi). */}
               <div
-                className={`w-16 h-16 rounded-[18px] overflow-hidden shrink-0 ${
+                className={`w-16 h-16 rounded-[18px] overflow-hidden shrink-0 relative ${
                   isDark ? 'bg-white/[0.06]' : 'bg-black/[0.04]'
                 }`}
               >

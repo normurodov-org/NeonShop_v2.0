@@ -177,7 +177,8 @@ except Exception:  # noqa: BLE001
     got, online = None, False
 
 if online:
-    check(got["image"].startswith("https://cdn"), "rasm havolasi")
+    # 1500x1500 Fragment CDN (HD yo'q bo'lsa 160px og.image)
+    check(got["image"].startswith("https://"), "rasm havolasi")
     check(got["title"] == "Fine Pen", f"nom: {got['title']}")
     check(got["number"] == 18272, f"raqam: {got['number']}")
     check("Backdrop: Chestnut" in got["description"],

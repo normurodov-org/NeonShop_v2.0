@@ -36,9 +36,15 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from helpers import strip_code, section  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CSS = open(f"{ROOT}/src/index.css", encoding="utf-8").read()
-VIEW = open(f"{ROOT}/src/components/views/NftRentView.tsx", encoding="utf-8").read()
+# Izoh va docstring larni tozalaymiz — aks holda test o'z
+# izohimizni ("avval shunday edi") xato deb o'ylab qizil bo'lardi.
+CSS = strip_code(open(f"{ROOT}/src/index.css", encoding="utf-8").read())
+VIEW = strip_code(open(f"{ROOT}/src/components/views/NftRentView.tsx",
+                       encoding="utf-8").read())
 
 ok = True
 
@@ -70,21 +76,29 @@ print()
 print("=" * 70)
 print("2) ANIMATSIYA — blur yo'q, sekin, stagger")
 print("=" * 70)
-css = CSS[CSS.index(".nft-card-in {"):CSS.index("@media (hover: none)")]
+css_rule = section(CSS, ".nft-card-in {", "@keyframes nftCardIn")
+css_kf = section(CSS, "@keyframes nftCardIn {", "@media (hover: none)")
 check("@keyframes nftCardIn" in CSS, "nftCardIn animatsiyasi")
-check("opacity: 0;" in css, "boshlang'ich opacity 0")
-check("translateY(8px)" in css, "kichik shift (8px — avval 16px+scale 0.975)")
-check("scale(" not in css, "scale ISHLATILMAYDI (karta sakramasin)")
-check("blur(" not in css, "filter: blur ISHLATILMAYDI (rasm qayta chizilmasin)")
+check("translateY(8px)" in css_kf, "kichik shift (8px — avval 16px+scale 0.975)")
+check("scale(" not in css_kf, "scale ISHLATILMAYDI (karta sakramasin)")
+check("blur(" not in css_kf, "filter: blur ISHLATILMAYDI (rasm qayta chizilmasin)")
 check("animation-delay: calc(var(--i, 0) * 0.035s)" in CSS,
       "stagger — kartalar ketma-ket (0.035s)")
-check("forwards" in css, "fill-mode: forwards (animatsiya tugab qoladi)")
+# 🔴 XAVFSIZLIK: `forwards` + `opacity: 0` = animatsiya ishlamasa
+# karta KO'rinMAY qoladi. Endi baza holat `opacity: 1`.
+check("backwards" in css_rule,
+      "🔴 fill-mode: backwards — animatsiya ishlamasa karta ko'rinadi")
+check("forwards" not in css_rule, "`forwards` yo'q (xavfli)")
+check("opacity: 1;" in css_rule, "bazaviy holat opacity: 1 (fail-safe)")
+# va `loading="lazy"` ham olindi (rasm umuman yuklanmasdi)
+check('loading="lazy"' not in VIEW,
+      '🔴 loading="lazy" yoq — bu layoutda rasmni yuklamaydi')
 
 print()
 print("  🔴 Muhim: oxirgi holimada `filter: none` BO'LISHI kerak.")
 print("  `apple-view-animate` da `blur(0px)` DOIM qolardi va")
 print("  `position: fixed` ni buzardi.")
-check("@keyframes nftCardIn" in CSS and "blur" not in css,
+check("@keyframes nftCardIn" in CSS and "blur" not in css_kf,
       "kartada filter umuman yo'q -> fixed buzilmaydi")
 
 print()
@@ -107,7 +121,8 @@ check('className={`nft-img w-full h-full object-cover' in img, "nft-img sinfi")
 check("decoding=\"async\"" in img, "async decode (main thread bloklanmaydi)")
 check(".nft-img {" in CSS, "nft-img CSS qoidasi (object-fit: cover)")
 check("aspect-square" in VIEW, "konteyner nisbiy balandlikda (aspect-square)")
-check("loading=\"lazy\"" in img, "lazy yuklash")
+check("loading=\"eager\"" in img,
+      "🔴 eager yuklash (lazy bu layoutda ishlaydi deb o\'ylangan, lekin YO\'Q)")
 
 print()
 print("=" * 70)

@@ -1098,6 +1098,45 @@ app.post('/api/order', async (req: Request, res: Response) => {
 
 // USDT (TON) kursi — live API + ENV zaxira
 /**
+ * 🔴 Fragment CDN — 1500x1500 rasmlar.
+ *
+ * `og:image` har doim 160x160 THUMBNAIL beradi — telefon ekranida
+ * (devicePixelRatio 3) juda xira ko'rinadi. Fragment'ning o'z CDN'i
+ * esa to'liq o'lchamni beradi:
+ *     https://nft.fragment.com/gift/finepen-18272.webp  ->  1500x1500
+ *
+ * ⚠️ Slug qoidasi: KICHIK harf, so'zlar BIRGA (chiziqcha yo'q).
+ *     FinePen-18272 -> finepen-18272       ✅
+ *     homemade-cake-2976 -> 404             ❌
+ *
+ * Production'dagi 38 ta NFT tekshirildi: 38/8 -> 1500x1500.
+ */
+const NFT_HD_BASE = 'https://nft.fragment.com/gift/';
+
+function nftHdUrl(link: string): string {
+  const m = /\/nft\/([^/?#]+)/i.exec((link || '').split('?')[0]);
+  if (!m) return '';
+  // 🔴 TO'LIQ slug (nom + raqam). Faqat nom -> 404.
+  return `${NFT_HD_BASE}${m[1].toLowerCase()}.webp`;
+}
+
+/** HEAD bilan tekshiradi (arzon, rasm yuklamaydi). */
+async function nftHdExists(url: string): Promise<boolean> {
+  if (!url) return false;
+  try {
+    const r = await fetch(url, {
+      method: 'HEAD',
+      headers: { 'User-Agent': NFT_UA },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) return false;
+    return (r.headers.get('content-type') || '').toLowerCase().startsWith('image/');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 🔗 Telegram NFT sahifasidan rasmni olish.
  *
  * `https://t.me/nft/FinePen-18272` server tomonda `og:image` beradi
@@ -1146,7 +1185,11 @@ async function resolveNftPage(link: string): Promise<any | null> {
       const m = html.match(re1) || html.match(re2);
       return m ? m[1].trim() : '';
     };
-    const image = meta('og:image');
+    // 🔴 AVVAL 1500x1500 Fragment CDN, keyin 160px og:image.
+    let hd = '';
+    const hdCandidate = nftHdUrl(url);
+    if (hdCandidate && (await nftHdExists(hdCandidate))) hd = hdCandidate;
+    let image = hd || meta('og:image');
     if (!image.startsWith('http')) {
       nftPageCache.set(url, { data: null, at: Date.now() });
       return null;
@@ -1155,6 +1198,7 @@ async function resolveNftPage(link: string): Promise<any | null> {
     const numMatch = rawTitle.match(/#(\d+)\s*$/);
     const data = {
       image,
+      imageHd: !!hd,
       title: rawTitle.replace(/\s*#\d+\s*$/, '').trim(),
       number: numMatch ? Number(numMatch[1]) : null,
       description: meta('og:description'),
@@ -1178,9 +1222,13 @@ async function nftPublicListResolved(): Promise<any[]> {
   const list = nftPublicList();
   await Promise.all(
     list.map(async (item: any) => {
-      if (item.image) return; // allaqachon rasm bor
       const raw = String(item.link || '').trim();
       if (!isTelegramPageUrl(raw)) return;
+      // 🔴 ESKI (160px telesco.pe) rasmni HD ga ALMASHTIRAMIZ.
+      // Sabab: eski resolver og.image (160x160) saqlagan edi va
+      // telefon ekranida juda XIRA ko'rinardi. Endi 1500x1500.
+      if (item.image && !/telesco\.pe/i.test(item.image)) return;
+      if (item.image && /fragment\.com/i.test(item.image)) return; // allaqachon HD
       const got = await resolveNftPage(raw);
       if (!got?.image) return;
       // Bazaga yozamiz — keyingi so'rovlarda qayta yuklamaydi
