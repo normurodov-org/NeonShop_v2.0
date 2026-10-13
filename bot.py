@@ -3305,7 +3305,8 @@ async def send_nft_notify_via_userbot(order: dict) -> dict:
     sent = await ub.send_message(
         chat_id, text,
         reply_markup=nft_action_kb(order.get("id", "")),
-        parse_mode=ParseMode.HTML,
+        # 🔴 pyrofork STRING kutadi, enum emas (Invalid parse mode)
+        parse_mode=UB_PARSE_HTML,
         disable_web_page_preview=True,
     )
     return {"via": "ub", "chat": chat_id, "msg": sent.id}
@@ -6017,6 +6018,13 @@ def _nft_list_kb() -> tuple:
 
 NFT_MANAGER = os.getenv("NFT_MANAGER", "@saidovManajer")
 
+# 🔴 Pyrofork (userbot) parse_mode ga FAQAT STRING qabul qiladi.
+# Aiogram'dan import qilingan `ParseMode.HTML` enum bo'lsa, Telegram
+# "Invalid parse mode \"ParseMode.HTML\"" deb javob beradi va xabar
+# umuman yuborilmaydi. Shu sabab ikkala kutubxon uchun alohida
+# konstanta qo'shildi.
+UB_PARSE_HTML = "html"
+
 # Ishlovchilar orasidagi ketma-ketlik (bitta jarayon, shuning uchun yetarli)
 NFT_ACTION_LOCK = asyncio.Lock()
 
@@ -6095,10 +6103,15 @@ async def _patch_nft_notices(order: dict, text: str) -> None:
     for n in (order.get("notices") or []):
         try:
             if n.get("via") == "ub" and userbot is not None:
+                # 🔴 DIQQAT: pyrofork (userbot) `parse_mode` ga
+                # aiogram ENUM qabul qilmaydi — faqat STRING kutadi.
+                # `ParseMode.HTML` yuborilsa Telegram javob beradi:
+                #     Invalid parse mode "ParseMode.HTML"
+                # va xabar umuman yuborilmaydi.
                 await userbot.edit_message_text(
                     n["chat"], n["msg"], text,
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
-                    parse_mode=ParseMode.HTML,
+                    parse_mode=UB_PARSE_HTML,
                 )
             else:
                 await bot.edit_message_text(

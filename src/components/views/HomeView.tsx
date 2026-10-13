@@ -8,7 +8,7 @@ interface HomeViewProps {
   settings: StoreSettings | null;
   lang: Lang;
   isDark: boolean;
-  onGoToBuy: (initialCategory?: 'stars' | 'premium' | 'gifts') => void;
+  onGoToBuy: (initialCategory?: 'stars' | 'premium' | 'gifts' | 'nft') => void;
   onGoToTopup: () => void;
 }
 
@@ -187,12 +187,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
         </div>
 
-        {/* NFT Rent Card — asosiy 3 ta xizmat ostida */}
-        <a
-          href="https://t.me/rentnftlarr"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-5 cursor-pointer"
+        {/* NFT Rent Card — asosiy 3 ta xizmat ostida.
+            🔴 AVVAL kanal havolasini ochardi (https://t.me/rentnftlarr).
+            Endi ilova ichidagi NFT Rent bo'limiga olib boradi —
+            mijoz ro'yxatni, narxlarni va ijaraga olishni O'ZIDA ko'radi. */}
+        <button
+          type="button"
+          onClick={() => onGoToBuy('nft')}
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-5 cursor-pointer text-left w-full"
         >
           <div className="flex items-center gap-3.5">
             <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${
@@ -213,11 +215,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
-              {lang === 'uz' ? '@rentnftlarr' : '@rentnftlarr'}
+              {lang === 'uz' ? '3-50 kun' : '3-50 days'}
             </span>
             <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
-        </a>
+        </button>
       </div>
     </div>
   );

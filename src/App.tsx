@@ -16,7 +16,7 @@ import { CheckCircle2, ArrowLeft, PauseCircle } from 'lucide-react';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('home');
-  const [initialBuyCategory, setInitialBuyCategory] = useState<'stars' | 'premium' | 'gifts'>('stars');
+  const [initialBuyCategory, setInitialBuyCategory] = useState<'stars' | 'premium' | 'gifts' | 'nft'>('stars');
   const [lang, setLang] = useState<Lang>(() => {
     return (localStorage.getItem('neon_lang') as Lang) || 'uz';
   });
