@@ -6018,12 +6018,26 @@ def _nft_list_kb() -> tuple:
 
 NFT_MANAGER = os.getenv("NFT_MANAGER", "@saidovManajer")
 
-# 🔴 Pyrofork (userbot) parse_mode ga FAQAT STRING qabul qiladi.
-# Aiogram'dan import qilingan `ParseMode.HTML` enum bo'lsa, Telegram
-# "Invalid parse mode \"ParseMode.HTML\"" deb javob beradi va xabar
-# umuman yuborilmaydi. Shu sabab ikkala kutubxon uchun alohida
-# konstanta qo'shildi.
-UB_PARSE_HTML = "html"
+# 🔴🔴 PYROFORK `parse_mode` — FAQAT O'Z ENUM'I QABUL QILADI
+#
+# Ikki kutubxona turli kutubxona:
+#   • aiogram  (bot)      -> `ParseMode.HTML` (str-ga yaqin enum)
+#   • pyrofork (userbot)  -> `UbParseMode.HTML`  (AutoName enum)
+#
+# Pyrofork `Parser.parse()` da shunday tekshiradi:
+#     if mode == enums.ParseMode.HTML:  ...  # mode — PYROGRAM enumi
+#     raise ValueError(f'Invalid parse mode "{mode}"')
+#
+# Ya'ni:
+#   • aiogram enum berilsa  -> "Invalid parse mode "ParseMode.HTML""
+#   • "html" string berilsa  -> "Invalid parse mode "html""   (AutoName
+#                               enum `str` emas — `str` solishtiruvi
+#                               `==` da ISHLAMAYDI, `.value` emas)
+#   • faqat `UbParseMode.HTML` ISHLAYDI
+#
+# (bot.py da `from pyrogram.enums import ParseMode as UbParseMode`
+#  allaqachon bor — u aynan shu uchun.)
+UB_PARSE_HTML = UbParseMode.HTML
 
 # Ishlovchilar orasidagi ketma-ketlik (bitta jarayon, shuning uchun yetarli)
 NFT_ACTION_LOCK = asyncio.Lock()
@@ -6332,9 +6346,16 @@ async def adm_nft_ping(call: CallbackQuery):
                 "ketma-ket yuboriladi.</i>",
             ]
         except Exception as exc:  # noqa: BLE001
+            import traceback as _tb
+            kind = type(exc).__name__
+            log.error("NFT ping xatosi (%s): %s", kind, _tb.format_exc())
             lines += [
                 "",
-                f"🔴 <b>Yuborilmadi:</b> <code>{esc(str(exc)[:400])}</code>",
+                f"🔴 <b>Yuborilmadi</b> — <code>{esc(kind)}</code>",
+                "",
+                f"<code>{esc(str(exc)[:600])}</code>",
+                "",
+                f"<i>Batafsil:</i> <code>{esc(_tb.format_exception_only(type(exc), exc))[:300]}</code>",
             ]
     else:
         # Test xabar — navbat bo'lmasa ham tekshiramiz
@@ -6352,14 +6373,55 @@ async def adm_nft_ping(call: CallbackQuery):
 
     kb = None
     if queue:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="🔄 Qayta urinish", callback_data="adm:nft_ping"),
-            InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list"),
-        ]])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📨 Barchasini qayta yuborish",
+                                  callback_data="adm:nft_resend_all")],
+            [InlineKeyboardButton(text="🔄 Qayta urinish", callback_data="adm:nft_ping"),
+             InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list")],
+        ])
     await status.edit_text("\n".join(lines), reply_markup=kb,
                            disable_web_page_preview=True)
 
 
+
+@admin_router.callback_query(F.data == "adm:nft_resend_all")
+async def adm_nft_resend_all(call: CallbackQuery):
+    '''Barcha yuborilmagan (hatto BERKITILGAN) xabarlarni qayta ochadi.
+
+    🔴 Nima uchun kerak: agar xabar biror sababga ko'ra yuborilmagan
+    bo'lsa, `nft_notify_gave_up` belgisi qo'yiladi va u HAYOTDAN
+    chiqadi. Bu tugma barchasini qayta navbatga qaytaradi.
+    '''
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    await call.answer("🔄 Qaytarilmoqda...")
+    n = 0
+    for order in (db.data.get("orders") or {}).values():
+        if order.get("kind") != "nft_rent":
+            continue
+        if order.get("nft_notified"):
+            continue
+        if order.get("status") in ("done", "cancelled", "expired"):
+            continue
+        order.pop("nft_notify_gave_up", None)
+        order.pop("nft_notify_wait_ub", None)
+        order["nft_notify_tries"] = 0
+        order["nft_notify_error"] = ""
+        n += 1
+    if n:
+        db.save()
+    ub_ok = userbot is not None and getattr(userbot, "is_connected", False)
+    await call.message.answer(
+        f"📨 <b>{n} ta xabar</b> qayta navbatga qaytarildi.\n\n"
+        "<i>Userbot ulangan bo'lsa 3 soniya ichida yuboriladi.</i>"
+        + ("" if ub_ok else
+           "\n\n🔴 <b>Userbot ulanmagan</b> — avval "
+                "<code>/admin → 📱 Raqam bilan ulash</code>"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔍 Tekshirish", callback_data="adm:nft_ping"),
+        ]]),
+    )
 @admin_router.callback_query(F.data == "adm:nft_list")
 async def adm_nft_list(call: CallbackQuery):
     if not await _admin_guard(call):

@@ -50,8 +50,10 @@ CODE = strip_comments(BSRC)
 print("=" * 70)
 print("1) 🔴 USERBOT parse_mode — STRING, enum EMAS")
 print("=" * 70)
-check('UB_PARSE_HTML = "html"' in CODE,
-      "UB_PARSE_HTML = \"html\" konstantasi")
+check("UB_PARSE_HTML = UbParseMode.HTML" in CODE,
+      "UB_PARSE_HTML = UbParseMode.HTML (pyrofork ENUM'I)")
+check("from pyrogram.enums import ParseMode as UbParseMode" in CODE,
+      "UbParseMode import qilingan")
 
 # 🔴 userbot chaqiruvlarida enum bo'lmasin
 ub_calls = re.findall(r"(?:userbot|ub)\.(?:send_message|edit_message_text)\([^)]*\)",
@@ -80,10 +82,45 @@ check("parse_mode=ParseMode.HTML" in bot_edit,
       "🔴 bot uchun enum TO'G'RI (aiogram qabul qiladi)")
 
 print()
-print("  Nima uchun enum ishlamaydi:")
-print("      aiogram  ParseMode.HTML  -> .value = 'HTML'  (qabul qiladi)")
-print("      pyrofork enum obyekti      -> str emas         (RAD)")
-print('      Telegram: Invalid parse mode "ParseMode.HTML"')
+print("  🔴 HAQIQIY TEKSHIRUV — pyrofork'ning o'z Parser'i bilan")
+print("      (taxmin qilinmaydi, LIBRARIYA JAVOB BERADI)")
+try:
+    import asyncio
+
+    from aiogram.enums import ParseMode as AiPM
+    from pyrogram.enums import ParseMode as UbPM
+    from pyrogram.parser import Parser
+
+    TEXT = ("🎁 <b>NFT ijaraga olish so'rovi</b>\n\n"
+            "🖼 <b>Fine Pen</b> <code>#18272</code>")
+
+    async def _probe():
+        out = {}
+        for label, mode in (("pyrofork enum", UbPM.HTML),
+                            ("string 'html'", "html"),
+                            ("string 'HTML'", "HTML"),
+                            ("aiogram enum", AiPM.HTML)):
+            try:
+                r = await Parser(None).parse(TEXT, mode)
+                out[label] = ("OK", len(r["entities"]))
+            except Exception as exc:  # noqa: BLE001
+                out[label] = ("XATO", str(exc))
+        return out
+
+    res = asyncio.run(_probe())
+    for label, (status, extra) in res.items():
+        print(f"      {label:16} -> {status}: {extra}")
+
+    check(res["pyrofork enum"][0] == "OK",
+          f"🔴 UbParseMode.HTML ISHLAYDI ({res['pyrofork enum'][1]} entities)")
+    check(res["pyrofork enum"][1] > 0, "HTML teglar entity ga aylangan")
+    check(res["string 'html'"][0] == "XATO",
+          "\"html\" string ISHLAMAYDI (AutoName enum, str emas)")
+    check(res["string 'HTML'"][0] == "XATO", "\"HTML\" string ham ISHLAMAYDI")
+    check(res["aiogram enum"][0] == "XATO",
+          "🔴 aiogram enum userbotda ISHLAMAYDI")
+except Exception as exc:  # noqa: BLE001
+    check(False, f"pyrofork parser tekshiruvi: {exc}")
 
 print()
 print("=" * 70)
@@ -128,6 +165,50 @@ sm = BSRC[BSRC.index("async def nft_order_summary("):
           BSRC.index("async def _patch_nft_notices(")]
 check("parse_mode" not in sm, "summary matnida parse_mode yo'q (matn toza)")
 check("<b>" in sm and "</b>" in sm, "HTML teglar juft (teng)")
+
+print()
+print("=" * 70)
+print("5) DIAGNOSTIKA — qolsa ham ANIQ sabab ko'rsatadi")
+print("=" * 70)
+check('callback_data="adm:nft_resend_all"' in BSRC, "📨 Barchasini qayta yuborish")
+check("async def adm_nft_resend_all(" in BSRC, "handler")
+check('order.pop("nft_notify_gave_up", None)' in BSRC.split("async def adm_nft_resend_all(")[1][:800],
+      "berkitilganlar qayta ochiladi")
+check("import traceback as _tb" in BSRC, "to'liq traceback")
+check("format_exception_only" in BSRC, "xato turi ko'rsatiladi")
+pg = BSRC[BSRC.index("async def adm_nft_ping("):
+          BSRC.index("async def adm_nft_resend_all(")]
+check("format_exception_only" in pg, "ping xatosi batafsil")
+check("log.error(" in pg, "xato logga yoziladi")
+
+print()
+print("=" * 70)
+print("6) HAQIQIY XABAR MATNI — pyrofork parser bilan TEKSHIRILADI")
+print("=" * 70)
+try:
+    import asyncio
+
+    sys.path.insert(0, ROOT)
+    import bot as B
+    from pyrogram.parser import Parser
+
+    order = {"id": "nft_test1", "user_id": 5, "kind": "nft_rent",
+             "nft_id": "n1", "nft_title": "Fine Pen", "nft_number": 18272,
+             "nft_link": "https://t.me/nft/FinePen-18272", "days": 7,
+             "per_day": 98, "rent": 686, "price": 2386, "price_uzs": 2386,
+             "customer_username": "odilbek", "admin_username": "normuzb"}
+
+    text = asyncio.run(B.nft_order_summary(order))
+    res = asyncio.run(Parser(None).parse(text, B.UB_PARSE_HTML))
+    check(len(res["entities"]) > 0,
+          f"🔴 xabar matni parse bo'ldi ({len(res['entities'])} entity)")
+    check(res["entities"] is not None, "entity lar to'g'ri")
+    # Butun matnni ham validatsiya qilamiz
+    text2 = asyncio.run(B.nft_order_summary(order, status_line="✅ <b>Bajarildi</b> (admin)"))
+    asyncio.run(Parser(None).parse(text2, B.UB_PARSE_HTML))
+    check(True, "natijali xabar ham parse bo'ldi")
+except Exception as exc:  # noqa: BLE001
+    check(False, f"xabar matni tekshiruvi: {exc}")
 
 print()
 print("=" * 70)

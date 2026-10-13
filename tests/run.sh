@@ -141,7 +141,10 @@ DB_PATH=/tmp/_nm.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
 
 echo
 echo "=== 23/28 PARSE_MODE (userbot enum rad) + HOME NFT KARTA ==="
-python3 tests/test_parse_mode_and_home_nft.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
+# `bot` ni import qiladi (xabar matnini tekshirish uchun) — env kerak
+rm -f /tmp/_pmt.json /tmp/_pmt.json.bak
+DB_PATH=/tmp/_pmt.json API_ID=1 API_HASH=x BOT_TOKEN=123:F \
+  python3 tests/test_parse_mode_and_home_nft.py 2>&1 | grep -vE "TgCrypto|INFO|WARNING"
 
 echo
 echo "=== 24/28 NFT RASMI YO'QOLMASIN (sekin internet, 7s kechikish) ==="
