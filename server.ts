@@ -639,6 +639,19 @@ function nftImageUrl(n: any): string {
   return '';
 }
 
+/**
+ * Telegram `og:description` matnidan "Backdrop" ni ajratadi.
+ *
+ * Matn shakli: "Model: Solar Atlas / Backdrop: Chestnut /
+ * Symbol: Carrot / Gifted to berkut"
+ * 1-rasmdagi filtr shpitskalari ("Battleship Grey", "Black" ...)
+ * aynan shu maydonni ifodalaydi.
+ */
+function nftBackdrop(desc: string): string {
+  const m = String(desc || '').match(/Backdrop:\s*([^/]+?)(?:\s*\/|$)/i);
+  return m ? m[1].trim() : '';
+}
+
 function nftPublicList(): any[] {
   const items = [...store.nfts.values()]
     .filter((n: any) => n?.active !== false)
@@ -648,6 +661,7 @@ function nftPublicList(): any[] {
       number: n.number ?? null,
       image: nftImageUrl(n),
       link: n.link || '',
+      backdrop: nftBackdrop(n.description),
       daily: Number(n.daily) || 0,
     }))
     .sort((a, b) => a.daily - b.daily);
@@ -1050,13 +1064,152 @@ app.post('/api/order', async (req: Request, res: Response) => {
 });
 
 // USDT (TON) kursi — live API + ENV zaxira
+/**
+ * 🔗 Telegram NFT sahifasidan rasmni olish.
+ *
+ * `https://t.me/nft/FinePen-18272` server tomonda `og:image` beradi
+ * (`cdn*.telesco.pe`). `<img src="t.me/...">` esa hech qachon rasm
+ * ko'rsatmaydi — bu SPA sahifa.
+ *
+ * DIQQAT: raqamsiz havola (`/nft/FinePen`) 302 qaytaradi va rasm
+ * yo'q. Faqat haqiqiy NFT (raqam bilan) rasm beradi.
+ */
+const NFT_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/** Kesh: link -> { image, title, number } (telesco.pe URLlari barqaror) */
+const nftPageCache = new Map<string, { data: any; at: number }>();
+const NFT_PAGE_TTL = 6 * 60 * 60 * 1000; // 6 soat
+
+async function resolveNftPage(link: string): Promise<any | null> {
+  if (!isTelegramPageUrl(link)) return null;
+  const url = link.trim();
+  const hit = nftPageCache.get(url);
+  if (hit && Date.now() - hit.at < NFT_PAGE_TTL) return hit.data;
+  try {
+    const r = await fetch(url, {
+      // DIQQAT: redirect qilmaymiz — 302 Telegram sahifa emas,
+      // demak rasm ham yo'q. Aks holda telegram.org sahifasini
+      // tekshirib vaqt yo'qotamiz.
+      redirect: 'manual',
+      headers: { 'User-Agent': NFT_UA, Accept: 'text/html' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (r.status !== 200) {
+      nftPageCache.set(url, { data: null, at: Date.now() });
+      return null;
+    }
+    const html = (await r.text()).slice(0, 200000);
+    const meta = (p: string): string => {
+      const re1 = new RegExp(
+        `<meta[^>]+property=["']${p}["'][^>]+content=["']([^"']+)`,
+        'i',
+      );
+      const re2 = new RegExp(
+        `<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${p}["']`,
+        'i',
+      );
+      const m = html.match(re1) || html.match(re2);
+      return m ? m[1].trim() : '';
+    };
+    const image = meta('og:image');
+    if (!image.startsWith('http')) {
+      nftPageCache.set(url, { data: null, at: Date.now() });
+      return null;
+    }
+    const rawTitle = meta('og:title');
+    const numMatch = rawTitle.match(/#(\d+)\s*$/);
+    const data = {
+      image,
+      title: rawTitle.replace(/\s*#\d+\s*$/, '').trim(),
+      number: numMatch ? Number(numMatch[1]) : null,
+      description: meta('og:description'),
+    };
+    nftPageCache.set(url, { data, at: Date.now() });
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * NFT ro'yxatini chiqarishdan OLDIN rasmni to'ldiradi.
+ *
+ * Eski NFT'lar (bot.py resolveri qo'shilgidan OLDIN qo'shilgan)
+ * `image` maydonida t.me linki saqlagan bo'ladi. Ular uchun
+ * shu yerda, so'rov paytida rasm topiladi va NATIJAGA yoziladi
+ * (keyingi so'rovlarda tez bo'ladi).
+ */
+async function nftPublicListResolved(): Promise<any[]> {
+  const list = nftPublicList();
+  await Promise.all(
+    list.map(async (item: any) => {
+      if (item.image) return; // allaqachon rasm bor
+      const raw = String(item.link || '').trim();
+      if (!isTelegramPageUrl(raw)) return;
+      const got = await resolveNftPage(raw);
+      if (!got?.image) return;
+      // Bazaga yozamiz — keyingi so'rovlarda qayta yuklamaydi
+      const stored: any = store.nfts.get(item.id);
+      if (stored) {
+        stored.image = got.image;
+        if (!stored.title && got.title) stored.title = got.title;
+        if (stored.number == null && got.number != null) stored.number = got.number;
+        if (!stored.description && got.description) stored.description = got.description;
+        try {
+          syncAndSaveDb();
+        } catch {
+          /* yozilmasa ham joriy so'rovda ko'rinadi */
+        }
+      }
+      item.image = got.image;
+      if (!item.title || item.title === "NFT sovg'a") item.title = got.title || item.title;
+      if (item.number == null) item.number = got.number;
+    }),
+  );
+  return list;
+}
+
+/**
+ * 🔄 Rasmni qayta olish (self-healing).
+ *
+ * `cdn*.telesco.pe` havolalari muddati tugishi mumkin. Rasm
+ * yuklanmasa brauzer shu endpoint ga murojaat qiladi va biz
+ * Telegram sahifasidan yangisini olib, bazaga yozamiz.
+ */
+app.post('/api/nfts/refresh-image/:id', async (req: Request, res: Response) => {
+  refreshNftsFromDisk();
+  const id = String(req.params.id || '');
+  const item: any = store.nfts.get(id);
+  if (!item) return res.status(404).json({ ok: false, error: 'NFT topilmadi.' });
+  const link = String(item.link || '').trim();
+  if (!isTelegramPageUrl(link)) {
+    return res.json({ ok: true, image: item.image ? nftImageUrl(item) : '' });
+  }
+  // keshni tashlaymiz — majburlangan yangilash
+  nftPageCache.delete(link);
+  const got = await resolveNftPage(link);
+  if (!got?.image) return res.json({ ok: true, image: '' });
+  item.image = got.image;
+  if (!item.title && got.title) item.title = got.title;
+  if (item.number == null && got.number != null) item.number = got.number;
+  if (!item.description && got.description) item.description = got.description;
+  try {
+    syncAndSaveDb();
+  } catch {
+    /* yozilmasa ham joriy javobda qaytariladi */
+  }
+  res.json({ ok: true, image: got.image, title: item.title, number: item.number ?? null });
+});
+
 /** NFT ro'yxati (WebApp NFT Rent bo'limi uchun) */
-app.get('/api/nfts', (_req: Request, res: Response) => {
+app.get('/api/nfts', async (_req: Request, res: Response) => {
   getUser(_req);
   refreshNftsFromDisk();
   res.json({
     ok: true,
-    items: nftPublicList(),
+    items: await nftPublicListResolved(),
     min_days: NFT_MIN_DAYS,
     max_days: NFT_MAX_DAYS,
     network_fee: NFT_NETWORK_FEE,

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../Modal';
 import { Boxes, Gift, Heart, ChevronDown, SlidersHorizontal, X, Minus, Plus } from 'lucide-react';
 
@@ -8,6 +8,8 @@ interface NftItem {
   number: number | null;
   image: string;
   link: string;
+  /** Telegram sahifasidan olingan "Backdrop: ..." (masalan "Chestnut") */
+  backdrop?: string;
   daily: number;
 }
 
@@ -37,7 +39,15 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 
-const BACKDROPS = ['All backdrops', 'Battleship Grey', 'Black', 'Onyx Black', 'Gold'];
+/**
+ * Backdrop filtrlari.
+ *
+ * DIQQAT: avval ro'yxat QAT'IY yozilgan edi va hech qanday
+ * filtrlashni bajarmaydi (o'lik UI). Endi ro'yxat Telegram
+ * sahifasidan olingan `backdrop` maydonidan YIG'ILADI — ya'ni
+ * filtr haqiqiy ma'lumotga ishlaydi.
+ */
+const ALL_BACKDROPS = 'All backdrops';
 const COLLECTIONS = ['All collections', 'Regular gifts', 'Upgrades', 'Unique'];
 
 const fmt = (n: number) => Number(n || 0).toLocaleString('uz-UZ').replace(/,/g, ' ');
@@ -70,22 +80,59 @@ const NftImage: React.FC<{
   alt: string;
   isDark: boolean;
   className?: string;
-}> = ({ src, alt, isDark, className = '' }) => {
-  const [failed, setFailed] = useState(false);
+  /** NFT id — rasmni qayta olish uchun (self-healing) */
+  nftId?: string;
+  /** Telegram foydalanuvchi id */
+  userId?: number;
+}> = ({ src, alt, isDark, className = '', nftId, userId }) => {
+  const [state, setState] = useState<'idle' | 'failed'>('idle');
+  const [retrying, setRetrying] = useState(false);
+  // Faqat BIR marta qayta urinish — aks holda cheksiz sikl bo'ladi
+  const retriedRef = useRef(false);
 
   // 🔴 Yuklanmaydigan rasm — bo'sh kvadrat UCHUN QOLMASIN.
   // Ba'zi havolalar (o'lik domen, Telegram CDN muammosi) 404 ham
   // bermaydi, balki osilib qoladi: `onError` ishlamaydi va karta
   // doim bo'sh ko'rinadi. Shuning uchun qisqa muddatli TAYMER
   // ham qo'yamiz — yuklanmasa placeholder ga o'tamiz.
+  const [fresh, setFresh] = useState<string | undefined>(undefined);
+  const shown = fresh ?? src;
+
   useEffect(() => {
     if (!isImageUrl(src)) return;
-    setFailed(false);
-    const t = setTimeout(() => setFailed(true), 6000);
+    setState('idle');
+    setFresh(undefined);
+    retriedRef.current = false;
+    const t = setTimeout(() => setState('failed'), 6000);
     return () => clearTimeout(t);
   }, [src]);
 
-  const ok = isImageUrl(src) && !failed;
+  /**
+   * 🔄 SELF-HEALING: Telegram CDN havolasi muddati tugagan bo'lishi
+   * mumkin. Serverdan yangisini so'raymiz va ko'rsatamiz.
+   */
+  const retry = async () => {
+    if (!nftId || retrying) return;
+    setRetrying(true);
+    try {
+      const r = await fetch(`/api/nfts/refresh-image/${encodeURIComponent(nftId)}`, {
+        method: 'POST',
+        headers: { 'x-telegram-user-id': userId?.toString() || '' },
+      });
+      const j = await r.json();
+      if (j?.ok && j.image && j.image !== src) {
+        setFresh(j.image);
+        setState('idle');
+        return;
+      }
+    } catch {
+      /* server yo'q — placeholder qoladi */
+    }
+    setState('failed');
+    setRetrying(false);
+  };
+
+  const ok = isImageUrl(shown) && state !== 'failed';
 
   if (!ok) {
     return (
@@ -111,10 +158,18 @@ const NftImage: React.FC<{
   }
   return (
     <img
-      src={src}
+      src={shown}
       alt={alt}
       loading="lazy"
-      onError={() => setFailed(true)}
+      onError={() => {
+        // Avval serverdan yangisini so'raymiz
+        if (nftId && !retriedRef.current) {
+          retriedRef.current = true;
+          retry();
+        } else {
+          setState('failed');
+        }
+      }}
       className={`w-full h-full object-cover ${className}`}
     />
   );
@@ -134,7 +189,7 @@ export const NftRentView: React.FC<NftProps> = ({
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabId>('gifts');
   const [sort, setSort] = useState<'cheap' | 'big'>('cheap');
-  const [backdrop, setBackdrop] = useState('All backdrops');
+  const [backdrop, setBackdrop] = useState(ALL_BACKDROPS);
   const [collection, setCollection] = useState('All collections');
   const [fav, setFav] = useState<Record<string, boolean>>({});
 
@@ -263,9 +318,14 @@ export const NftRentView: React.FC<NftProps> = ({
     if (sel) loadQuote(sel, v);
   };
 
-  const shown = [...items].sort((a, b) =>
-    sort === 'cheap' ? a.daily - b.daily : b.daily - a.daily
-  );
+  // Backdrop ro'yxati — NFT'lar ichidagi haqiqiy qiymatlardan
+  const backdrops = [ALL_BACKDROPS, ...new Set(
+    items.map((n) => n.backdrop).filter(Boolean) as string[]
+  )];
+
+  const shown = items
+    .filter((n) => backdrop === ALL_BACKDROPS || n.backdrop === backdrop)
+    .sort((a, b) => (sort === 'cheap' ? a.daily - b.daily : b.daily - a.daily));
 
   const insufficient = quote ? quote.total > balance : false;
 
@@ -344,7 +404,7 @@ export const NftRentView: React.FC<NftProps> = ({
 
           {/* Backdrop filtrlari */}
           <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-4 px-4">
-            {BACKDROPS.map((b) => (
+            {backdrops.map((b) => (
               <button
                 key={b}
                 onClick={() => setBackdrop(b)}
@@ -384,6 +444,8 @@ export const NftRentView: React.FC<NftProps> = ({
                       src={n.image}
                       alt={n.title}
                       isDark={isDark}
+                      nftId={n.id}
+                      userId={userId}
                       className="transition-transform duration-300 group-hover:scale-105"
                     />
                     <button
@@ -456,7 +518,7 @@ export const NftRentView: React.FC<NftProps> = ({
                   isDark ? 'bg-white/[0.06]' : 'bg-black/[0.04]'
                 }`}
               >
-                <NftImage src={sel.image} alt={sel.title} isDark={isDark} />
+                <NftImage src={sel.image} alt={sel.title} isDark={isDark} nftId={sel.id} userId={userId} />
               </div>
               <div className="flex-1 min-w-0">
                 <div

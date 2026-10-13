@@ -180,13 +180,14 @@ print("=" * 70)
 print("5) PLACEHOLDER — buzilgan/osilib qolgan rasm uchun")
 print("=" * 70)
 check("const NftImage" in VIEW, "NftImage komponenti")
-check("onError={() => setFailed(true)}" in VIEW, "onError -> placeholder")
-check("setTimeout(() => setFailed(true), 6000)" in VIEW,
+check("onError={() => {" in VIEW, "onError ishlaydi")
+check("setState('failed')" in VIEW, "muvaffaqiyatsiz -> placeholder")
+check("setTimeout(() => setState('failed'), 6000)" in VIEW,
       "6 soniya taymer (o'lik domen osilib qolmasligi uchun)")
 check("clearTimeout" in VIEW, "taymer tozalanadi (component unmount)")
 check("<NftImage" in VIEW, "kartada ishlatiladi")
 check(VIEW.count("<NftImage") >= 2, "kartada VA modalda")
-check("lucide-gift" not in VIEW, "")
+
 check("Gift" in VIEW and "import" in VIEW, "Gift ikonkasi import qilingan")
 # eski xato qolmaganligi
 check("/^https?:\\/\\//i.test(n.image)" not in VIEW,

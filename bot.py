@@ -571,6 +571,129 @@ NFT_NETWORK_FEE = 1700
 NFT_QUICK_DAYS = (3, 7, 14, 30)
 
 
+# =============================================================================
+# TELEGRAM NFT SAHIFASIDAN RASM OLISH
+# =============================================================================
+# Mijoz/admin `https://t.me/nft/FinePen-18272` yuborsa, Telegram shu
+# sahifa uchun server tomonda preview yaratadi:
+#   <meta property="og:image" content="https://cdn4.telesco.pe/file/....jpg">
+#   <meta property="og:title" content="Fine Pen #18272">
+#
+# DIQQAT: raqamsiz havola (`/nft/FinePen`) 302 bilan telegram.org ga
+# qaytaradi va rasm YO'Q. Raqam bilan (`/nft/FinePen-18272`) esa
+# 200 qaytaradi. Ya'ni haqiqiy NFT bo'lishi shart.
+#
+# Bu funksiya:
+#   • rasm havolasini (cdn*.telesco.pe) qaytaradi
+#   • nom va raqamni og:title dan avtomatik ajratadi
+#   • muvaffaqiyatsiz bo'lsa hech nima buzmaydi (None qaytaradi)
+
+NFT_PAGE_HOSTS = ("t.me", "telegram.me", "telegram.dog", "nft.telegram.org")
+# Brauzer kabi User-Agent — Telegram bot/curl User-Agent larini
+# redirect qiladi (302 -> telegram.org), bu esa preview bermaydi.
+NFT_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+
+def is_nft_page_url(url: str) -> bool:
+    """Havola Telegram NFT sahifasi mi? (t.me/nft/...)"""
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    host = (parts.hostname or "").lower()
+    if not any(host == h or host.endswith("." + h) for h in NFT_PAGE_HOSTS):
+        return False
+    # Faqat /nft/<slug> turidagi sahifalar
+    return bool(re.match(r"^/nft/", parts.path or ""))
+
+
+def nft_slug_from_url(url: str) -> tuple:
+    """`.../nft/FinePen-18272` -> ("FinePen", 18272)
+
+    Telegram slug'i `Nom-Raqam` shaklida. Nom ichida chiziqcha
+    bo'lishi mumkin (Jack-in-the-Box-9999), shuning uchun OXIRGI
+    chiziqchadan ajratamiz.
+    """
+    try:
+        path = urlsplit(url.strip()).path or ""
+    except ValueError:
+        return ("", None)
+    m = re.search(r"/nft/([^/?#]+)", path)
+    if not m:
+        return ("", None)
+    slug = m.group(1)
+    m2 = re.match(r"^(.*?)[-_](\d+)$", slug)
+    if m2:
+        name = m2.group(1)
+        try:
+            return (name, int(m2.group(2)))
+        except ValueError:
+            return (name, None)
+    return (slug, None)
+
+
+async def resolve_nft_page(url: str) -> Optional[dict]:
+    """Telegram NFT sahifasidan rasm + nom + tavsifni oladi.
+
+    `t.me/nft/<slug>-<raqam>` server tomonda `og:image` beradi.
+    Raqam yo'q bo'lsa yoki NFT mavjud bo'lmasa 302 qaytaradi —
+    u holda `None` qaytariladi va mijozga placeholder ko'rsatiladi.
+    """
+    if not is_nft_page_url(url):
+        return None
+    try:
+        async with httpx.AsyncClient(
+            timeout=12.0, follow_redirects=False, headers={"User-Agent": NFT_UA}
+        ) as client:
+            resp = await client.get(url.strip())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("NFT sahifasi yuklanmadi: %s", exc)
+        return None
+    if resp.status_code != 200 or "text/html" not in resp.headers.get("content-type", ""):
+        return None
+    html_body = resp.text[:200_000]
+
+    def meta(prop: str) -> str:
+        m = re.search(
+            r'<meta[^>]+property=["\']' + re.escape(prop) + r'["\'][^>]+content=["\']([^"\']+)',
+            html_body, re.I,
+        )
+        if not m:
+            m = re.search(
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']' + re.escape(prop) + r'["\']',
+                html_body, re.I,
+            )
+        return m.group(1).strip() if m else ""
+
+    image = meta("og:image")
+    if not image or not image.startswith("http"):
+        return None
+
+    title = meta("og:title")            # "Fine Pen #18272"
+    number = None
+    if title:
+        m = re.search(r"#(\d+)\s*$", title)
+        if m:
+            try:
+                number = int(m.group(1))
+            except ValueError:
+                number = None
+        title = re.sub(r"\s*#\d+\s*$", "", title).strip()
+
+    if not number:
+        _, number = nft_slug_from_url(url)
+
+    return {
+        "image": image,
+        "title": title or "",
+        "number": number,
+        "description": meta("og:description"),
+    }
+
+
 def nft_has_viewable_image(item: dict) -> bool:
     """NFT rasmi WebApp'da ko'rinadimi?
 
@@ -5265,19 +5388,75 @@ async def adm_nft_link(message: Message, state: FSMContext):
     if not re.match(r"^(https?://|tg://|t\.me/)", link, re.I):
         await message.answer("⚠️ Havola <code>https://...</code> ko'rinishida bo'lishi kerak.")
         return
+
+    # 🔗 Telegram NFT sahifasi bo'lsa — rasmni O'ZIMIZ topamiz.
+    # Sabab: `<img src="https://t.me/nft/...">` hech qachon rasm
+    # ko'rsatmaydi (bu SPA sahifa, rasm FAQAT Telegram klientida
+    # chiziladi). Lekin Telegram shu sahifa uchun server tomonda
+    # `og:image` preview yaratadi — uni yuklab olamiz.
+    auto: dict = {}
+    if is_nft_page_url(link):
+        status = await message.answer("🔍 <i>Rasm qidirilmoqda…</i>")
+        auto = await resolve_nft_page(link) or {}
+        try:
+            await status.delete()
+        except Exception:  # noqa: BLE001
+            pass
+
     await state.set_state(NftStates.title)
-    await state.update_data(link=link, image=link, from_photo=False)
-    await message.answer(
-        "🔗 <b>Havola qabul qilindi</b>\n\n"
-        "📝 <b>2/4</b> — NFT nomini yuboring (masalan: Jack-in-the-Box).",
-        reply_markup=cancel_inline_kb("adm:nft_cancel"),
+    await state.update_data(
+        link=link,
+        image=auto.get("image") or link,
+        from_photo=False,
+        auto_title=auto.get("title") or "",
+        auto_number=auto.get("number"),
+        auto_desc=auto.get("description") or "",
     )
+
+    if auto.get("image"):
+        t = esc(auto.get("title") or "NFT")
+        n = auto.get("number")
+        await message.answer(
+            "🔗 <b>Havola qabul qilindi</b>\n\n"
+            f"🖼 Rasmi topildi: <b>{t}</b>" + (f" <code>#{n}</code>" if n else "") + "\n\n"
+            + (f"📝 <b>2/4</b> — Nomni tasdiqlang yoki o'zgartiring:\n"
+               f"    <code>{esc(auto.get('title') or '')}</code>\n\n"
+               if auto.get("title") else
+               "📝 <b>2/4</b> — NFT nomini yuboring (masalan: Jack-in-the-Box)."),
+            reply_markup=cancel_inline_kb("adm:nft_cancel"),
+        )
+    else:
+        await message.answer(
+            "🔗 <b>Havola qabul qilindi</b>\n\n"
+            "⚠️ <b>Rasm topilmadi.</b> Bu Telegram NFT sahifasi bo'lmasa yoki "
+            "havolada <b>raqam</b> yo'q bo'lishi mumkin.\n"
+            "   To'g'ri format: <code>https://t.me/nft/Nom-12345</code>\n\n"
+            "📝 <b>2/4</b> — NFT nomini yuboring.\n"
+            "   <i>Rasmni keyin 🖼 Rasm qo'shish orqali yubora olasiz.</i>",
+            reply_markup=cancel_inline_kb("adm:nft_cancel"),
+        )
 
 
 @admin_router.message(StateFilter(NftStates.title), F.text)
 async def adm_nft_title(message: Message, state: FSMContext):
+    title = (message.text or "").strip()[:64]
+    data = await state.get_data()
     await state.set_state(NftStates.number)
-    await state.update_data(title=(message.text or "").strip()[:64])
+    await state.update_data(title=title)
+
+    # Raqam Telegram sahifasidan avtomatik olingan bo'lsa —
+    # yana so'ramaymiz.
+    auto_num = data.get("auto_number")
+    if auto_num:
+        await state.update_data(number=int(auto_num))
+        await message.answer(
+            f"🏷 <b>Nom: {esc(title)}</b>\n"
+            f"🔢 <b>Raqam: #{auto_num}</b> (Telegram'dan olindi)\n\n"
+            "💰 <b>4/4</b> — <b>1 kunlik narxini</b> yuboring (masalan: 84).",
+            reply_markup=cancel_inline_kb("adm:nft_cancel"),
+        )
+        return
+
     await message.answer(
         "🏷 <b>Nom qabul qilindi</b>\n\n"
         "🔢 <b>3/4</b> — NFT raqamini yuboring (masalan: 22810).",
@@ -5313,6 +5492,9 @@ async def adm_nft_daily(message: Message, state: FSMContext):
         "number": data.get("number"),
         "link": data.get("link") or "",
         "image": data.get("image") or "",
+        # Telegram sahifasidagi "Model / Backdrop / Symbol" matni —
+        # WebApp filtrlari uchun saqlanadi.
+        "description": data.get("auto_desc") or "",
         "daily": daily,
         "active": True,
         "created_at": now_iso(),
