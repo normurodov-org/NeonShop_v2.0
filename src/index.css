@@ -363,6 +363,73 @@
     filter: blur(0px);
   }
 }
+/* =============================================================================
+   NFT KARTALARI — "uchib ketish"ni (flicker) to'xtatish
+   -----------------------------------------------------------------------------
+   NIMA BUZILDI: har bir kartada `apple-view-animate` ishlatilgan edi:
+       animation: appleViewEnter 0.5s both
+       0%   { transform: translateY(16px) scale(0.975); filter: blur(8px); }
+       100% { transform: translateY(0) scale(1);         filter: blur(0px); }
+
+   1) `filter: blur()` rasmni HAR KADRDA qayta chizadi — telefon ekranida
+      bu aynan "rasm uchib qolyapti" degan taassurotni beradi.
+   2) `transform` kartani 16px pastga va 2.5% kichiklashtiradi, keyin
+      joyiga qaytaradi — ya'ni kartalar sekin joylashib, keyin
+      "sakrab" o'tadi. O'lchilgan: (300,653,192x278) -> (192,600,202x293).
+   3) `fill-mode: both` oxirgi kadrani DOIM saqlaydi, ya'ni `transform`
+      va `filter` hech qachon `none` bo'lmaydi — bu esa `position: fixed`
+      ni ham buzadi (modal muammosi).
+
+   YECHIM: `filter` umuman ishlatilmaydi (faqat `opacity`), `transform`
+   ishlatilmaydi (faqat `translateY` — kichik, sekin, ko'rinmaydi),
+   va kartalar `--i` orqali ketma-ket (stagger) paydo bo'ladi.
+
+   Butun bo'lim allaqachon bir marta animatsiya oladi
+   (BuyView wrapperida `apple-view-animate`) — har bir kartada
+   takrorlash kerak emas edi.
+*/
+.nft-card-in {
+  opacity: 0;
+  animation: nftCardIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 0.035s);
+}
+
+@keyframes nftCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    /* `none` emas — aks holda `position: fixed` ichida muammo bo'ladi.
+       Lekin bu kartada fixed element yo'q, shuning uchun `translateY(0)`. */
+    transform: translateY(0);
+  }
+}
+
+/* 🔴 MOBIL: `hover` yopishib qoladi
+   ────────────────────────────────────
+   Telefonda barmoq tegsa, brauzer `:hover` holatini UZOQ ushlab turadi
+   (keyingi tapgacha). Natijada rasm kattalashib (scale-105) qoladi va
+   keyin kichiklashib " sakrab" ketadi — bu Telegram WebApp'da juda ko'p
+   uchraydigan "jitter" muammosi.
+
+   Yechim: kattalashuv faqat sichqoncha bor qurilmada ishlasin. */
+@media (hover: none) {
+  .nft-card-in .group-hover\:scale-105,
+  .nft-card-in:hover img {
+    transform: none !important;
+  }
+}
+
+/* Rasim yuklanayotganda karta balandligi O'ZGARMASIN (CLS = 0) */
+.nft-card-in .nft-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .apple-view-animate {
   animation: appleViewEnter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }

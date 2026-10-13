@@ -137,7 +137,7 @@ const NftImage: React.FC<{
   if (!ok) {
     return (
       <div
-        className={`w-full h-full flex flex-col items-center justify-center gap-1 ${
+        className={`nft-img w-full h-full flex flex-col items-center justify-center gap-1 ${
           isDark
             ? 'bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10'
             : 'bg-gradient-to-br from-violet-100 to-fuchsia-50'
@@ -161,6 +161,12 @@ const NftImage: React.FC<{
       src={shown}
       alt={alt}
       loading="lazy"
+      decoding="async"
+      // 🔴 Rasmga o'lcham beriladi: `aspect-square` konteyner barqaror,
+      // lekin rasmning o'z `width`/`height` siz yo'q bo'lsa, rasm
+      // yuklanganda konteyner BIR PIKSEL siljishi mumkin (CLS).
+      width={512}
+      height={512}
       onError={() => {
         // Avval serverdan yangisini so'raymiz
         if (nftId && !retriedRef.current) {
@@ -170,7 +176,7 @@ const NftImage: React.FC<{
           setState('failed');
         }
       }}
-      className={`w-full h-full object-cover ${className}`}
+      className={`nft-img w-full h-full object-cover ${className}`}
     />
   );
 };
@@ -432,12 +438,13 @@ export const NftRentView: React.FC<NftProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
-              {shown.map((n) => (
+              {shown.map((n, idx) => (
                 <button
                   key={n.id}
                   onClick={() => open(n)}
+                  style={{ ['--i' as string]: Math.min(idx, 8) }}
                   className={`text-left rounded-[24px] overflow-hidden liquid-glass apple-spring
-                              apple-view-animate cursor-pointer group`}
+                              nft-card-in cursor-pointer group`}
                 >
                   <div className="relative aspect-square overflow-hidden">
                     <NftImage
