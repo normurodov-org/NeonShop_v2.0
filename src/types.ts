@@ -1,14 +1,22 @@
 export interface User {
   id: number;
-  username: string;
+  /**
+   * 🔴 Ixtiyoriy: eski bazadagi yozuvlarda yo'q bo'lishi mumkin.
+   * Bunday mijoz uchun WebApp "O'zimga" tugmasi o'chiriladi
+   * (sun'iy username yuborish pul yo'qotishga olib kelardi).
+   */
+  username?: string;
   first_name?: string;
   photo_url?: string;
-  balance: number;
-  total_spent: number;
-  referrals_count: number;
-  ref_stars: number;
-  banned: boolean;
-  created_at: string;
+  /** 🔴 Ixtiyoriy: `Number(user.balance ?? 0)` ishlatish SHART */
+  balance?: number;
+  total_spent?: number;
+  referrals_count?: number;
+  ref_stars?: number;
+  banned?: boolean;
+  created_at?: string;
+  /** Server `/api/me` da qo'shimcha qaytaradi (ichki maydon) */
+  pending_topup?: Topup | null;
 }
 
 export interface Topup {
@@ -35,10 +43,17 @@ export interface Topup {
 export interface Order {
   id: string;
   user_id: number;
-  kind: 'stars' | 'premium' | 'gift';
-  title: string;
-  recipient: string;
-  price: number;
+  /** 🔴 `nft_rent` serverda ham bor (oldingi tipda yo'q edi) */
+  kind: 'stars' | 'premium' | 'gift' | 'nft_rent' | 'sell';
+  title?: string;
+  /**
+   * 🔴 Ixtiyoriy: `nft_rent` buyurtmalarida server `recipient`
+   * YUBORMAYDI (server.ts 1671-1698) — ilgari majburiy deb yozilgan
+   * bo'lgani uchun ekranda `@undefined` chiqardi.
+   */
+  recipient?: string;
+  /** 🔴 Ixtiyoriy: `orderPrice()` NaN → `null` qaytaradi */
+  price?: number;
   price_uzs?: number;
   stars?: number;
   amount?: number;
@@ -56,7 +71,7 @@ export interface Order {
   source?: 'webapp' | 'grammy' | 'bot';
   payment_method?: 'usdt' | 'usdt_ton' | 'balance' | 'humocard';
   usdt_spent?: number | null;
-  created_at: string;
+  created_at?: string;
 }
 
 export interface UsdtRate {

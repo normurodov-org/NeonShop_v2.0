@@ -1,6 +1,28 @@
+/*
+ * 🟢 🗘 DEPRECATED — ishlatilmaydi (2026 auditida aniqlangan).
+ *
+ * Bu fayl `src/` dagi hech qanday komponent tomonidan import
+ * QILINMAYDI. Faqat vaqtincha saqlangan.
+ *
+ * 🔴 NIMA UCHUN o'chirilmadi, faqat belgilandi:
+ *   * `StarsTab` / `PremiumTab` / `GiftsTab` — narxlari
+ *     `BuyView.tsx` dan FARQ qiladi (ikki xil manba)
+ *   * `BotSimulator` — ichida QATTIQ Railway hosti bor (dev asbobi)
+ *   * `botService.ts` — eski xizmat qatlami
+ *
+ * 💡 Agar bu komponentni qayta yoqish kerak bo'lsa:
+ *   1) narxlarni `server.ts` dan oling (WebApp da)
+ *   2) `src/lib/tgAuth.ts` dan `tgHeaders()` / `tgHeadersGet()`
+ *      ISHLATING — `x-telegram-user-id` serverda ISHONCHSIZ
+ *   3) ixtiyoriy maydonlarni `?? 0` bilan himolalang
+ *
+ * ESLIK: ushbu qoidalarga rioya qilmagan kod 2026-yil avgustidagi
+ * auditda topilgan 20+ xatoning manbai bo'ldi.
+ */
 import React, { useState } from 'react';
 import { User, Contest } from '../types';
 import { Trophy, Users, Clock, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
+import { telegramInitData } from '../lib/tgAuth';
 
 interface ContestTabProps {
   user: User | null;
@@ -33,7 +55,7 @@ export const ContestTab: React.FC<ContestTabProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-telegram-user-id': user?.id?.toString() || '',
+          'X-Telegram-Init-Data': telegramInitData(),
         },
       });
       const data = await res.json();

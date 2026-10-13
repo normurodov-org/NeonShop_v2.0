@@ -27,6 +27,15 @@ export const Header: React.FC<HeaderProps> = ({
   isAdmin,
 }) => {
   const [avatarError, setAvatarError] = React.useState(false);
+
+  // 🔴 `avatarError` bir marta `true` bo'lsa butunlay
+  // QOLIB KETARDI (rasm yangilansa ham). Telegram rasm havolasi
+  // vaqt o'tib o'zgaradi (mijoz rasmni yangilasa) — eski 404 bo'lsa
+  // har doim birinchi harf ko'rsatilardi.
+  React.useEffect(() => {
+    setAvatarError(false);
+  }, [user?.photo_url]);
+
   const initial = user?.username ? user.username.charAt(0).toUpperCase() : 'N';
   const displayName = user?.username ? `@${user.username}` : (user?.first_name || 'Mijoz');
 
@@ -128,8 +137,13 @@ export const Header: React.FC<HeaderProps> = ({
                 : 'bg-black/[0.06] hover:bg-black/[0.1] text-black border border-black/10 shadow-sm'
             }`}
           >
+            {/* 🔴 `user.balance` serverda DOIM ham kelmaydi
+                (`balance` ixtiyoriy maydon). `user?` faqat `user` null
+                bo'lsa himoya qiladi — `user` bor, `balance` yo'q bo'lsa
+                TypeError va ilova OQ EKRANGA tushardi (Header
+                ErrorBoundary dan tashqarida). */}
             <span className="font-mono text-[11px] font-bold">
-              {user ? user.balance.toLocaleString() : '0'}
+              {Number(user?.balance ?? 0).toLocaleString()}
             </span>
             <span className="text-[9px] font-medium opacity-70">UZS</span>
             <Plus className="w-3 h-3 ml-0.5 opacity-80" />

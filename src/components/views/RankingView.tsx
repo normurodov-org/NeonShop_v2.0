@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Contest } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { Trophy, Crown, Sparkles, Clock, ShoppingBag } from 'lucide-react';
+import { telegramInitData } from '../../lib/tgAuth';
 
 interface RankingViewProps {
   user: User | null;
@@ -47,6 +48,10 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
       try {
         const res = await fetch(`/api/ranking?period=${timeFilter}`, {
           headers: {
+            // 🔴 IMZO: server `x-telegram-user-id` ni ishonchsiz deb
+            // qabul qilmaydi. Bu header bo'lmasa `isMe` DOIM false bo'lardi
+            // va «Sizning o'rningiz» hech qachon ko'rinmasdi.
+            'X-Telegram-Init-Data': telegramInitData(),
             'x-telegram-user-id': user?.id ? user.id.toString() : '',
           },
         });
@@ -78,7 +83,11 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
     return () => {
       isMounted = false;
     };
-  }, [user, timeFilter]);
+  // 🔴 DEP `[user]` butun obyektni oladi. `App` dagi poller har
+  // 8 soniyada `setUser(data.user)` qilib obyektni QAYTA YARATADI,
+  // shuning uchun reyting har 8 soniyada qayta so'ralar edi
+  // (ortiqcha trafik + keraksiz qayta chizish). Faqat `id` yetarli.
+  }, [user?.id, timeFilter]);
 
   return (
     <div className="space-y-4 max-w-md mx-auto pb-28 apple-view-animate">
@@ -121,7 +130,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
               <h3 className={`text-sm font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                 Hozircha xaridlar mavjud emas
               </h3>
-              <p className="text-xs text-neutral-400 max-w-xs mx-auto leading-relaxed">
+              <p className={`text-xs ${isDark ? 'text-neutral-400' : 'text-neutral-600'} max-w-xs mx-auto leading-relaxed`}>
                 Birinchi bo'lib xarid qiling va haftalik reytingning 1-o'rnini egallang!
               </p>
               {onGoToBuy && (
@@ -154,7 +163,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                   <span className={`text-[11px] font-semibold mt-1 truncate max-w-[75px] ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                     {leaders[1].name}
                   </span>
-                  <span className="text-[10px] text-neutral-400">{leaders[1].orders} {t.orders}</span>
+                  <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{Number(leaders[1].orders) || 0} {t.orders}</span>
                   <div className="w-full h-18 mt-2 rounded-t-[18px] liquid-glass flex items-center justify-center font-mono font-bold text-xs">
                     {((Number(leaders[1].amount) || 0) / 1000).toFixed(0)}K
                   </div>
@@ -177,7 +186,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                   <span className={`text-xs font-bold mt-1 truncate max-w-[85px] ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                     {leaders[0].name}
                   </span>
-                  <span className="text-[10px] text-neutral-400">{leaders[0].orders} {t.orders}</span>
+                  <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{Number(leaders[0].orders) || 0} {t.orders}</span>
                   <div className="w-full h-26 mt-2 rounded-t-[20px] liquid-glass-card flex items-center justify-center font-mono font-bold text-sm">
                     {((Number(leaders[0].amount) || 0) / 1000).toFixed(0)}K
                   </div>
@@ -197,9 +206,9 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                   <span className={`text-[11px] font-semibold mt-1 truncate max-w-[75px] ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                     {leaders[2].name}
                   </span>
-                  <span className="text-[10px] text-neutral-400">{leaders[2].orders} {t.orders}</span>
+                  <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{Number(leaders[2].orders) || 0} {t.orders}</span>
                   <div className="w-full h-14 mt-2 rounded-t-[18px] liquid-glass flex items-center justify-center font-mono font-bold text-xs">
-                    {(leaders[2].amount / 1000).toFixed(0)}K
+                    {(Number(leaders[2].amount) / 1000).toFixed(0)}K
                   </div>
                 </div>
               ) : (
@@ -219,7 +228,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className="w-5 text-center text-xs font-mono font-bold text-neutral-400">
+                    <span className={`w-5 text-center text-xs font-mono font-bold ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
                       #{item.rank}
                     </span>
                     <div className="w-7 h-7 rounded-full overflow-hidden liquid-glass-pill shrink-0">
@@ -233,7 +242,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                     </div>
                     <div>
                       <h4 className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-neutral-900'}`}>{item.name}</h4>
-                      <span className="text-[10px] text-neutral-400">{item.orders} {t.orders}</span>
+                      <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{item.orders} {t.orders}</span>
                     </div>
                   </div>
                   <div className={`text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
@@ -262,7 +271,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                 )}
               </div>
               <div>
-                <div className="text-[10px] text-neutral-400 font-medium">
+                <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} font-medium`}>
                   {t.yourPlace}: <b className={isDark ? 'text-white' : 'text-neutral-900'}>
                     {myRanking.rank ? `#${myRanking.rank}` : "Hali xarid yo'q"}
                   </b>

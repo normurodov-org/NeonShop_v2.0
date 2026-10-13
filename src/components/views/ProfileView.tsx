@@ -72,13 +72,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
             <div className="grid grid-cols-2 gap-2">
               <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
-                <span className="text-[10px] text-neutral-400">Referallar</span>
+                <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>Referallar</span>
                 <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                   {user?.referrals_count ?? 0}
                 </div>
               </div>
               <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
-                <span className="text-[10px] text-neutral-400 flex items-center gap-1">
+                <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} flex items-center gap-1`}>
                   <AEmoji char="⭐" size={11} anim="shine" label="Stars" /> Stars
                 </span>
                 <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
@@ -88,7 +88,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
 
             <div className={`p-3 rounded-[16px] space-y-1 ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
-              <span className="text-[10px] text-neutral-400">Sizning taklif havolangiz:</span>
+              <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>Sizning taklif havolangiz:</span>
               <div className="text-[11px] font-mono font-semibold break-all opacity-90">
                 {refLink}
               </div>
@@ -125,7 +125,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
           <div>
             <h2 className={`text-sm font-bold tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>{displayName}</h2>
-            <p className="text-[11px] text-neutral-400 font-mono mt-0.5">
+            <p className={`text-[11px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} font-mono mt-0.5`}>
               User ID: <b>{user?.id || '8307046273'}</b>
             </p>
           </div>
@@ -205,7 +205,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           />
         </div>
 
-        <div className="flex justify-between text-[10px] text-neutral-400">
+        <div className={`flex justify-between text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
           <span>Haftalik: <b>{userSpent.toLocaleString()} / 500 000</b></span>
           <span>Qoldi: {Math.max(0, 500000 - userSpent).toLocaleString()} UZS</span>
         </div>
@@ -217,13 +217,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
         <div className="grid grid-cols-2 gap-2">
           <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
-            <span className="text-[10px] text-neutral-400">{t.spent}</span>
+            <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{t.spent}</span>
             <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
               {userSpent.toLocaleString()} <span className="text-[10px] font-normal opacity-70">UZS</span>
             </div>
           </div>
           <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
-            <span className="text-[10px] text-neutral-400">{t.orders}</span>
+            <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{t.orders}</span>
             <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
               {orders.length} <span className="text-[10px] font-normal opacity-70">{t.orders}</span>
             </div>
@@ -233,15 +233,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className={`p-2 rounded-[14px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
             <div className={`text-xs font-bold font-mono ${isDark ? 'text-white' : 'text-neutral-900'}`}>550</div>
-            <div className="text-[9px] text-neutral-400">Stars</div>
+            <div className={`text-[9px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>Stars</div>
           </div>
           <div className={`p-2 rounded-[14px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
             <div className={`text-xs font-bold font-mono ${isDark ? 'text-white' : 'text-neutral-900'}`}>1</div>
-            <div className="text-[9px] text-neutral-400">Premium</div>
+            <div className={`text-[9px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>Premium</div>
           </div>
           <div className={`p-2 rounded-[14px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
             <div className={`text-xs font-bold font-mono ${isDark ? 'text-white' : 'text-neutral-900'}`}>1</div>
-            <div className="text-[9px] text-neutral-400">Gift</div>
+            <div className={`text-[9px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>Gift</div>
           </div>
         </div>
       </div>
@@ -256,7 +256,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
 
         {orders.length === 0 ? (
-          <p className="text-xs text-neutral-400 text-center py-3">{t.noOrders}</p>
+          <p className={`text-xs ${isDark ? 'text-neutral-400' : 'text-neutral-600'} text-center py-3`}>{t.noOrders}</p>
         ) : (
           <div className="space-y-1.5">
             {orders.map((ord) => (
@@ -272,8 +272,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </div>
                   <div>
                     <h4 className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-neutral-900'}`}>{ord.title || `⭐ ${ord.stars || 0} Stars`}</h4>
-                    <span className="text-[10px] text-neutral-400">
-                      @{ord.recipient} • {ord.created_at?.slice(0, 10)}
+                    <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
+                      {ord.recipient ? `@${ord.recipient}` : '🏥 NFT ijara'}{' • '}
+                      {(ord.created_at || '').slice(0, 10)}
                     </span>
                   </div>
                 </div>
@@ -313,7 +314,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             {isDark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-neutral-700" />}
             <span className={isDark ? 'text-white' : 'text-neutral-900'}>{t.theme}</span>
           </div>
-          <div className="flex items-center gap-1.5 text-xs font-bold text-neutral-400">
+          <div className={`flex items-center gap-1.5 text-xs font-bold ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
             <span>{isDark ? t.darkMode : t.lightMode}</span>
             <ChevronRight className="w-3.5 h-3.5 opacity-50" />
           </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, StoreSettings, Topup } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { CreditCard, Copy, Check, Clock, Plus, History, AlertCircle, RefreshCw, X } from 'lucide-react';
-import { tgHeaders } from '../../lib/tgAuth';
+import { tgHeaders, tgHeadersGet } from '../../lib/tgAuth';
 
 interface TopupViewProps {
   user: User | null;
@@ -12,7 +12,10 @@ interface TopupViewProps {
   activeTopup: Topup | null;
   onTopupCreated: (t: Topup) => void;
   onTopupSuccess: (newBalance: number, msg: string) => void;
-  onTopupCancelled: () => void;
+  /** 🔴 To'lov muddati tugadi yoki bekor qilindi — ilova karta va
+   *  poller ni TO'XTATISHI kerak (o'siz o'lik to'lov kartasi ekranda
+   *  qoladi va har 4 soniyada so'rov yuborishda davom etadi). */
+  onTopupCancelled: (status?: 'expired' | 'cancelled') => void;
   onOpenHistory: () => void;
 }
 
@@ -50,20 +53,41 @@ export const TopupView: React.FC<TopupViewProps> = ({
 
     const poll = async () => {
       try {
+        // 🔴 IMZO MUHIM. Server endi `x-telegram-user-id` ni
+        // ISHONCHLI DEB QABUL QILMAYDI (faqat `X-Telegram-Init-Data`).
+        // Bu header bo'lmasa 401 kelardi va AVTO-YUKLASH butunlay
+        // ISHLAMASDI — ya'ni mijoz kartaga pul yuborsa, hech qachon
+        // avtomatik to'ldirilmay qolardi ("xisob toldirish ishlamayapti").
         const res = await fetch(`/api/topup/status?id=${encodeURIComponent(activeTopup.id)}`, {
-          headers: { 'x-telegram-user-id': user?.id?.toString() || '' },
+          headers: tgHeadersGet(),
         });
         const data = await res.json();
         if (!alive || !data.ok) return;
 
-        if (data.topup?.status === 'completed') {
+        const st = data.topup?.status;
+        if (st === 'completed') {
           onTopupSuccess(
             Number(data.balance ?? user?.balance ?? 0),
             `✅ ${activeTopup.amount.toLocaleString()} UZS avtomatik to'ldirildi!`
           );
+          return;
         }
-        if (data.topup?.status === 'expired' || data.topup?.status === 'cancelled') {
-          setError("To'lov so'rovi muddati tugadi. Qayta urinib ko'ring.");
+        if (st === 'expired' || st === 'cancelled') {
+          // 🔴 ESKI KOD FAQAT `setError` qilardi:
+          //   * `activeTopup` holati HECH QACHON yangilanmasdi — `App`dagi
+          //     `activeTopup` `pending` da qolardi
+          //   * shuning uchun poller OCHILMAY qolardi va 4 soniyada bir
+          //     so'rov KECHIB KETARDI
+          //   * o'lik to'lov kartasi (karta raqami + nusxa ko'chirish)
+          //     ekranda qolardi
+          // Endi holat `App`ga yoziladi — poller o'z-o'zidan to'xtaydi
+          // va karta yo'qoladi.
+          setError(
+            st === 'expired'
+              ? "To'lov so'rovi muddati tugadi. Qayta urinib ko'ring."
+              : "To'lov bekor qilindi."
+          );
+          onTopupCancelled?.(st);
         }
       } catch (e) {
         /* tarmoq uzilishi — keyingi urinishda tekshiramiz */
@@ -134,6 +158,9 @@ export const TopupView: React.FC<TopupViewProps> = ({
   };
 
   const handleSimulatePayment = async () => {
+    // 🔴 «To'lovni tekshirish» ni ikki marta bosish mumkin —
+    // har safar `POST /api/topup/simulate-pay` ketar edi.
+    if (simulating) return;
     if (!activeTopup) return;
     setSimulating(true);
     setError(null);
@@ -166,7 +193,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
         <div>
           <h2 className={`text-xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>{t.topup}</h2>
           <p className={`text-xs mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
-            {t.balance}: <b className={`font-mono font-bold ${isDark ? 'text-white' : 'text-black'}`}>{user?.balance.toLocaleString() || '0'} UZS</b>
+            {t.balance}: <b className={`font-mono font-bold ${isDark ? 'text-white' : 'text-black'}`}>{Number(user?.balance ?? 0).toLocaleString()} UZS</b>
           </p>
         </div>
         <button
@@ -188,7 +215,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
               <Clock className="w-3.5 h-3.5 animate-spin" />
               <span>To'lov kutilmoqda</span>
             </span>
-            <span className="text-neutral-400 font-mono text-[11px]">
+            <span className={`${isDark ? 'text-neutral-400' : 'text-neutral-600'} font-mono text-[11px]`}>
               ID: <b>{activeTopup.id}</b>
             </span>
           </div>
@@ -203,7 +230,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
                 Bot yaratgan to'lovlarda `amount_to_send` yo'q — u holda
                 `amount` ishlatiladi (bot o'z xabarida to'g'ri summani
                 ko'rsatadi). */}
-            <div className="text-[11px] text-neutral-400 font-medium">
+            <div className={`text-[11px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} font-medium`}>
               Kartaga yuborish uchun ANIQ summa:
             </div>
             <div className={`text-2xl font-bold font-mono tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>
@@ -220,11 +247,11 @@ export const TopupView: React.FC<TopupViewProps> = ({
 
             <div className="pt-2 border-t border-white/10 flex items-center justify-between">
               <div>
-                <div className="text-[10px] text-neutral-400">Karta raqami:</div>
+                <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>Karta raqami:</div>
                 <div className={`text-sm font-mono font-bold tracking-wider ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                   {activeTopup.card || (isDark ? 'bot orqali' : '—')}
                 </div>
-                <div className="text-[10px] text-neutral-400 mt-0.5">
+                <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} mt-0.5`}>
                   {activeTopup.holder || ' '}
                 </div>
               </div>
@@ -238,30 +265,29 @@ export const TopupView: React.FC<TopupViewProps> = ({
             </div>
           </div>
 
-          <p className="text-[11px] text-neutral-400 leading-relaxed">
+          <p className={`text-[11px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} leading-relaxed`}>
             {t.transferNotice}
           </p>
 
-          <button
-            onClick={handleSimulatePayment}
-            disabled={simulating}
-            className={`w-full py-3.5 rounded-[18px] font-semibold text-xs flex items-center justify-center gap-2 apple-spring cursor-pointer ${
-              isDark ? 'bg-white text-black hover:bg-neutral-100' : 'bg-black text-white hover:bg-neutral-800'
-            }`}
-          >
-            <span>To'lovni tekshirish / Tasdiqlash</span>
-          </button>
-
+          {/* 📖 BITTAGINA: ilgari ikkita bir xil tugma bor edi
+              («To'lovni tekshirish / Tasdiqlash» va «To'lovni tekshirish»)
+              — ikkalasi ham `handleSimulatePayment` ni chaqirardi va
+              «Tasdiqlash» birinchisida spinner yo'q edi (bosilganini
+              bilib bo'lmasdi). Endi bitta tugma + loader. */}
           <div className="flex items-center gap-2">
             <button
               onClick={handleSimulatePayment}
               disabled={simulating}
-              className={`flex-1 py-3.5 rounded-[18px] font-semibold text-xs flex items-center justify-center gap-2 apple-spring cursor-pointer ${
+              className={`flex-1 py-3.5 rounded-[18px] font-semibold text-xs flex items-center justify-center gap-2 apple-spring cursor-pointer disabled:opacity-60 ${
                 isDark ? 'bg-white text-black hover:bg-neutral-100' : 'bg-black text-white hover:bg-neutral-800'
               }`}
             >
               {simulating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-              <span>To'lovni tekshirish</span>
+              <span>
+                {simulating
+                  ? 'Tekshirilmoqda…'
+                  : 'To’lovni tekshirish / Tasdiqlash'}
+              </span>
             </button>
             <button
               onClick={handleCancel}
@@ -287,7 +313,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
 
         {/* Minimalist Input box */}
         <div className="relative">
-          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-neutral-400">
+          <div className={`absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
             <CreditCard className="w-4 h-4" />
           </div>
           <input
@@ -302,7 +328,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
               isDark ? 'text-white placeholder:text-neutral-600' : 'text-neutral-900 placeholder:text-neutral-400'
             }`}
           />
-          <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-xs font-mono text-neutral-400">
+          <div className={`absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-xs font-mono ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
             UZS
           </div>
         </div>
@@ -334,7 +360,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
         </div>
 
         {/* Helper text */}
-        <p className="text-[11px] text-neutral-400 leading-relaxed">
+        <p className={`text-[11px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} leading-relaxed`}>
           {t.transferNotice}
         </p>
 

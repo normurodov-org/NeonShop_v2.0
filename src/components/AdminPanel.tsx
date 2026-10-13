@@ -4,9 +4,28 @@ import { Shield, Lock, Power, Users, ShoppingBag, DollarSign, CheckCircle2, Aler
 
 interface AdminPanelProps {
   onSettingsUpdated: (newSettings: StoreSettings) => void;
+  /**
+   * 🔴 `isDark` MAJBURIY.
+   *
+   * Sabab: panel kirish maydonlarini `text-white` bilan yozgan edi, lekin
+   * `.light .liquid-glass-input` foni `rgba(255,255,255,.75)` — ya'ni
+   * yorug' rejimda OQ USTIGA OQ (≈1.1:1) va maydonlar butunlay
+   * KO'RINMAYDI. Panel `isDark` olmagani uchun qaror qabul qila
+   * olmasdi.
+   */
+  isDark: boolean;
 }
 
-export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => {
+export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDark }) => {
+  /** Kirish maydonlari matni: yorug' rejimda oq emas, QORA bo'lishi SHART. */
+  const fieldText = isDark ? 'text-white' : 'text-neutral-900';
+  // 🔴 `.light .liquid-glass-pill` foni `rgba(255,255,255,.6)` —
+  // deyarli oq. Ustidagi `text-purple-300` (≈1.4:1) va
+  // `text-neutral-200` (≈1.2:1) oq ustida KO'RINMAYDI.
+  const accentText = isDark ? 'text-purple-300' : 'text-purple-700';
+  // 🔴 yorug' rejimda `neutral-400` = 2.4:1 (o'tmaydi)
+  const dimText = isDark ? 'text-neutral-400' : 'text-neutral-600';
+  const msgText = isDark ? 'text-neutral-200' : 'text-neutral-700';
   const [authenticated, setAuthenticated] = useState<boolean>(false);
   const [password, setPassword] = useState<string>('');
   const [adminData, setAdminData] = useState<any>(null);
@@ -139,7 +158,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
       });
       const data = await res.json();
       if (data.ok) {
-        setAdjMsg(`✅ Balans muvaffaqiyatli o'zgartirildi! Yangi balans: ${data.user.balance.toLocaleString()} UZS`);
+        setAdjMsg(`✅ Balans muvaffaqiyatli o'zgartirildi! Yangi balans: ${Number(data.user.balance ?? 0).toLocaleString()} UZS`);
         fetchAdminData();
       } else {
         setAdjMsg(`❌ Xatolik: ${data.error}`);
@@ -158,7 +177,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
           </div>
           <h2 className="text-lg font-bold text-white">Admin Paneliga Kirish</h2>
           <p className="text-xs text-slate-400">
-            Parol: Railway Variables dagi <code className="text-purple-300 font-mono">ADMIN_PASSWORD</code>
+            Parol: Railway Variables dagi <code className={`font-mono ${accentText}`}>ADMIN_PASSWORD</code>
           </p>
         </div>
 
@@ -213,7 +232,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
           <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
             <ShoppingBag className="w-3.5 h-3.5 text-purple-400" /> Jami buyurtmalar
           </div>
-          <div className="text-2xl font-black text-purple-300 mt-1">
+          <div className={`text-2xl font-black mt-1 ${accentText}`}>
             {Number(stats?.totalOrders || 0).toLocaleString()}
           </div>
         </div>
@@ -425,14 +444,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
 
         {contest?.active && (
           <div className="p-3 rounded-2xl liquid-glass-pill text-[11px] space-y-1">
-            <div className="font-bold text-purple-300">
+            <div className={`font-bold ${accentText}`}>
               {contest.text?.replace(/<[^>]+>/g, '')}
             </div>
-            <div className="text-neutral-400">
+            <div className={dimText}>
               🏆 {contest.prize_stars} ⭐ · 🥇 {contest.winners} ta g'olib · 💰 min{' '}
               {(contest.min || 0).toLocaleString()} UZS
             </div>
-            <div className="text-neutral-500">
+            <div className={dimText}>
               👥 {Array.isArray(contest.participants) ? contest.participants.length : 0} ishtirokchi
             </div>
           </div>
@@ -446,7 +465,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
               value={ctForm.text}
               onChange={(e) => setCtForm({ ...ctForm, text: e.target.value })}
               placeholder="Misol: 🎉 Yangi yil sovg'asi — 1000 Stars!"
-              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs text-white"
+              className={`w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs ${fieldText}`}
             />
           </div>
           <div className="space-y-1">
@@ -455,7 +474,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
               type="number"
               value={ctForm.prize_stars}
               onChange={(e) => setCtForm({ ...ctForm, prize_stars: e.target.value })}
-              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono text-white"
+              className={`w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono ${fieldText}`}
             />
           </div>
           <div className="space-y-1">
@@ -464,7 +483,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
               type="number"
               value={ctForm.winners}
               onChange={(e) => setCtForm({ ...ctForm, winners: e.target.value })}
-              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono text-white"
+              className={`w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono ${fieldText}`}
             />
           </div>
           <div className="space-y-1">
@@ -473,7 +492,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
               type="number"
               value={ctForm.min}
               onChange={(e) => setCtForm({ ...ctForm, min: e.target.value })}
-              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono text-white"
+              className={`w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono ${fieldText}`}
             />
           </div>
           <div className="space-y-1">
@@ -482,7 +501,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
               type="number"
               value={ctForm.days}
               onChange={(e) => setCtForm({ ...ctForm, days: e.target.value })}
-              className="w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono text-white"
+              className={`w-full px-3 py-2.5 rounded-xl liquid-glass-input text-xs font-mono ${fieldText}`}
             />
           </div>
         </div>
@@ -507,7 +526,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
         </div>
 
         {ctMsg && (
-          <div className="p-3 rounded-xl liquid-glass-pill text-[11px] text-neutral-200">{ctMsg}</div>
+          <div className={`p-3 rounded-xl liquid-glass-pill text-[11px] ${msgText}`}>{ctMsg}</div>
         )}
       </div>
 
@@ -534,7 +553,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated }) => 
             >
               <div>
                 <span className="font-bold text-white">{ord.title}</span>
-                <span className="text-slate-400 ml-2">(@{ord.recipient})</span>
+                <span className="text-slate-400 ml-2">({ord.recipient ? `@${ord.recipient}` : 'NFT ijara'})</span>
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-bold text-cyan-400">{ord.price?.toLocaleString()} UZS</span>

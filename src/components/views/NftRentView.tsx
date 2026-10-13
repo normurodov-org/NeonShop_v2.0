@@ -33,7 +33,12 @@ interface NftProps {
   balance?: number;
   onGoToTopup: () => void;
   /** Buyurtma yuborilganda chaqiriladi (toast + tab yopish) */
-  onRented?: (msg: string, newBalance?: number) => void;
+  /** Rent muvaffaqiyatli bo'lganda chaqiriladi.
+   *  🔴 `order` ham uzatiladi: ilova uni TARIXGA qo'shishi kerak,
+   *  aks holda `processingCount` 0 bo'lib qoladi va poller
+   *  ishlamaydi — to'langan buyurtma qayta yuklashgacha ko'rinmaydi.
+   */
+  onRented?: (msg: string, newBalance?: number, order?: any) => void;
 }
 
 const TABS = [
@@ -139,6 +144,7 @@ const NftImage: React.FC<{
   //   rasm kelganda `onLoad` -> shimmer yo'qoladi,
   //   haqiqiy xatoda `onError` -> serverdan qayta olish -> placeholder.
   const [loading, setLoading] = useState(false);
+  // 🔴 rasm bir marta yuklanganini kuzatish (takroriy tiklashni oldini oladi)
   const loadedRef = useRef(false);
 
   useEffect(() => {
@@ -173,6 +179,11 @@ const NftImage: React.FC<{
         setFresh(j.image);
         setLoading(true);
         setState('idle');
+        // 🔴 `setRetrying(false)` BU YERDA HAM KERAK — undan keyin
+        // `return`. Eski kodda bu qator yo'q edi va `if (retrying) return`
+        // butunlay o'ladi: rasim bir marta uzilgandan keyin QAYTIB
+        // KELMASDI.
+        setRetrying(false);
         return;
       }
     } catch {
@@ -294,6 +305,9 @@ export const NftRentView: React.FC<NftProps> = ({
   onRented,
 }) => {
   const [items, setItems] = useState<NftItem[]>([]);
+  // 🔴 so'rov ketma-ketligi (loadQuote uchun — eski javob keyingisining
+  // ustiga yopilmasin)
+  const quoteSeq = useRef(0);
   const [minDays, setMinDays] = useState(3);
   const [maxDays, setMaxDays] = useState(50);
   const [quick, setQuick] = useState<number[]>([3, 7, 14, 30]);
@@ -371,11 +385,20 @@ export const NftRentView: React.FC<NftProps> = ({
   // Tanlangan NFT uchun hisobni serverdan olamiz (bitta manba)
   const loadQuote = async (item: NftItem, d: number) => {
     setQLoading(true);
+    // 🔴 SO'ROV KETMA-KETLIGI. Muammo: mijoz `+`/`-`/preset tugmasini
+    // tez-tez bossa, N ta so'rov parallel ketadi. Qaysi biri KEYIN
+    // qaytishini bashorat qilib bo'lmaydi — va natija OYNADA ko'rinadigan
+    // muddat bo'lishi SHART (server `days` bo'yicha qayta hisoblaydi).
+    // Eski javob keyingisining ustiga yopilsa, mijoz ko'rsatilgan
+    // narxni to'lamaydi yoki to'lamoqchi bo'lmagan narxni ko'radi.
+    const seq = ++quoteSeq.current;
     try {
       const r = await fetch(`/api/nfts/quote?id=${encodeURIComponent(item.id)}&days=${d}`, {
         headers: tgHeadersGet(),
       });
       const j = await r.json();
+      // 🔴 Bu javob ESKI bo'lsa — tashlab yuboramiz
+      if (seq !== quoteSeq.current) return;
       if (j.ok) {
         setQuote(j.quote);
         if (typeof j.balance === 'number') onBalance?.(j.balance);
@@ -430,7 +453,7 @@ export const NftRentView: React.FC<NftProps> = ({
         return;
       }
       onBalance(Number(j.balance) || 0);
-      onRented?.(j.message || 'NFT ijaraga olish so&apos;rovi yuborildi', Number(j.balance) || 0);
+      onRented?.(j.message || 'NFT ijaraga olish so&apos;rovi yuborildi', Number(j.balance) || 0, j.order || null);
       setSel(null);
       load();
     } catch {
@@ -442,6 +465,12 @@ export const NftRentView: React.FC<NftProps> = ({
 
   //Dropdown yopilgandan keyin kartani ochamiz
   const open = (item: NftItem) => {
+    // 🔴 Eski NFT narxi to'g'ri kelmasligi uchun tozalanadi —
+    // aks holda modalda AVVALGI NFT narxi va «balans yetarli
+    // emas» yozuvi turib qoladi va mijoz boshqa narxni
+    // ko'radi.
+    setQuote(null);
+    setQLoading(false);
     setOpenMenu(null);
     setSel(item);
     setErr(null);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, StoreSettings, Topup, Order, Contest } from './types';
 import { Lang } from './i18n';
 import { Header } from './components/Header';
@@ -36,9 +36,19 @@ export default function App() {
   // u `.light`/`.dark` dan tashqarida qoladi va har doim qorong'i
   // kabi chiziladi. Shu sabab biz ham body ga sinxronlaymiz.
   useEffect(() => {
+    // 🏠 IKKALA TA YERGA ham sinxronlanadi:
+    //   1) `document.body`  — `.light .liquid-glass-*` CSS qoidalari shu
+    //      yerda ishlaydi (bu ilova temani faqat shu orqali boshqaradi)
+    //   2) `document.documentElement` — `<html>` da `class="dark"`
+    //      QATTIQCHA yozilgan bo'lsa, TAILWIND `dark:` VARIANTLARI
+    //      DOIM yoniq bo'lib qoladi va yorug' rejimda ham oq yuvish
+    //      qo'yiladi (`hover:bg-white/5` kabi). Buni tozalash SHART.
     const b = document.body;
     b.classList.remove('light', 'dark');
     b.classList.add(theme);
+    const h = document.documentElement;
+    h.classList.remove('light', 'dark');
+    h.classList.add(theme);
   }, [theme]);
 
   const [user, setUser] = useState<User | null>(null);
@@ -111,6 +121,12 @@ export default function App() {
         setSettings(data.settings || null);
         if (data.user?.pending_topup) {
           setActiveTopup(data.user.pending_topup);
+        } else {
+          // 🔴 `activeTopup` faqat SET qilinardi, hech qachon
+          // tozalanmasdi. Bekor qilingan yoki vaqti o'tgan to'lov o'lik
+          // kartasi bo'lib qolardi (va `TopupView` har 4 soniyada
+          // so'rov yuborishda davom etardi).
+          setActiveTopup(null);
         }
       }
     } catch (err) {
@@ -242,25 +258,46 @@ export default function App() {
   // "<b>Buyurtmangiz qabul qilindi!</b>" deb XOM teglarni ko'radi.
   // NFT ijaraga olish yuborilganda — balans darhol yangilanadi
   // (server allaqon yechgan) va toast chiqadi.
-  const handleNftRented = (msg: string, newBalance?: number) => {
+  const handleNftRented = (msg: string, newBalance?: number, order?: any) => {
     if (user && typeof newBalance === 'number') {
       setUser({ ...user, balance: newBalance });
+    }
+    // 🔴 TARIXGA QO'SHISH. Bu holda `processingCount` oshadi va
+    // poller (`useEffect`) ISHLAB KETADI — aks holda to'lanagan buyurtma
+    // to'liq qayta yuklashgacha ko'rinmay qolardi: poller `data.history`
+    // dan foydalanadi, `processingCount` nol bo'lgani uchun umuman
+    // ishlamaydi va mijoz «to'lov o'tmadi» deb o'ylaydi.
+    if (order) {
+      setHistory((prev) => [{ ...order, kind: 'nft_rent' }, ...prev]);
     }
     showToast(msg);
   };
 
+  // 📖 Toast timer'i bOSHqARILADI: har yangi xabarda eskisi
+  // tozalanadi. Aks holda ikki xabar tez oraliqda kelsa, birinchi timer
+  // ikkinchisini ham o'chiradi — xabar 1 soniya ko'rinib, "ishlamadi"
+  // taassuroti qoldiradi.
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const showToast = (msg: string) => {
     triggerHaptic('success');
     setToastMsg(toastText(msg));
-    setTimeout(() => setToastMsg(null), 4000);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 4000);
   };
 
   const handleOrderSuccess = (order: Order, newBalance: number, msg: string) => {
     if (user) {
+      // 🔴 `total_spent` NaN bo'lsa butun mijoz hisobiga
+      // «NaN» yopishadi — haftalik bonus ustasi ham, reyting ham
+      // buziladi. `order.price` serverda ixtiyoriy (eski buyurtmalarda
+      // yo'q bo'lishi mumkin).
+      const spent = Number(order?.price) || 0;
+      const nextSpent = (Number(user.total_spent) || 0) + spent;
       setUser({
         ...user,
-        balance: newBalance,
-        total_spent: user.total_spent + order.price,
+        balance: Number(newBalance) || 0,
+        total_spent: nextSpent,
       });
     }
     setHistory((prev) => [order, ...prev]);
@@ -455,18 +492,26 @@ export default function App() {
         </div>
       )}
 
-      {/* Modern Apple Minimalist Header */}
-      <Header
-        user={user}
-        settings={settings}
-        lang={lang}
-        onChangeLang={handleLangChange}
-        isDark={isDark}
-        onToggleTheme={handleToggleTheme}
-        onOpenTopup={() => setCurrentTab('topup')}
-        onOpenAdmin={isAdmin ? () => setCurrentTab('admin') : undefined}
-        isAdmin={isAdmin}
-      />
+      {/* 🔴 HEADER ErrorBoundary ICHIDA.
+          Sabab: `Header` butun ilova bo'ylab chiziladi va `user.balance`
+          kabi maydonlarni to'g'ridan-to'g'ri o'qiydi. U TASHQARIDA
+          bo'lsa, bitta xato butun ilovani oq ekranga tushiradi
+          (oddiy `user?` himoyasi `user` bor, `balance` yo'q bo'lganda
+          ishlamaydi). Endi xato faqat sarlavhani olib tashlaydi —
+          kontent ishlayveradi. */}
+      <ErrorBoundary label="Sarlavha">
+        <Header
+          user={user}
+          settings={settings}
+          lang={lang}
+          onChangeLang={handleLangChange}
+          isDark={isDark}
+          onToggleTheme={handleToggleTheme}
+          onOpenTopup={() => setCurrentTab('topup')}
+          onOpenAdmin={isAdmin ? () => setCurrentTab('admin') : undefined}
+          isAdmin={isAdmin}
+        />
+      </ErrorBoundary>
 
       {/* Main View Area */}
       <main className="flex-1 max-w-md w-full mx-auto px-4 pt-3.5 relative z-10">
@@ -500,7 +545,12 @@ export default function App() {
               showToast("To'lov so'rovi yaratildi.");
             }}
             onTopupSuccess={handleTopupSuccess}
-            onTopupCancelled={() => setActiveTopup(null)}
+            onTopupCancelled={() => {
+              // 🔤 O'LIK TO'LOV KARTASINI OLIB TASHLAMIZ: serverda
+              // muddati tugagan/bekor qilingan to'lov endi ko'rinmasin,
+              // poller ham o'z-o'zidan to'xtasin.
+              setActiveTopup(null);
+            }}
             onOpenHistory={() => setCurrentTab('profile')}
           />
         )}
@@ -563,9 +613,15 @@ export default function App() {
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Do'konga qaytish</span>
             </button>
-            <AdminPanel
-              onSettingsUpdated={(newSettings) => setSettings(newSettings)}
-            />
+            {/* 🔴 Admin panel ham ErrorBoundary ichida: biror render
+                xatosi butun ilovani oq qilmasin — aks holda admin
+                o'z panelini tuzatish imkoniyatidan ham mahrum bo'lardi. */}
+            <ErrorBoundary label="Admin">
+              <AdminPanel
+                isDark={isDark}
+                onSettingsUpdated={(newSettings) => setSettings(newSettings)}
+              />
+            </ErrorBoundary>
           </div>
         )}
       </main>

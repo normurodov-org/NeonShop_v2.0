@@ -112,13 +112,22 @@ print()
 print("=" * 68)
 print("4) ZANJIR ULANISHI (toast + balans)")
 print("=" * 68)
-check("onRented?: (msg: string, newBalance?: number) => void;" in BUY, "BuyView prop")
+# 🔴 IMRZO: imzo endi `order` ham qabul qiladi. Sabab: NFT
+#    buyurtmasi tarixga qo'shilMAGANDA `processingCount` 0 bo'lib
+#    qolardi, poller umuman ishlamaydi va to'langan buyurtma to'liq
+#    qayta yuklashgacha ko'rinmay qolardi ("to'lov o'tmadi").
+check("onRented?: (msg: string, newBalance?: number, order?: any) => void;" in BUY,
+      "BuyView prop (order bilan)")
 check("onRented={onRented}" in BUY, "BuyView -> NftRentView")
 check("onRented={handleNftRented}" in APP, "App -> BuyView")
-check("const handleNftRented = (msg: string, newBalance?: number)" in APP,
-      "App handler imzosi")
+check("const handleNftRented = (msg: string, newBalance?: number, order?: any)" in APP,
+      "App handler imzosi (order bilan)")
 check("balance: newBalance" in APP, "balans yangilanadi")
 check("showToast(msg);" in APP, "toast ko'rsatiladi")
+check("setHistory((prev) => [{ ...order, kind: 'nft_rent' }, ...prev])" in APP,
+      "🔴 NFT buyurtmasi tarixga qo'shiladi (poller ishlaydi)")
+check("j.order || null" in NFT_VIEW,
+      "🐴 server javobidagi `order` NftRentView dan uzatiladi")
 
 print()
 print("=" * 68)

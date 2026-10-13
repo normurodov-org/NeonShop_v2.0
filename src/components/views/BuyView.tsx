@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, StoreSettings, Order, UsdtRate } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check, Wallet, Layers, ChevronRight } from 'lucide-react';
@@ -15,7 +15,9 @@ interface BuyViewProps {
   onOrderSuccess: (order: Order, newBalance: number, msg: string) => void;
   onGoToTopup: () => void;
   /** NFT ijaraga olish yuborilganda — toast ko'rsatish uchun */
-  onRented?: (msg: string, newBalance?: number) => void;
+  /** 📖 `order` ham uzatiladi — ilova uni tarixga qo'shishi
+   *  kerak (aks holda poller ishlamaydi). */
+  onRented?: (msg: string, newBalance?: number, order?: any) => void;
 }
 
 export const BuyView: React.FC<BuyViewProps> = ({
@@ -112,6 +114,9 @@ export const BuyView: React.FC<BuyViewProps> = ({
     };
   }, []);
 
+  // 🔴 so'rov ketma-ketligi uchun ref (yuqoridagi guard uchun)
+  const resolveSeq = useRef(0);
+
   // Resolve recipient profile when username is changed
   useEffect(() => {
     const clean = recipient.replace('@', '').trim();
@@ -129,19 +134,44 @@ export const BuyView: React.FC<BuyViewProps> = ({
       return;
     }
 
+    // 🔴 SO'ROV KETMA-KETLIGI (sequence guard).
+    // Muammo: 450ms debounce'dan keyin so'rov ketadi. Mijoz tez-tez
+    // username o'zgartirsa, birinchi (sekin) javob ikkinchisidan KEYIN
+    // kelishi mumkin — va eski profil ustiga yopiladi: rasmda A,
+    // haqiqiy xaridda B. Mijoz NOTO'G'RI odamga Stars yuboradi.
+    // Yechim: har so'rov o'z raqamini oladi; javob kelganda o'z
+    // raqami bilan solishtiriladi — eskisi tashlab yuboriladi.
+    const seq = ++resolveSeq.current;
+
     const timer = setTimeout(async () => {
       setResolving(true);
       try {
         const res = await fetch(`/api/resolve-user?username=${encodeURIComponent(clean)}`);
         const data = await res.json();
+        // 🔴 Boshqa so'rov javobi keldi — bu ESKISI, unutamiz
+        if (seq !== resolveSeq.current) return;
         if (data.ok && data.user) {
-          setResolvedProfile(data.user);
+          // 🔴 javob shakli tekshiriladi — avval `any` to'g'ridan
+          // to'g'ri `display_name` o'qilardi va yo'q bo'lsa TypeError
+          // chiqib, butun "Xarid" tabini xato ekranga aylantirardi.
+          setResolvedProfile({
+            username: String(data.user.username || clean),
+            display_name: String(data.user.display_name || data.user.username || clean),
+            photo_url: data.user.photo_url ? String(data.user.photo_url) : undefined,
+          });
+          setPhotoFailed(false);
+        } else {
+          // 🔴 MUVAFFAQIYATSIZ bo'lsa ham eski profilni TOZALAMIZ
+          // — aks holda A ning rasmi B ning nomi bilan ko'rinib turadi
+          // va mijoz qayerda yuborayotganini ANIQLAY OLMAYDI.
+          setResolvedProfile(null);
           setPhotoFailed(false);
         }
       } catch (e) {
         console.error('Resolve user error:', e);
+        if (seq === resolveSeq.current) setResolvedProfile(null);
       } finally {
-        setResolving(false);
+        if (seq === resolveSeq.current) setResolving(false);
       }
     }, 450);
 
@@ -171,13 +201,31 @@ export const BuyView: React.FC<BuyViewProps> = ({
     { key: 'diamond', name: 'Olmos', emoji: '💎', stars: 100, price: 20000 },
   ];
 
+  // 🔴 PREMIUM REJIM/MUDDAT MUVOFIQLIGI.
+  // Muammo: `login` rejimida faqat 1 va 12 oy bor. Mijoz avval "3 oy"
+  // ni tanlab, keyin "Akkauntga kirib" ni bossa, `premMonths` ESKI
+  // qiymatida qoladi — `find()` topmaydi va `|| 155000` YASHIR
+  // zaxira narxni ko'rsatadi. Natijada mijoz 155 000 ko'rib "Sotib
+  // olish" bosadi, server esa `400 "Noto'g'ri tarif tanlandi."`
+  // qaytaradi: hech narsa bo'lmaydi, mijoz chalkashadi.
+  // Yechim: rejim almashganda muddat ham shu rejimga moslanadi.
+  const switchPremMode = (mode: 'nologin' | 'login') => {
+    setPremMode(mode);
+    if (!premPlans[mode].some((x) => x.months === premMonths)) {
+      setPremMonths(premPlans[mode][0].months);
+    }
+  };
+
+  // 📖 Tanlanmagan tarifni YASHIRMAYDIGAN qimma — keyin
+  // `buy_disabled` orqali tugma o'chiriladi va mijoz xatoni oldini oladi.
+  const premPlan = premPlans[premMode].find((x) => x.months === premMonths) || null;
+
   // Calculate current price
   let currentPrice = 0;
   if (subTab === 'stars') {
     currentPrice = amount * starPrice;
   } else if (subTab === 'premium') {
-    const p = premPlans[premMode].find((x) => x.months === premMonths);
-    currentPrice = p?.price || 155000;
+    currentPrice = premPlan ? premPlan.price : 0;
   } else if (subTab === 'gifts') {
     const g = giftsList.find((x) => x.key === selectedGift);
     currentPrice = g?.price || 3000;
@@ -188,6 +236,10 @@ export const BuyView: React.FC<BuyViewProps> = ({
   const needMore = Math.max(0, currentPrice - userBal);
 
   const handleBuy = async () => {
+    // 🔴 🔄 IKKI MARTA TO'LOVNI TO'XTATISH.
+    // `disabled={loading}` yetarli EMAS: React holatni qayta render
+    // qilishdan OLDIN ikkinchi bosilish yuborilishi mumkin.
+    if (loading) return;
     setError(null);
     const cleanUser = recipient.replace('@', '').trim();
     if (!cleanUser) {
@@ -206,6 +258,12 @@ export const BuyView: React.FC<BuyViewProps> = ({
       if (subTab === 'stars') {
         body = { ...body, kind: 'stars', amount };
       } else if (subTab === 'premium') {
+        // 🐄 Tanlanmagan tariffni serverga yubormaymiz — 400 olib
+        // mijozni chalkashga qoldirmaslik uchun (hozir CTA ham o'chiriladi)
+        if (!premPlan) {
+          setError('Premium tarifni tanlang.');
+          return;
+        }
         body = { ...body, kind: 'premium', mode: premMode, months: premMonths };
       } else if (subTab === 'gifts') {
         body = { ...body, kind: 'gift', gift: selectedGift, hide_my_name: hideMyName };
@@ -372,7 +430,9 @@ export const BuyView: React.FC<BuyViewProps> = ({
                   />
                 ) : (
                   <div className="w-full h-full rounded-full bg-neutral-900 text-amber-300 flex items-center justify-center font-bold text-sm">
-                    {resolvedProfile.display_name.charAt(0).toUpperCase()}
+                    {String(resolvedProfile.display_name || resolvedProfile.username || '?')
+                      .charAt(0)
+                      .toUpperCase()}
                   </div>
                 )}
               </div>
@@ -392,7 +452,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
                 e.stopPropagation();
                 setIsEditingRecipient(true);
               }}
-              className="px-2.5 py-1.5 rounded-full liquid-glass-pill text-[11px] font-semibold flex items-center gap-1 text-neutral-400 group-hover:text-white apple-spring"
+              className={`px-2.5 py-1.5 rounded-full liquid-glass-pill text-[11px] font-semibold flex items-center gap-1 ${isDark ? 'text-neutral-400' : 'text-neutral-600'} group-hover:text-white apple-spring`}
             >
               <Edit3 className="w-3 h-3" />
               <span>Tahrirlash</span>
@@ -430,7 +490,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
                 </button>
               )}
             </div>
-            <p className="text-[10px] text-neutral-400">{t.recipientUsername}</p>
+            <p className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{t.recipientUsername}</p>
           </div>
         )}
       </div>
@@ -440,13 +500,13 @@ export const BuyView: React.FC<BuyViewProps> = ({
         <div className="rounded-[26px] liquid-glass-card p-4 space-y-3">
           <div className="flex items-center justify-between text-xs">
             <span className={`font-semibold ${isDark ? 'text-neutral-300' : 'text-neutral-700'}`}>{t.starsAmount}</span>
-            <span className="text-[10px] text-neutral-400 font-mono">
+            <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} font-mono`}>
               {MIN_STARS.toLocaleString()} - {MAX_STARS.toLocaleString()}
             </span>
           </div>
 
           <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-neutral-400">
+            <div className={`absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
               <Star className="w-4 h-4" />
             </div>
             <input
@@ -507,21 +567,21 @@ export const BuyView: React.FC<BuyViewProps> = ({
         <div className="rounded-[26px] liquid-glass-card p-4 space-y-3">
           <div className={`flex items-center gap-1 p-1 rounded-full ${isDark ? 'bg-black/30' : 'bg-black/5'}`}>
             <button
-              onClick={() => setPremMode('nologin')}
+              onClick={() => switchPremMode('nologin')}
               className={`flex-1 py-1.5 text-xs font-semibold rounded-full apple-spring ${
                 premMode === 'nologin'
                   ? isDark ? 'bg-white text-black' : 'bg-black text-white'
-                  : 'text-neutral-400'
+                  : isDark ? 'text-neutral-400' : 'text-neutral-600'
               }`}
             >
               Akkauntga kirmasdan
             </button>
             <button
-              onClick={() => setPremMode('login')}
+              onClick={() => switchPremMode('login')}
               className={`flex-1 py-1.5 text-xs font-semibold rounded-full apple-spring ${
                 premMode === 'login'
                   ? isDark ? 'bg-white text-black' : 'bg-black text-white'
-                  : 'text-neutral-400'
+                  : isDark ? 'text-neutral-400' : 'text-neutral-600'
               }`}
             >
               Akkauntga kirib
@@ -679,7 +739,10 @@ export const BuyView: React.FC<BuyViewProps> = ({
       {subTab !== 'nft' && (
       <button
         onClick={handleBuy}
-        disabled={loading}
+        /* 🐄 Premium rejimda tarif tanlanmagan bo'lsa tugma o'chiriladi:
+           server `400 "Noto'g'ri tarif tanlandi."` qaytarib, mijozni
+           chalkash qoldirmasligimiz kerak. */
+        disabled={loading || (subTab === 'premium' && !premPlan)}
         className={`w-full py-3.5 rounded-[18px] font-semibold text-xs flex items-center justify-center gap-2 apple-spring cursor-pointer disabled:opacity-50 ${
           isDark
             ? 'bg-white text-black hover:bg-neutral-100 shadow-md'
