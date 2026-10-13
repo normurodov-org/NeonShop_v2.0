@@ -2144,10 +2144,12 @@ MENU_STYLES = {
 }
 SUCCESS_CALLBACKS = {"buy_confirm", "svc_ok", "ref_wd", "buy_self", "svc_self",
                      "refw_self", "contest:joined"}
-SUCCESS_PREFIXES = ("ord_done:", "sale_pay:", "adm:sale_ok:", "adm:premium_ok:")
+SUCCESS_PREFIXES = ("ord_done:", "sale_pay:", "adm:sale_ok:",
+                    "adm:premium_ok:", "adm:star_retry:")
 DANGER_CALLBACKS = {"cancel", "adm:logout", "adm:ban:ban"}
 DANGER_PREFIXES = ("ord_refund:", "sale_refund:", "topup_cancel:",
-                    "adm:sale_refund:", "adm:premium_refund:")
+                    "adm:sale_refund:", "adm:premium_refund:",
+                    "adm:star_refund:")
 
 
 def button_style(button: Any) -> Optional[str]:
@@ -2281,6 +2283,8 @@ def admin_kb() -> InlineKeyboardMarkup:
              InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list")],
             [InlineKeyboardButton(text="💸 To'lanuvchi savdolar",
                                   callback_data="adm:sales")],
+            [InlineKeyboardButton(text="🔴 Bajarilmagan Stars",
+                                  callback_data="adm:star_fail")],
             [InlineKeyboardButton(text="💎 Premium buyurtmalari",
                                   callback_data="adm:premium")],
             [InlineKeyboardButton(text="📨 Menedjerga xabar tekshiruvi",
@@ -3078,7 +3082,9 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
         result = await buy_stars_via_fragment(username, amount)
     except PurchaseError as exc:
         log.warning("Buyurtma %s muvaffaqiyatsiz: %s", order_id, exc)
-        order.update(status="manual_pending", error=str(exc), chat_id=chat_id, finished_at=now_iso())
+        order.update(status="manual_pending", error=str(exc),
+                     star_attempts=num(order.get("star_attempts")) + 1,
+                     chat_id=chat_id, finished_at=now_iso())
         db.save()
 
         # Xatani to'g'ri kategoriyaga ajratamiz:
@@ -3100,8 +3106,11 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
 
         if technical:
             headline = "🔴 <b>Texnik xato — buyurtma bajarilmadi</b>"
-            advice = ("👉 <i>Avtomatik ravishda qayta urinish mumkin. Agar takrorlansa, "
-                      "/admin → 🩺 Fragment diagnostika ni bosib ko'ring.</i>")
+            advice = ("🔄 <i>Avtomatik ravishda qayta uriniladi "
+                        "(%d urinish). Yordam kerak bo'lsa: "
+                        "/admin → 🔴 Bajarilmagan Stars — "
+                        "«↻ Qaytarish» bilan pulni qaytiring.</i>"
+                        % STAR_MAX_ATTEMPTS)
         else:
             headline = "⚠️ <b>TON hamyonda USDT yetarli emas</b>"
             advice = "👉 <i>Iltimos, TON hamyonga USDT tashlang (Telegram → USDT → TON).</i>"
@@ -3116,19 +3125,36 @@ async def process_star_order(order_id: str, chat_id: int) -> None:
             f"🔍 <b>Sabab:</b> <code>{esc(err_text)}</code>\n\n"
             f"{advice}"
         )
+        # 🔴 MIJOZGA NIMA BO'YOTGANINI AYNAN AYTAMIZ.
+        #    Eski matn "Stars avtomatik yuboriladi, kutib turing" edi —
+        #    lekin biz bilamizki bu urinish muvaffaqiyatsiz tugagan va
+        #    keyingi urinish 20 soniyadan keyin. Yolg'on va'dat
+        #    mijozni 5 daqiqa kutishga majbur qilardi.
+        tries = num(order.get("star_attempts"))
+        if technical and tries < STAR_MAX_ATTEMPTS:
+            customer_note = (
+                "<i>Do'kon tomonida vaqtincha muammo bor. "
+                "Biz avtomatik ravishda qayta uramiz — sizga hech narsa "
+                "qilishingiz kerak emas.</i>"
+            )
+        elif technical:
+            customer_note = (
+                "<i>Avtomatik urinishlar tugadi. Administrator xabar beradi. "
+                "Sizning pulingiz xavfsiz — zarur bo'lsa qaytariladi.</i>"
+            )
+        else:
+            customer_note = (
+                "💳 <i>Iltimos, do'konning TON hamyoniga USDT "
+                "tashlang — shunda Stars yuboriladi. "
+                "Yordam kerak bo'lsa yozing.</i>"
+            )
         await _safe_send(
             chat_id,
-            f"⏳ <b>Buyurtmangiz qabul qilindi!</b>\n\n"
+            f"⏳ <b>Buyurtmangiz qabul qilindi</b>\n\n"
             f"⭐ Miqdor: <b>{amount} ta Stars</b>\n"
             f"👤 Qabul qiluvchi: <b>@{esc(username)}</b>\n"
-            f"💳 Yechilgan summa: <b>{fmt(price)} UZS</b>\n"
-            f"📌 Holat: <b>Yuborilmoqda</b>\n\n"
-            + (
-                "<i>Do'kon tomonida vaqtincha muammo bor. Administrator tuzatadi va "
-                "Stars'ni avtomatik yuboradi.</i>"
-                if technical
-                else "<i>Stars avtomatik tarzda yuboriladi. Biroz kutib turing.</i>"
-            ),
+            f"💳 Yechilgan summa: <b>{fmt(price)} UZS</b>\n\n"
+            + customer_note,
         )
         return
     except Exception as exc:  # noqa: BLE001
@@ -3513,6 +3539,48 @@ async def star_order_worker() -> None:
                 log.info("⭐ WebApp buyurtmasi %s qayta ishlanmoqda (%s ⭐)", order_id, order.get("amount"))
                 asyncio.create_task(process_star_order(order_id, target))
 
+            # 🔴 `manual_pending` — BAJARILMAGAN buyurtmalar.
+            #    Eski kodda bu holat DOIMIY qolib ketardi: mijoz Stars
+            #    olmagan, puli ham qaytmagan, hech kim qayta urinish
+            #    qilmagan edi (faqat statistikada ko'rinardi).
+            #    Endi texnik xatolar uchun avtomatik qayta uriladi.
+            for order_id, order in list(db.data["orders"].items()):
+                if order.get("kind") != "stars":
+                    continue
+                if order.get("status") != "manual_pending":
+                    continue
+                if order.get("refunded"):
+                    continue
+                err = str(order.get("error") or "")
+                # "USDT yetarli emas" — mijozning TON hamyoni muammosi.
+                # Qayta urish ma'nosiz (hech narsa o'zgarmaydi), faqat
+                # uni ortiqcha urinish bilan kechiktirmaymiz.
+                if star_order_is_money_problem(err):
+                    continue
+                att = num(order.get("star_attempts") or 0)
+                if att >= STAR_MAX_ATTEMPTS:
+                    continue
+                # Xarflar orasida minimal tanaffus (Fragment/toni
+                # tiklanishi uchun) — 20s * urinishlar soni
+                last = order.get("finished_at")
+                if last:
+                    try:
+                        done_ms = datetime.fromisoformat(
+                            str(last).replace("Z", "+00:00")).timestamp() * 1000
+                        if time.time() * 1000 - done_ms < 20000 * (att + 1):
+                            continue
+                    except Exception:  # noqa: BLE001
+                        pass
+                order["star_attempts"] = att + 1
+                order["status"] = "processing"
+                order["auto_processed"] = True
+                db.save()
+                target = int(order.get("chat_id") or order["user_id"])
+                log.warning("🔄 Bajarilmagan Stars buyurtma %s "
+                            "qayta urinildi (%d/%d)", order_id, att + 1,
+                            STAR_MAX_ATTEMPTS)
+                asyncio.create_task(process_star_order(order_id, target))
+
             # Har 5 daqiqada USDT balansini yangilab turamiz
             if cycle % 75 == 0:
                 asyncio.create_task(refresh_wallet_usdt())
@@ -3520,6 +3588,195 @@ async def star_order_worker() -> None:
         except Exception as exc:  # noqa: BLE001
             log.exception("Stars worker xatosi: %s", exc)
             await asyncio.sleep(5)
+
+
+# =============================================================================
+# STARS BUYURTMASI BAJARILMADI — qayta urish va qaytarish
+# =============================================================================
+# 🔴 NIMA BUZILGAN EDI (pulkan yo'qotish):
+#   `process_star_order()` Fragment xatosida buyurtmani
+#   `status = "manual_pending"` qilib to'xtatadi. Mijozning UZS'i allaqachon
+#   yechilgan (server.ts `POST /api/order`), lekin:
+#     * `star_order_worker()` faqat `processing/queued/pending` ni oladi —
+#       `manual_pending` BIRORQ QAYTA ISHLANMAYDI
+#     * `auto_processed` allaqachon `True` bo'lgan
+#     * refund yo'li umuman YO'Q EDI
+#     * admin esa faqat STATISTIKADA ko'rardi (`db_stats.pending_orders`)
+#   Natija: mijoz Stars olmadi, puli ham qaytmadi — buyurtma
+#   DOIMIY `manual_pending` da qolib ketar edi.
+#
+#   🔴 VA YOTGAN YOLG'ON: adminga yuborilgan xabar "Avtomatik ravishda
+#   qayta urish mumkin" deb yozgan — lekin avtomatik qayta urish
+#   MAVJUD EMASDI.
+#
+# 🔴 ENDI:
+#   1) `star_order_worker()` `manual_pending` buyurtmalarni
+#      `STAR_MAX_ATTEMPTS` ga qadar avtomatik QAYTA URADI (texnik xatolar
+#      uchun; "USDT yetarli emas" — mijozga tegishli, qayta urilmaydi)
+#   2) Urinishlar tugasa — mijoz XABAR OLADI
+#   3) `/admin → ⭐ Bajarilmagan Stars` — «↻ Qayta urinish» va
+#      «↩️ Qaytarish» (balansga qaytariladi)
+
+STAR_MAX_ATTEMPTS = 3
+# 🔴 KALITLAR TOR TUTILADI — bu atama "pulsiz holat" degani
+#    IKKALA YO'L ham bo'lishi mumkin:
+#      noto'g'ri → buyurtma avtomatik qayta URILMAYDI va
+#                   hech kimga xabar borMAYDI (buyurtma qolib ketadi)
+#      keng → texnik xato pul muammosi deb o'ylanadi va
+#             ortiqcha urinishlar sarflanadi
+#    Shu sabab faqat ANIQ "bizning TON hamyonda USDT yetarli emas"
+#    degan holatni belgilaymiz — boshqasi qayta uriladi.
+_STAR_MONEY_KEYS = (
+    "usdt yetarli emas",
+    "yetarli usdt",
+    "insufficient funds",
+    "not enough balance",
+    "ton balance",
+    "hamyonda usdt",
+)
+
+
+def star_order_is_money_problem(err: str) -> bool:
+    low = (err or "").lower()
+    return any(k in low for k in _STAR_MONEY_KEYS)
+
+
+def refund_star_order(order: dict) -> int:
+    """Mijoz balansiga qaytaradi. Qaytarilgan summani qaytaradi."""
+    total = num(order.get("price") or order.get("price_uzs"))
+    uid = order.get("user_id")
+    user = db.get_user(int(uid)) if uid else None
+    if user is None or total <= 0:
+        return 0
+    # 🔴 KASR HAK: `total_spent` ham kamaytiriladi — aks holda
+    # mijoz yana konkursda qatnasha olardi va reytingda noto'g'ri
+    # ko'rinardi ("xarid qilgan", lekin qaytarilgan).
+    user["balance"] = num(user.get("balance")) + total
+    user["total_spent"] = max(0, num(user.get("total_spent")) - total)
+    db.add_history(user, "stars_refund", total,
+                   "Stars buyurtmasi bajarilmadi — pul qaytarildi: "
+                   f"{order.get('title') or order.get('id')}")
+    order["refunded"] = True
+    order["refunded_at"] = now_iso()
+    order["status"] = "refunded"
+    return total
+
+
+@admin_router.callback_query(F.data == "adm:star_fail")
+async def adm_star_fail(call: CallbackQuery):
+    """Bajarilmagan Stars buyurtmalari."""
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    db.reload_if_changed()
+    pend = sorted(
+        (o for o in (db.data.get("orders") or {}).values()
+         if o.get("kind") == "stars" and o.get("status") == "manual_pending"),
+        key=lambda o: o.get("finished_at") or o.get("created_at") or "",
+    )
+    if not pend:
+        await call.message.answer(
+            "✅ <b>Bajarilmagan Stars buyurtmasi yo'q</b>\n\n"
+            "<i>Fragment xatosi bo'lsa, buyurtma shu yerda paydo bo'ladi.</i>",
+            reply_markup=admin_back_kb(),
+        )
+        return
+
+    lines = ["🔴 <b>Bajarilmagan Stars buyurtmalari</b> (%d ta)\n" % len(pend)]
+    buttons = []
+    for i, o in enumerate(pend, 1):
+        price = num(o.get("price") or o.get("price_uzs"))
+        att = num(o.get("star_attempts") or o.get("attempts"))
+        money_problem = star_order_is_money_problem(str(o.get("error") or ""))
+        lines.append(
+            "\n%d. <b>%s ⭐</b> → <b>%s UZS</b>"
+            "\n   👤 Qabul qiluvchi: <b>@%s</b>"
+            "\n   🔄 Urinishlar: <b>%d/%d</b>%s"
+            "\n   🆔 <code>%s</code>"
+            "\n   🔎 Sabab: <code>%s</code>"
+            % (i, fmt(num(o.get("amount"))), fmt(price),
+               esc(str(o.get("recipient") or o.get("user_id"))),
+               att, STAR_MAX_ATTEMPTS,
+               "  🟢 <b>(USDT yetarli emas — mijozga xabar)</b>"
+               if money_problem else "",
+               esc(str(o.get("id"))),
+               esc(str(o.get("error") or "?"))[:120])
+        )
+        row = [InlineKeyboardButton(
+            text="🔄 Qayta urinish", callback_data="adm:star_retry:%s" % o.get("id"))]
+        if not o.get("refunded"):
+            row.append(InlineKeyboardButton(
+                text="🔄 Qaytarish", callback_data="adm:star_refund:%s" % o.get("id")))
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅️ Admin", callback_data="adm:home")])
+    await call.message.answer(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),  # type: ignore[arg-type]
+    )
+
+
+@admin_router.callback_query(F.data.startswith("adm:star_retry:"))
+async def adm_star_retry(call: CallbackQuery):
+    """Qo'lda qayta urinish."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    oid = call.data.split(":", 2)[2]
+    order = (db.data.get("orders") or {}).get(oid)
+    if not order or order.get("kind") != "stars":
+        await call.answer("Buyurtma topilmadi.", show_alert=True)
+        return
+    # 🔴 Avtomatik qayta urish blokini O'CHAMIZ: aks holda
+    #    worker ham, admin ham bir vaqtda ishlaydi — buyurtma ikki marta
+    #    Fragment'da xarid qilinadi va mijoz IKKALA marta Stars oladi.
+    order["auto_processed"] = False
+    order["star_attempts"] = 0
+    order["status"] = "processing"
+    order.pop("manual_pending", None)
+    db.save()
+    target = int(order.get("chat_id") or order["user_id"])
+    await call.answer("🔄 Qayta urinish boshlandi", show_alert=True)
+    asyncio.create_task(process_star_order(oid, target))
+
+
+@admin_router.callback_query(F.data.startswith("adm:star_refund:"))
+async def adm_star_refund(call: CallbackQuery):
+    """Mijoz balansiga qaytarish."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    oid = call.data.split(":", 2)[2]
+    order = (db.data.get("orders") or {}).get(oid)
+    if not order or order.get("kind") != "stars":
+        await call.answer("Buyurtma topilmadi.", show_alert=True)
+        return
+    if order.get("refunded"):
+        await call.answer("Bu buyurtma allaqachon qaytarilgan.", show_alert=True)
+        return
+    if order.get("status") not in ("manual_pending", "unknown", "failed"):
+        await call.answer(
+            "Faqat bajarilmagan buyurtma qaytariladi "
+            f"(hozirgi holat: {order.get('status')}).",
+            show_alert=True,
+        )
+        return
+    total = refund_star_order(order)
+    db.save()
+    if total <= 0:
+        await call.answer("Qaytarib bo'lmadi (mijoz bazada yo'q).",
+                          show_alert=True)
+        return
+    uid = int(order.get("user_id"))
+    await _safe_send(
+        uid,
+        "🔄 <b>Buyurtma bekor qilindi — pulingiz qaytarildi</b>\n\n"
+        f"💳 <b>{fmt(total)} UZS</b> balansingizga qo'shildi.\n"
+        f"🊰 «{esc(str(order.get('title') or 'Stars'))}» "
+        "yuborilmadi.\n\n"
+        "<i>Xatolik uchun uzr so'raymiz. Balki keyinroq urinib ko'rasiz.</i>",
+    )
+    await call.answer("🔄 %s UZS qaytarildi" % fmt(total), show_alert=True)
+    await adm_star_fail(call)
 
 
 async def post_order_to_channel(order: dict, title: str, username: str,

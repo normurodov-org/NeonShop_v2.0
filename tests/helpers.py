@@ -21,6 +21,7 @@ IKKI XIL KOD TILI bor \u2014 va ularda IZOH QOIDASI boshqacha:
    deb qizil bo'ladi.
 """
 
+import ast
 import io
 import re
 import tokenize
@@ -47,17 +48,52 @@ def strip_code(text: str) -> str:
 
 
 def strip_py_comments(text: str) -> str:
-    """Python kodidan `#` izoh va docstring'larni olib tashlaydi.
+    """Python kodidan `#` izoh va haqiqiy DOCSTRING'larni olib tashlaydi.
 
-    `tokenize` orqali \u2014 shuning uchun `#` satr ICHIDAN
-    (`"#0f172a"`, `"#fff"`) va apostrofli o'zbekcha so'zlardan
-    (`bo'limi`) to'g'ri ajratiladi.
+    `tokenize` orqali izohlarni ANIQ ajratamiz (`#` satr ichida ham
+    bo'ladi: `"#0f172a"`, `"#fff"`).
+
+    🔴 Nima uchun docstring uchun `tokenize` EMAS, `ast` ishlatiladi:
+       `tokenize` da "birinchi STRING tokeni = docstring" degan qoida
+       YOLG'ON. Masalan ko'p qatorli tuple:
+
+           _STAR_MONEY_KEYS = (
+               "usdt yetarli emas",      <-- birinchi STRING
+               "yetarli usdt",
+           )
+
+       Bu DOCSTRING EMAS — oddiy tuple. Eski yondashuv uni `""` bilan
+       almashtirib, testga yolg'on natija berardi (test "kalit yo'q"
+       deb qizil bo'lardi, kod esa to'g'ri edi).
+
+       `ast` esa aniq: docstring faqat Module/FunctionDef/AsyncFunctionDef/
+       ClassDef ning `body[0]` da bo'lgan STRING.
     """
+    # --- 1) haqiqiy docstring qatorlarini topamiz ---
+    doc_lines = set()
+    try:
+        tree = ast.parse(text)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Module, ast.FunctionDef,
+                                     ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            body = getattr(node, "body", None)
+            if not body:
+                continue
+            first = body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) \
+                    and isinstance(first.value.value, str):
+                ln = first.value.lineno
+                doc_lines.add((ln, first.value.end_lineno or ln))
+    except SyntaxError:
+        # Sintaksis xatosi bo'lsa — izohlarni regex bilan olib tashlaymiz,
+        # matnni KAMAYTIRMAYMIZMIZ (test ma'lumotni yo'qotmasin)
+        return re.sub(r"(?<!['\"])#[^\n]*", "", text)
+
+    # --- 2) tokenlarni qayta yig'amiz ---
     try:
         toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
-    except (tokenize.TokenError, IndentationError, SyntaxError):
-        # Syntax xatosi bo'lsa \u2014 regex bilan eng yaxshi holatni
-        # berishga urinamiz (test ma'lumotni kamaytirmasligi uchun)
+    except (tokenize.TokenError, IndentationError):
         return re.sub(r"(?<!['\"])#[^\n]*", "", text)
 
     out = []
@@ -67,17 +103,14 @@ def strip_py_comments(text: str) -> str:
     #    YO'Q qiladi. `end` dan hisoblasak, har bir qator IKKI marta
     #    yozilardi va butun fayl buzilib ketardi.
     cur_row, cur_col = 1, 0
-    prev_tok = tokenize.INDENT
     for tok in toks:
         ttype, tstr, start, end, _line = tok
         if ttype == tokenize.COMMENT:
             continue
-        if ttype == tokenize.STRING and prev_tok in (
-                tokenize.INDENT, tokenize.NEWLINE, tokenize.NL,
-                tokenize.DEDENT, tokenize.ENCODING):
-            # docstring — uni `""` bilan almashtiramiz (qatorlar saqlanadi)
-            tstr = '""'
         tr, tc = start
+        if ttype == tokenize.STRING and any(
+                a <= tr <= b for a, b in doc_lines):
+            tstr = '""'
         if tr > cur_row:
             out.append("\n" * (tr - cur_row))
             cur_col = 0
@@ -91,7 +124,6 @@ def strip_py_comments(text: str) -> str:
         else:
             cur_row = tr
             cur_col = tc + len(tstr)
-        prev_tok = ttype
     return "".join(out)
 
 
