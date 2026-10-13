@@ -1308,6 +1308,26 @@ app.post('/api/order', async (req: Request, res: Response) => {
   };
 
   store.orders.set(orderId, newOrder);
+
+  // 🔴 TARIX: Stars / Premium / Gift xaridlari WebApp'da KO'RINMASDI.
+  // Faqat `nft_rent` qo'lda yozilgan edi. Natijada mijoz
+  // "xarid qildim, lekin tarixda yo'q" deb ko'rardi.
+  // Botdagi `add_history` bilan BIR XIL formatda yozamiz
+  // (bot.py: `HISTORY_LIMIT = 100`).
+  try {
+    const hist: any[] = Array.isArray(user.history) ? user.history : [];
+    hist.push({
+      type: kind,                       // "stars" | "premium" | "gift"
+      amount: -price,                   // yechilgan summa (manfiy)
+      cashback: cashback > 0 ? cashback : undefined,
+      details: title,
+      date: new Date().toISOString(),
+    });
+    user.history = hist.slice(-100);    // bot.py dagi HISTORY_LIMIT
+  } catch {
+    /* tarix — qo'shimcha, xatoga olib kelmasligi kerak */
+  }
+
   syncAndSaveDb();
 
   res.json({
@@ -1552,10 +1572,37 @@ app.get('/api/nfts/quote', (req: Request, res: Response) => {
  */
 const NFT_MANAGER = (process.env.NFT_MANAGER || '@saidovManajer').trim();
 
-/** Sizning Telegram nomingiz — xabarda «Kim yubordi» sifatida ko'rinadi. */
-const ADMIN_HANDLE = (
-  process.env.ADMIN_USERNAME || process.env.ADMIN_HANDLE || 'admin'
-).replace(/^@/, '');
+/**
+ * Sizning Telegram nomingiz — xabarda «Kim yubordi» sifatida
+ * ko'rinadi.
+ *
+ * 🔴 MANBA ZARBIRASI (avval shunday edi):
+ *   `process.env.ADMIN_USERNAME || 'admin'` — Railway'da bu ENV yo'q
+ *   bo'lsa NFT xabarida `«Kim yubordi: @admin»` chiqardi (soxta).
+ *
+ * Endi zaxira manbalar ketma-ket sinanadi:
+ *   1) `ADMIN_USERNAME` / `ADMIN_HANDLE` ENV
+ *   2) `settings.admin_username` (bot.py yoki admin panel yozgan bo'lsa)
+ *   3) `users[settings.admin_id].username` — haqiqiy adminning bazadagi nomi
+ *   4) `normuzb` — oxirgi zaxira
+ *
+ * DIQQAT: `store` `loadDatabase()` dan keyin to'lgani uchun bu
+ * qiymat `nftPublicListResolved()` ishga tushgandan KEYIN
+ * `adminHandle()` orqali olinadi (modul darajasida emas).
+ */
+function adminHandle(): string {
+  const fromEnv = (process.env.ADMIN_USERNAME || process.env.ADMIN_HANDLE || '')
+    .trim().replace(/^@/, '');
+  if (fromEnv) return fromEnv;
+  const st: any = store.settings || {};
+  const fromSettings = String(st.admin_username || '').replace(/^@/, '').trim();
+  if (fromSettings) return fromSettings;
+  const adminId = Number(st.admin_id || DEFAULT_USER_ID);
+  const rec: any = (store.users || new Map()).get(adminId);
+  const fromUser = String((rec && rec.username) || '').replace(/^@/, '').trim();
+  if (fromUser) return fromUser;
+  return 'normuzb';
+}
 
 /**
  * NFT ijaraga olish buyurtmasi.
@@ -1641,7 +1688,7 @@ app.post('/api/nfts/rent', async (req: Request, res: Response) => {
     source: 'webapp',
     // bot.py xabar matnida shularni ko'rsatadi
     customer_username: String(user.username || user.id),
-    admin_username: String(ADMIN_HANDLE),
+    admin_username: adminHandle(),
     // Yuborilgan xabarlar — natijani ikkalasida ham yangilash uchun
     notices: [],
     // bot.py: menedjerga userbot orqali yuborildimi? (false = yuborilmagan)
