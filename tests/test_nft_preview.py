@@ -99,21 +99,17 @@ print("=" * 70)
 print("4) BOT ADMIN OQIMI — rasm avtomatik saqlanadimi?")
 print("=" * 70)
 BSRC = open("bot.py", encoding="utf-8").read()
-fn = BSRC[BSRC.index("async def adm_nft_link("):BSRC.index("async def adm_nft_title(")]
-check("is_nft_page_url(link)" in fn, "link NFT sahifasi ekanini tekshiradi")
+fn = BSRC[BSRC.index("async def adm_nft_link("):
+         BSRC.index("@admin_router.message(StateFilter(NftStates.daily)")]
 check("resolve_nft_page(link)" in fn, "rasmni o'zi topadi")
-check('auto.get("image") or link' in fn, "topilgan rasm saqlanadi")
-check('auto_title=auto.get("title")' in fn, "nom avtomatik olinadi")
-check('auto_number=auto.get("number")' in fn, "raqam avtomatik olinadi")
-check("Rasmi topildi" in fn, "adminGA tasdiqlanadi")
-check("Rasm topilmadi" in fn, "topilmasa aniq aytadi (nima qilish kerak)")
+check('image=auto["image"]' in fn, "topilgan rasm saqlanadi")
+check('title=auto.get("title") or ""' in fn, "nom avtomatik olinadi")
+check('number=auto.get("number")' in fn, "raqam avtomatik olinadi")
+check('auto_desc=auto.get("description") or ""' in fn, "tavsif avtomatik olinadi")
+check("NFT topildi" in fn, "adminGA tasdiqlanadi")
+check("NFT ma'lumotlari topilmadi" in fn,
+      "topilmasa aniq aytadi (nima qilish kerak)")
 check("https://t.me/nft/Nom-12345" in fn, "to'g'ri format ko'rsatiladi")
-
-# Raqam endi avtomatik kelgani uchun qayta so'ralmasin
-tf = BSRC[BSRC.index("async def adm_nft_title("):BSRC.index("async def adm_nft_number(")]
-check("if auto_num:" in tf, "raqam Telegram'dan kelgan bo'lsa qayta so'ramaydi")
-check("4/4" in tf and tf.index("if auto_num:") < tf.index("4/4"),
-      "to'g'ridan-to'g'ri narx bosqichiga o'tadi")
 
 print()
 print("=" * 70)

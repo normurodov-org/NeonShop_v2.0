@@ -3,7 +3,8 @@
 Rasmdagi talab:
   • Mijozga: per day, rent (N days), network fee 1 700, TOTAL
   • Muddat: 3–50 kun, tez tanlash 3/7/14/30
-  • Bot admin panelida: "➕ NFT qo'shish" -> link -> nom -> raqam -> 1 kunlik narx
+  • Bot admin panelida: "➕ NFT qo'shish" -> link -> 1 kunlik narx
+    (nom/raqam/rasm linkdan AVTOMATIK olinadi)
   • WebApp NFT bo'limida faqat 1 kunlik narx + linkdan olingan rasm
 """
 import asyncio
@@ -83,8 +84,10 @@ print("=" * 68)
 print("3) BOT ADMIN: NFT qo'shish (link -> nom -> raqam -> narx)")
 print("=" * 68)
 check('callback_data="adm:nft_add"' in B_SRC, "admin tugmasi bor")
-for st in ("NftStates.link", "NftStates.title", "NftStates.number", "NftStates.daily"):
+for st in ("NftStates.link", "NftStates.daily"):
     check(st in B_SRC, f"state: {st}")
+check("NftStates.number" not in B_SRC,
+      "raqam bosqichi yo'q (linkdan avtomatik olinadi)")
 check('F.data == "adm:nft_cancel"' in B_SRC,
       "bekor qilish alohida callback'da (mojarato'qnashuv yo'q)")
 check("db.data.setdefault(\"nfts\", {})[nid] = item" in B_SRC,

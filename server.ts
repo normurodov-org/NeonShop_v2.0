@@ -648,7 +648,15 @@ function nftImageUrl(n: any): string {
  * aynan shu maydonni ifodalaydi.
  */
 function nftBackdrop(desc: string): string {
-  const m = String(desc || '').match(/Backdrop:\s*([^/]+?)(?:\s*\/|$)/i);
+  // 🔴 DIQQAT: ikkala tuzilish ham uchraydi:
+  //   "Backdrop: Chestnut\nSymbol: Carrot"        (Telegram HAQIQIY format)
+  //   "Model: X / Backdrop: Chestnut / Symbol: C"   (qisqa variant)
+  // `\s` yang qatorni ham yutadi, `[^/]` esa newline ni YUTMAYDI —
+  // ikkalasi birgalikda butun qoldiqni olib kelardi va WebApp'dagi
+  // Backdrop filtrlari bitta gigant qiymatga yig'ilib, hech narsa
+  // filtrlamay qolardi.
+  // To'g'ri: bo'shliq faqat `[ \t]` bilan, qiymat `[^\n/]+`.
+  const m = String(desc || '').match(/Backdrop:[ \t]*([^\n/]+)/i);
   return m ? m[1].trim() : '';
 }
 
