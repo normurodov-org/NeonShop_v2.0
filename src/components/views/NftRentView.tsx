@@ -112,13 +112,44 @@ const NftImage: React.FC<{
   const [fresh, setFresh] = useState<string | undefined>(undefined);
   const shown = fresh ?? src;
 
+  // 🔴 🔴 🔴 BU YERDA IKKALTA XATO BO'LDI — ikkalasi ham TUZATILDI
+  //
+  // 1-XATO: `setTimeout(() => setState('failed'), 6000)`
+  //   Rasmlar har 6 soniyada "muvaffaqiyatsiz" deb hisoblanardi.
+  //   Natija: telefonlar sekin internetda rasm 6 soniyada
+  //   YUKLANMAYDI -> rasm o'z-o'zidan YO'QOLDI.
+  //   ("rasmlar 5 sekunddan keyin yuqolib qolyapti")
+  //
+  // 2-XATO: shuni `onLoad` bilan "tuzatdim", lekin 20 soniya ham
+  //   yetarli bo'lmadi — sekin internetda yana o'ldi.
+  //
+  // 🔴 XULOSA: IS TALAB QILINMAYDI. `<img>` `error` hodisasini
+  //   FAQAT haqiqiy xatoda chiqaradi (404, DNS xatosi, ulanish
+  //   yo'q, noto'g'ri ma'lumot). U "sekin internet" uchun
+  //   CHIQMAYDI — demak `onError` yetarli.
+  //
+  //   Ishlatilmay qolgan taymer esa BITTA muammo keltiradi:
+  //   YETISHLI rasmlarni o'ldiradi — bu foydalanuvchi uchun
+  //   ko'rinadigan va jiddiy muammo (bo'sh kvadrat).
+  //
+  //   Endi: yuklanayotgan paytda shimmer ko'rsatiladi (chiroyli),
+  //   rasm kelganda `onLoad` -> shimmer yo'qoladi,
+  //   haqiqiy xatoda `onError` -> serverdan qayta olish -> placeholder.
+  const [loading, setLoading] = useState(false);
+  const loadedRef = useRef(false);
+
   useEffect(() => {
-    if (!isImageUrl(src)) return;
+    if (!isImageUrl(src)) {
+      setLoading(false);
+      return;
+    }
     setState('idle');
     setFresh(undefined);
+    setLoading(true);
+    loadedRef.current = false;
     retriedRef.current = false;
-    const t = setTimeout(() => setState('failed'), 6000);
-    return () => clearTimeout(t);
+    // DIQQAT: `timer` yo'q. Agar rasm juda uzoq yuklanmasa,
+    // shimmer qoladi — bu placeholder'dan YAXSHI (kamroq xato).
   }, [src]);
 
   /**
@@ -135,7 +166,9 @@ const NftImage: React.FC<{
       });
       const j = await r.json();
       if (j?.ok && j.image && j.image !== src) {
+        loadedRef.current = false;
         setFresh(j.image);
+        setLoading(true);
         setState('idle');
         return;
       }
@@ -143,10 +176,24 @@ const NftImage: React.FC<{
       /* server yo'q — placeholder qoladi */
     }
     setState('failed');
+    setLoading(false);
     setRetrying(false);
   };
 
   const ok = isImageUrl(shown) && state !== 'failed';
+
+  // Yuklanayotgan payt — shimmer (rasm kelganda yo'qoladi).
+  // Bu yerda rasm O'LMAYDI: faqat chiroyli "yuklanmoqda" holati.
+  if (ok && loading) {
+    return (
+      <div
+        className={`nft-img w-full h-full nft-shimmer ${
+          isDark ? 'bg-white/[0.04]' : 'bg-black/[0.03]'
+        } ${className}`}
+        aria-label="Yuklanmoqda"
+      />
+    );
+  }
 
   if (!ok) {
     return (
@@ -181,6 +228,12 @@ const NftImage: React.FC<{
       // yuklanganda konteyner BIR PIKSEL siljishi mumkin (CLS).
       width={512}
       height={512}
+      onLoad={() => {
+        // Rasm keldi — shimmer yo'qoladi
+        loadedRef.current = true;
+        setLoading(false);
+        setState('idle');
+      }}
       onError={() => {
         // Avval serverdan yangisini so'raymiz
         if (nftId && !retriedRef.current) {
@@ -188,6 +241,7 @@ const NftImage: React.FC<{
           retry();
         } else {
           setState('failed');
+          setLoading(false);
         }
       }}
       className={`nft-img w-full h-full object-cover ${className}`}

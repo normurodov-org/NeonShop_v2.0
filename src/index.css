@@ -400,6 +400,41 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* NFT rasm yuklanayotgan payt — shimmer.
+   🔴 NIMA UCHUN?
+   Avval rasm yuklanmaganda hech narsa ko'rinmasdi (bo'sh kvadrat)
+   yoki — yomonroq — 6 soniyadan keyin "muvaffaqiyatsiz" deb
+   hisoblanib YO'QOLARDI. Endi:
+     • sekin internet  -> shimmer (chiroyli, xato emas)
+     • keldi          -> shimmer yo'qoladi
+     • haqiqiy xato   -> placeholder + serverdan qayta olish
+   Shimmer `prefers-reduced-motion` da o'chadi (qurilma talablariga). */
+.nft-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.nft-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: nftShimmer 1.5s ease-in-out infinite;
+}
+@keyframes nftShimmer {
+  to { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nft-shimmer::after { animation: none; }
+  .nft-card-in { animation-duration: 0.01ms; animation-delay: 0s; }
+  .nft-menu-in { animation-duration: 0.01ms; }
+}
+
 .nft-card-in {
   opacity: 0;
   animation: nftCardIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) forwards;

@@ -184,7 +184,11 @@ check("onError={() => {" in VIEW, "onError ishlaydi")
 check("setState('failed')" in VIEW, "muvaffaqiyatsiz -> placeholder")
 check("setTimeout(() => setState('failed'), 6000)" in VIEW,
       "6 soniya taymer (o'lik domen osilib qolmasligi uchun)")
-check("clearTimeout" in VIEW, "taymer tozalanadi (component unmount)")
+# 🔴 O'ZGARDI: 6 soniyalik "o'ldirish" taymeri butunlay olib
+# tashlandi — u sekin internetda rasmlarni yo'q qilardi
+# (test_nft_image_persist.py). Endi `onError` + shimmer.
+check("onLoad={() => {" in VIEW, "onLoad — shimmer yo'qoladi")
+check("nft-shimmer" in VIEW, "yuklanayotgan payt shimmer")
 check("<NftImage" in VIEW, "kartada ishlatiladi")
 check(VIEW.count("<NftImage") >= 2, "kartada VA modalda")
 

@@ -17,6 +17,27 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(cors());
 app.use(express.json());
 
+// 🔬 FAQAT MAHSULLIQ: rasmlarni 7 soniya kechiktirib beradi —
+// sekin internetni simulyatsiya qilish uchun (test_server_boot da
+// ishlatiladi). Production'da bu yo'l ISHLAMAYDI (tezorat yo'q).
+if (process.env.NFT_SLOW_IMAGES_MS) {
+  const delay = Number(process.env.NFT_SLOW_IMAGES_MS) || 7000;
+  app.get(/^\/_t\/slow(\d)\.png$/, (req: Request, res: Response) => {
+    const m = /^\/_t\/slow(\d)\.png$/.exec(req.path);
+    if (!m) return;
+    try {
+      const buf = fs.readFileSync(`${__dirname}/public/_t/g${m[1]}.png`);
+      setTimeout(() => {
+        res.setHeader('Content-Type', 'image/png');
+        res.end(buf);
+      }, delay);
+    } catch {
+      res.status(404).end();
+    }
+  });
+  console.log(`🔬 NFT rasmlari ${delay}ms kechiktiriladi (test rejimi)`);
+}
+
 // Load persistent database from /data/users_db.json
 const dbSnapshot = loadDatabase();
 
