@@ -2135,13 +2135,15 @@ MENU_STYLES = {
     "m:buy": "success",      # Stars sotib olish — YASHIL
     "m:sell": "primary",     # Stars sotish — KO'K
     "m:premium": "primary",  # Premium — KO'K
+    "m:contest": "success",   # Konkurs — YASHIL
     "m:gifts": "danger",     # Giftlar — QIZIL
     "m:topup": "success",    # Balans to'ldirish — YASHIL
     "m:ref": "primary",      # Referal — KO'K
     "m:webapp": "primary",   # Web App — KO'K
     "m:support": "danger",   # Support — QIZIL
 }
-SUCCESS_CALLBACKS = {"buy_confirm", "svc_ok", "ref_wd", "buy_self", "svc_self", "refw_self"}
+SUCCESS_CALLBACKS = {"buy_confirm", "svc_ok", "ref_wd", "buy_self", "svc_self",
+                     "refw_self", "contest:joined"}
 SUCCESS_PREFIXES = ("ord_done:", "sale_pay:", "adm:sale_ok:", "adm:premium_ok:")
 DANGER_CALLBACKS = {"cancel", "adm:logout", "adm:ban:ban"}
 DANGER_PREFIXES = ("ord_refund:", "sale_refund:", "topup_cancel:",
@@ -2195,9 +2197,10 @@ def main_menu_kb(user: dict) -> InlineKeyboardMarkup:
             [b("⭐ Stars sotib olish", "buy", "success")],
             [b("💸 Stars sotish", "sell", "primary"), b("💎 Premium", "premium", "primary")],
             [b("🎁 Giftlar", "gifts", "danger")],
-            [b("💳 Balans to'ldirish", "topup", "success"), b("👥 Referal", "ref", "primary")],
+            [b("💳 Balans to'ldirish", "topup", "success")],
             [make_button("📱 Web App ❐", web_app=WebAppInfo(url=build_webapp_url(user)), style="primary")],
-            [b("👤 Profil", "profile"), b("📜 Tarix", "history")],
+            [b("🎉 Konkurs", "contest", "success"), b("👤 Profil", "profile")],
+            [b("📜 Tarix", "history"), b("🔗 Referal", "ref", "primary")],
             [make_button("🎭 NFT Gift ijarasi", callback_data="m:nft", style="primary")],
             [make_button("💬 Support", url=f"https://t.me/{SUPPORT_USERNAME}", style="danger")],
         ]
@@ -7391,6 +7394,143 @@ def contest_text(c: dict) -> str:
     )
 
 
+# =============================================================================
+# KONKURS — MIJOZ QATNASHUVI (avval FAQAT ADMIN KO'RAR EDI)
+# =============================================================================
+# 🔴 NIMA BUZILGAN EDI:
+#   `contest_kb()` faqat `admin_router` ga ulangan edi
+#   (`adm:contest_new`, `adm:contest_users`, `adm:contest_stop`).
+#   Botda mijoz uchun na konkurSNI KO'RSATISH, na `contest:join`
+#   handler'i BOR EDI. Ya'ni konkursga faqat WebApp orqali qatnashish
+#   mumkin edi — bot ishlatgan mijoz hech qachon qatnasha olmasdi.
+#
+# 🔴 XAVFSIZLIK: shartlar `POST /api/contest/join` bilan BIR XIL:
+#     * konkurs faol bo'lishi SHART
+#     * `prize_stars > 0` bo'lishi SHART (sovqa berilmagan bo'lsa —
+#       server ham shu shartni tekshiradi)
+#     * minimal xarid (`min`) bajarilishi SHART
+#     * bir marta (qayta qo'shilmaydi)
+
+
+def contest_is_active(c: dict) -> bool:
+    """server.ts dagi `contestIsActive()` bilan bir xil qoida."""
+    if not c or not c.get("active"):
+        return False
+    if num(c.get("prize_stars")) <= 0:
+        return False
+    end = c.get("end_at")
+    if end:
+        # 🔴 ISO satr yoki ms/sekund raqam bo'lishi mumkin —
+        # `to_ms()` ikkalasini ham qabul qiladi.
+        try:
+            if isinstance(end, str):
+                ts = datetime.fromisoformat(end.replace("Z", "+00:00")).timestamp() * 1000
+            else:
+                ts = to_ms(end, 0.0)
+            if ts and ts < now().timestamp() * 1000:
+                return False
+        except Exception:  # noqa: BLE001
+            pass
+    return True
+
+
+def contest_user_kb(c: dict, user_id: int) -> InlineKeyboardMarkup:
+    """Mijoz uchun konkurs tugmalari (holatga qarab)."""
+    if not contest_is_active(c):
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="m:home", style="danger")],
+        ])
+    joined = user_id in (c.get("participants") or [])
+    rows: list[list[Any]] = []
+    if joined:
+        rows.append([InlineKeyboardButton(
+            text="✅ Siz qatnashyapsiz", callback_data="contest:joined", style="success")])
+    else:
+        rows.append([InlineKeyboardButton(
+            text="🎉 Konkursga qo'shilish", callback_data="contest:join", style="success")])
+    rows.append([InlineKeyboardButton(text="💳 Balans to'ldirish",
+                                      callback_data="m:topup", style="primary")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="m:home", style="danger")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "m:contest")
+async def contest_start(call: CallbackQuery, state: FSMContext, db_user: dict):
+    """Mijoz konkursni ko'radi."""
+    await call.answer()
+    await state.clear()
+    db.reload_if_changed()
+    c = contest_data()
+    uid = num(db_user.get("id"))
+    spent = num(db_user.get("total_spent"))
+    need = num(c.get("min"))
+    joined = uid in (c.get("participants") or [])
+    people = len(c.get("participants") or [])
+
+    lines = [contest_text(c), ""]
+    if not contest_is_active(c):
+        lines.append("ℹ️ <i>Hozircha faol konkurs yo'q — yangisini "
+                     "admin e'lon qilgach shu yerde ko'rinadi.</i>")
+    elif joined:
+        lines.append("✅ <b>Siz konkursda qatnashyapsiz!</b>")
+    else:
+        lines.append("📈 Sizning xaridingiz: <b>%s UZS</b>" % fmt(spent))
+        if need > 0 and spent < need:
+            lines.append("📈 Yetishmaydi: <b>%s UZS</b> "
+                         "(yana <b>%s UZS</b> xarid qiling)"
+                         % (fmt(spent), fmt(need - spent)))
+    lines.append("👥 Ishtirokchilar: <b>%d ta</b>" % people)
+    await call.message.answer(
+        "\n".join(lines),
+        reply_markup=contest_user_kb(c, uid),
+    )
+
+
+@router.callback_query(F.data == "contest:join")
+async def contest_join(call: CallbackQuery, db_user: dict):
+    """Konkursga qatnashish — shartlar `POST /api/contest/join` bilan bir xil."""
+    db.reload_if_changed()
+    c = db.data.setdefault("contest", {})
+    uid = num(db_user.get("id"))
+
+    if not contest_is_active(c):
+        await call.answer("Hozircha faol konkurs yo'q", show_alert=True)
+        return
+
+    parts = c.setdefault("participants", [])
+    if uid in parts:
+        await call.answer("Siz allaqachon qatnashyapsiz", show_alert=True)
+        return
+
+    need = num(c.get("min"))
+    spent = num(db_user.get("total_spent"))
+    if need > 0 and spent < need:
+        await call.answer(
+            "Konkurs uchun kamida %s so'mlik xarid kerak (sizda %s so'm)"
+            % (fmt(need), fmt(spent)),
+            show_alert=True,
+        )
+        return
+
+    parts.append(uid)
+    db.save()
+    await call.answer("🎉 Konkursga qo'shildingiz!", show_alert=True)
+    try:
+        await call.message.edit_reply_markup(reply_markup=contest_user_kb(c, uid))
+    except Exception:  # noqa: BLE001
+        pass
+    await call.message.answer(
+        "🎉 <b>Tabriklaymiz!</b> Siz konkurs ishtirokchisiga aylandingiz.\n"
+        "👥 Hozircha ishtirokchilar: <b>%d ta</b>\n"
+        "<i>Yakunda e'lon qilinadi — e'tibor bering!</i>" % len(parts)
+    )
+
+
+@router.callback_query(F.data == "contest:joined")
+async def contest_joined(call: CallbackQuery):
+    await call.answer("Siz allaqachon qatnashyapsiz — omad!", show_alert=True)
+
+
 def contest_kb() -> InlineKeyboardMarkup:
     c = contest_data()
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -8405,6 +8545,7 @@ async def main_menu_callback(call: CallbackQuery, state: FSMContext, bot: Bot, d
         "buy": lambda: buy_start(msg, state, db_user),
         "sell": lambda: sell_start(msg, state),
         "premium": lambda: premium_start(msg, state),
+        "contest": lambda: contest_start(msg, state, db_user),
         "gifts": lambda: gifts_start(msg, state),
         "nft": lambda: nft_start(msg, state),
         "topup": lambda: topup_start(msg, state, db_user),
