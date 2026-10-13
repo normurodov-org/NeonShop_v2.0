@@ -10,6 +10,10 @@ interface NftItem {
   link: string;
   /** Telegram sahifasidan olingan "Backdrop: ..." (masalan "Chestnut") */
   backdrop?: string;
+  /** To'plam (server.tomlardan keladi, bo'lmasa hech qanday) */
+  collection?: string;
+  /** "Newest first" saralash uchun */
+  created_at?: string;
   daily: number;
 }
 
@@ -48,6 +52,16 @@ type TabId = (typeof TABS)[number]['id'];
  * filtr haqiqiy ma'lumotga ishlaydi.
  */
 const ALL_BACKDROPS = 'All backdrops';
+const ALL_COLLECTIONS = 'All collections';
+
+const SORT_OPTIONS = [
+  { id: 'cheap', label: 'Cheapest first' },
+  { id: 'big', label: 'Most expensive' },
+  { id: 'new', label: 'Newest first' },
+] as const;
+const SORT_LABEL: Record<string, string> = Object.fromEntries(
+  SORT_OPTIONS.map((o) => [o.id, o.label]),
+);
 const COLLECTIONS = ['All collections', 'Regular gifts', 'Upgrades', 'Unique'];
 
 const fmt = (n: number) => Number(n || 0).toLocaleString('uz-UZ').replace(/,/g, ' ');
@@ -194,10 +208,37 @@ export const NftRentView: React.FC<NftProps> = ({
   const [quick, setQuick] = useState<number[]>([3, 7, 14, 30]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabId>('gifts');
-  const [sort, setSort] = useState<'cheap' | 'big'>('cheap');
+  const [sort, setSort] = useState<'cheap' | 'big' | 'new'>('cheap');
   const [backdrop, setBackdrop] = useState(ALL_BACKDROPS);
-  const [collection, setCollection] = useState('All collections');
+  const [collection, setCollection] = useState(ALL_COLLECTIONS);
   const [fav, setFav] = useState<Record<string, boolean>>({});
+  // Faqat tanlanganlar filtrini ON/OFF qiladi
+  const [favOnly, setFavOnly] = useState(false);
+  // Ochiq dropdown (bir vaqtda faqat bittasi)
+  const [openMenu, setOpenMenu] = useState<'collection' | 'sort' | null>(null);
+
+  // 🔴 Tanlanganlar localStorage'da saqlanadi. Aks holda sahifa
+  // yangilanganda yurakcha holati yo'qolib ketardi va filtr
+  // "ishlamaydi" degan taassurot tug'ilardi.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('neon_nft_fav');
+      if (raw) setFav(JSON.parse(raw));
+    } catch {
+      /* localStorage yo'q (incognito) — xatosiz davom etamiz */
+    }
+  }, []);
+  const toggleFav = (id: string) => {
+    setFav((f) => {
+      const next = { ...f, [id]: !f[id] };
+      try {
+        localStorage.setItem('neon_nft_fav', JSON.stringify(next));
+      } catch {
+        /* saqlanmasa ham ishlaydi */
+      }
+      return next;
+    });
+  };
 
   // Modal
   const [sel, setSel] = useState<NftItem | null>(null);
@@ -311,7 +352,9 @@ export const NftRentView: React.FC<NftProps> = ({
     }
   };
 
+  //Dropdown yopilgandan keyin kartani ochamiz
   const open = (item: NftItem) => {
+    setOpenMenu(null);
     setSel(item);
     setErr(null);
     setDays(minDays);
@@ -329,9 +372,17 @@ export const NftRentView: React.FC<NftProps> = ({
     items.map((n) => n.backdrop).filter(Boolean) as string[]
   )];
 
+  // 🔴 Har bir filtr HAQIQATAN qo'llanadi (avval collection va ♥
+  // hech narsani filtrlamagan — faqat o'lik UI edi).
   const shown = items
     .filter((n) => backdrop === ALL_BACKDROPS || n.backdrop === backdrop)
-    .sort((a, b) => (sort === 'cheap' ? a.daily - b.daily : b.daily - a.daily));
+    .filter((n) => collection === ALL_COLLECTIONS || n.collection === collection)
+    .filter((n) => !favOnly || fav[n.id])
+    .sort((a, b) => {
+      if (sort === 'big') return b.daily - a.daily;
+      if (sort === 'new') return (b.created_at || '').localeCompare(a.created_at || '');
+      return a.daily - b.daily;
+    });
 
   const insufficient = quote ? quote.total > balance : false;
 
@@ -386,26 +437,130 @@ export const NftRentView: React.FC<NftProps> = ({
         </div>
       ) : (
         <>
-          {/* Filtrlar */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-4 px-4">
-            <button onClick={() => setCollection(collection)} className={chip(false)}>
-              <span className="flex items-center gap-2">
-                {collection} <ChevronDown className="w-3.5 h-3.5" />
-              </span>
-            </button>
+          {/* Filtrlar — 4 ta element, hammasi ISHLAYDI */}
+          <div className="relative flex items-center gap-2 overflow-x-auto pb-1 -mx-4 px-4">
+            {/* 1) All collections ▾ */}
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setOpenMenu(openMenu === 'collection' ? null : 'collection')}
+                className={chip(false)}
+                aria-expanded={openMenu === 'collection'}
+                aria-haspopup="listbox"
+              >
+                <span className="flex items-center gap-2">
+                  {collection}
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform ${
+                      openMenu === 'collection' ? 'rotate-180' : ''
+                    }`}
+                  />
+                </span>
+              </button>
+              {openMenu === 'collection' && (
+                <div className="absolute left-0 top-full mt-2 z-30 min-w-[190px] rounded-[20px] p-1.5 liquid-glass-card nft-menu-in">
+                  {[ALL_COLLECTIONS, ...new Set(
+                    items.map((n) => n.collection).filter(Boolean) as string[]
+                  )].map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => { setCollection(c); setOpenMenu(null); }}
+                      className={`w-full text-left px-3 py-2.5 rounded-[14px] text-[13px] font-semibold apple-spring cursor-pointer ${
+                        collection === c
+                          ? 'bg-[var(--accent)] text-white'
+                          : isDark
+                            ? 'text-neutral-200 hover:bg-white/10'
+                            : 'text-neutral-700 hover:bg-black/5'
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                  {/* To'plamlar yo'q bo'lsa — tushunarli tushuntirish */}
+                  {!items.some((n) => n.collection) && (
+                    <div className={`px-3 py-2 text-[11px] leading-relaxed ${
+                      isDark ? 'text-neutral-400' : 'text-neutral-500'
+                    }`}>
+                      Hozircha to'plamlar yo'q.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 2) Cheapest first ▾ */}
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setOpenMenu(openMenu === 'sort' ? null : 'sort')}
+                className={chip(false)}
+                aria-expanded={openMenu === 'sort'}
+                aria-haspopup="listbox"
+              >
+                <span className="flex items-center gap-2">
+                  {SORT_LABEL[sort] || 'Cheapest first'}
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform ${
+                      openMenu === 'sort' ? 'rotate-180' : ''
+                    }`}
+                  />
+                </span>
+              </button>
+              {openMenu === 'sort' && (
+                <div className="absolute left-0 top-full mt-2 z-30 min-w-[190px] rounded-[20px] p-1.5 liquid-glass-card nft-menu-in">
+                  {SORT_OPTIONS.map((o) => (
+                    <button
+                      key={o.id}
+                      onClick={() => { setSort(o.id); setOpenMenu(null); }}
+                      className={`w-full text-left px-3 py-2.5 rounded-[14px] text-[13px] font-semibold apple-spring cursor-pointer ${
+                        sort === o.id
+                          ? 'bg-[var(--accent)] text-white'
+                          : isDark
+                            ? 'text-neutral-200 hover:bg-white/10'
+                            : 'text-neutral-700 hover:bg-black/5'
+                      }`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 3) ♥ — tanlanganlar filtri (localStorage'da saqlanadi) */}
             <button
-              onClick={() => setSort(sort === 'cheap' ? 'big' : 'cheap')}
-              className={chip(false)}
+              onClick={() => setFavOnly(!favOnly)}
+              aria-pressed={favOnly}
+              aria-label="Faqat tanlanganlar"
+              className={`shrink-0 w-11 h-11 rounded-full flex items-center justify-center apple-spring cursor-pointer border ${
+                favOnly
+                  ? 'bg-[var(--accent)] text-white border-transparent'
+                  : isDark
+                    ? 'bg-white/[0.06] text-neutral-300 border-white/10'
+                    : 'bg-black/[0.04] text-neutral-600 border-black/[0.06]'
+              }`}
             >
-              <span className="flex items-center gap-2">
-                {sort === 'cheap' ? 'Cheapest first' : 'Most expensive'}{' '}
-                <ChevronDown className="w-3.5 h-3.5" />
-              </span>
+              <Heart className={`w-4.5 h-4.5 ${favOnly ? 'fill-white' : ''}`} />
             </button>
-            <button className={chip(false)} aria-label="Tanlanganlar">
-              <Heart className={`w-4 h-4 ${Object.values(fav).some(Boolean) ? 'fill-current' : ''}`} />
+
+            {/* 4) ⚙ — qolgan filtrlarni tozalash */}
+            <button
+              onClick={() => {
+                setCollection(ALL_COLLECTIONS);
+                setBackdrop(ALL_BACKDROPS);
+                setSort('cheap');
+                setFavOnly(false);
+                setOpenMenu(null);
+              }}
+              aria-label="Filtrlarni tozalash"
+              className={`shrink-0 w-11 h-11 rounded-full flex items-center justify-center apple-spring cursor-pointer border ${
+                shown.length === items.length
+                  ? 'opacity-30 pointer-events-none'
+                  : isDark
+                    ? 'bg-white/[0.06] text-neutral-300 border-white/10'
+                    : 'bg-black/[0.04] text-neutral-600 border-black/[0.06]'
+              }`}
+            >
+              <SlidersHorizontal className="w-4.5 h-4.5" />
             </button>
-            <SlidersHorizontal className="w-4 h-4 opacity-40 shrink-0 self-center" />
           </div>
 
           {/* Backdrop filtrlari */}
@@ -458,7 +613,7 @@ export const NftRentView: React.FC<NftProps> = ({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setFav((f) => ({ ...f, [n.id]: !f[n.id] }));
+                        toggleFav(n.id);
                       }}
                       className={`absolute top-2 right-2 w-8 h-8 rounded-full flex items-center
                                   justify-center backdrop-blur-md apple-spring cursor-pointer

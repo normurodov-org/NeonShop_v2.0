@@ -670,6 +670,10 @@ function nftPublicList(): any[] {
       image: nftImageUrl(n),
       link: n.link || '',
       backdrop: nftBackdrop(n.description),
+      collection: n.collection || '',
+      created_at: n.created_at || '',
+      // Rasmdagi GIF/WebP animatsiyasi mavjudmi? (admin yuborgan bo'lsa)
+      animated: !!n.image_animated,
       daily: Number(n.daily) || 0,
     }))
     .sort((a, b) => a.daily - b.daily);
@@ -1244,8 +1248,22 @@ app.get('/api/nfts/quote', (req: Request, res: Response) => {
 });
 
 
-/** @saidovManajer — NFT ijarani rasmiy yopish. */
-const NFT_MANAGER = (process.env.NFT_MANAGER_USERNAME || '@saidovmanajer').trim();
+/**
+ * NFT ijarani rasmiy yopish — BITTA odam.
+ *
+ * 🔴 DIQQAT: avval menedjer username'i `NFT_MANAGER_USERNAME` ENV dan
+ * olinardi va bu `bot.py` dagi `NFT_MANAGER` bilan MOS EMAS EDI
+ * (`@saidovmanajer` vs `@saidovManajer`). Telegram username'lar
+ * registrga sezgir — bitta harf farq bo'lsa, xabar butunlay boshqa
+ * odamga boradi. Endi IKKALASI ham `NFT_MANAGER` ENV dan olinadi va
+ * bir xil nomlanadi.
+ */
+const NFT_MANAGER = (process.env.NFT_MANAGER || '@saidovManajer').trim();
+
+/** Sizning Telegram nomingiz — xabarda «Kim yubordi» sifatida ko'rinadi. */
+const ADMIN_HANDLE = (
+  process.env.ADMIN_USERNAME || process.env.ADMIN_HANDLE || 'admin'
+).replace(/^@/, '');
 
 /**
  * NFT ijaraga olish buyurtmasi.
@@ -1328,19 +1346,41 @@ app.post('/api/nfts/rent', async (req: Request, res: Response) => {
     amount: q.days,
     status: 'pending',
     source: 'webapp',
+    // bot.py xabar matnida shularni ko'rsatadi
+    customer_username: String(user.username || user.id),
+    admin_username: String(ADMIN_HANDLE),
+    // Yuborilgan xabarlar — natijani ikkalasida ham yangilash uchun
+    notices: [],
+    // bot.py: menedjerga userbot orqali yuborildimi? (false = yuborilmagan)
+    nft_notified: false,
+    nft_notify_tries: 0,
     created_at: new Date().toISOString(),
   };
   store.orders.set(orderId, newOrder);
-  syncAndSaveDb();
 
-  // --- Admin va menejerga xabar ---
+  // --- ADMINGA xabar (bot orqali, tugmalar bilan) ---
+  //
+  // 🔴 NIMA UCHUN FAQAT ADMIN?
+  // Sizning talabingiz: "xabarni bitta menga emas @saidovManajer ga ham
+  // USERBOT orqali ... barcha malumotlar bilan". Ya'ni menedjerga xabar
+  // USERBOT akkauntidan chiqishi kerak (sizning nomingizdan).
+  // Shuning uchun:
+  //   • bu yerda — faqat ADMIN (bot orqali, tez va darhol)
+  //   • menedjerga — `nft_notifications` navbati orqali `bot.py` yuboradi
+  //     (`nft_notify_worker()`), chunki userbot faqat Python'da ishlaydi.
+  // Ikkalasida ham bir xil tugmalar: nftok:<order_id>:done / :cancel
+  //
+  // `claim_nft_order()` (bot.py) lock + diskdan qayta o'qish bilan
+  // bitta jarayonda BIRINCHI bosishni belgilaydi — ikkinchisi rad
+  // qilinadi. Ya'ni hech qachon "ikkisi ham bajarildi" bo'lmaydi.
   const text =
     `🎁 <b>NFT ijaraga olish so'rovi</b>\n\n`
     + `🖼 <b>${item.title}</b>${item.number != null ? ` <code>#${item.number}</code>` : ''}\n`
     + (item.link
-        ? `🔗 Link: <a href="${item.link}">${item.link}</a>\n`
+        ? `🔗 <a href="${item.link}">${item.link}</a>\n`
         : '🔗 Link: <i>yuborilmagan</i>\n')
     + `👤 Mijoz: <b>${who}</b> (ID: <code>${user.id}</code>)\n`
+    + `👑 Meneger: <b>@${NFT_MANAGER}</b>\n`
     + `📅 Muddat: <b>${q.days} kun</b>\n\n`
     + `💰 Hisob:\n`
     + `├ 1 kunlik: ${q.per_day.toLocaleString()} UZS\n`
@@ -1348,34 +1388,60 @@ app.post('/api/nfts/rent', async (req: Request, res: Response) => {
     + `├ Network fee: ${q.network_fee.toLocaleString()} UZS\n`
     + `└ <b>Jami: ${q.total.toLocaleString()} UZS</b>\n\n`
     + `🆔 <code>${orderId}</code>\n\n`
-    + `⚡ <i>${NFT_MANAGER} — mijoz bilan tez orada bog'laning va `
-    + `Fragment orqali ulang.</i>`;
+    + `⚡ <i>@${NFT_MANAGER} ga ham userbot orqali yuborildi. `
+    + `Kim birinchi tugmani bossa — o'sha amal bajariladi.</i>`;
+
+  // ✅ Bajarildi / ❌ Bekor qilish
+  const kb = {
+    inline_keyboard: [[
+      { text: '✅ Bajarildi', callback_data: `nftok:${orderId}:done` },
+      { text: '❌ Bekor qilish', callback_data: `nftok:${orderId}:cancel` },
+    ]],
+  };
 
   const token = (process.env.BOT_TOKEN || '').trim();
-  const targets = [
-    { id: store.settings.admin_id || 8307046273, name: 'ADMIN' },
-    { id: NFT_MANAGER, name: 'MENEDJER' },
-  ];
-  for (const t of targets) {
-    if (!t.id || !token) continue;
+  const adminChat = Number(store.settings.admin_id || DEFAULT_USER_ID);
+  if (token && adminChat) {
     try {
       const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: t.id,
-          text: `${text}\n\n<i>${t.name}</i>`,
+          chat_id: adminChat,
+          text,
+          reply_markup: kb,
           parse_mode: 'HTML',
           disable_web_page_preview: true,
         }),
         signal: AbortSignal.timeout(15000),
       });
       const j: any = await r.json();
-      if (!j.ok) console.warn('[nft-rent] xabar yuborilmadi:', j?.description);
+      if (j.ok) {
+        // Xabar joyini saqlaymiz — natijada ikkala xabar ham yangilanadi
+        newOrder.notices.push({
+          via: 'bot',
+          chat: Number(j.result?.chat?.id || adminChat),
+          msg: Number(j.result?.message_id || 0),
+        });
+      } else {
+        console.warn('[nft-rent] adminga xabar yuborilmadi:', j?.description);
+      }
     } catch (e) {
-      console.error('[nft-rent] xabar yuborishda xato:', e);
+      console.error('[nft-rent] adminga xabar yuborishda xato:', e);
     }
   }
+
+  syncAndSaveDb();
+
+  // 📨 Menedjerga USERBOT orqali yuborish uchun belgi.
+  //
+  // 🔴 NIMA UCHUN alohida "navbat" bo'limi emas?
+  // `syncAndSaveDb()` faqat settings/users/orders/topups/nfts/contest
+  // ni birlashtiradi — boshqa har qanday top-level kalit FAYLDAN
+  // YO'QOLARDI. Shuning uchun navbatni ORDER'NING ICHIDA saqlaymiz:
+  // bot.py dagi `nft_notify_worker()` `kind == "nft_rent"` va
+  // `nft_notified` yo'q bo'lgan buyurtmalarni topadi va userbot
+  // orqali yuboradi (xabar sizning akkauntingizdan chiqadi).
 
   res.json({
     ok: true,

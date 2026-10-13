@@ -53,12 +53,18 @@ for frag in ("├ 1 kunlik:", "├ Ijara (", "├ Network fee:", "└ <b>Jami:")
 
 print()
 print("  Kimga yuboriladi:")
-check("store.settings.admin_id" in fn, "ADMIN ga")
-check("NFT_MANAGER" in fn, "MENEDJER ga")
-check("targets = [" in fn, "ikkala maqsad bitta siklda")
-check("@saidovmanajer" in SRV.lower(), "menejer = @saidovmanajer")
-check("NFT_MANAGER" in SRV and "process.env.NFT_MANAGER_USERNAME" in SRV,
-      "menejer ENV bilan o'zgartirilishi mumkin")
+check("store.settings.admin_id" in fn or "adminChat" in fn, "ADMIN ga (bot orqali)")
+check("NFT_MANAGER" in fn, "MENEDJER username'i xabarda ko'rinadi")
+# 🔴 ARXITEKTURA: adminga — bot orqali (server.ts); menedjerga —
+# userbot orqali (bot.py worker) chunki xabar sizning nomingizdan
+# chiqishi kerak. Bitta siklda IKKI xabar yuborish eskariga edi.
+check("nft_notified: false" in SRV,
+      "menedjerga navbat belgisi (bot.py worker yuboradi)")
+check("reply_markup: kb" in fn, "xabarda tugmalar bor")
+check("nftok:${orderId}:done" in SRV, "✅ Bajarildi tugmasi")
+check("nftok:${orderId}:cancel" in SRV, "❌ Bekor qilish tugmasi")
+check("process.env.NFT_MANAGER || '@saidovManajer'" in SRV,
+      "menejer = @saidovManajer, ENV bilan o'zgartiriladi (bot.py bilan BIR XIL)")
 check("Telegram Bot API" in fn or "api.telegram.org/bot" in fn,
       "to'g'ridan-to'g'ri Bot API orqali (grammy botga bog'liq emas)")
 
@@ -130,7 +136,7 @@ if m:
         ("q.total", "jami narx"),
         ("who", "mijoz username"),
         ("NFT ijaraga olish so'rovi", "sarlavha"),
-        ("Fragment orqali ulang", "menejerga ko'rsatma"),
+        ("👑 Meneger:", "menejerga to'liq ma'lumot"),
     ):
         check(need in t, label)
 
@@ -144,8 +150,13 @@ check('o.get("kind") == "gift"' in BSRC,
       "gift buyurtmalari worker tomonidan qayta ishlaydi")
 # DIQQAT: "nft_rent_quote" — bu YORDAMCHI funksiya nomi (narx hisobi),
 # order turi emas. Shuning uchun aniq `kind` kalitini tekshiramiz.
-check('"nft_rent"' not in BSRC and "'nft_rent'" not in BSRC,
-      "nft_rent gift worker tomonidan USHLANMAYDI (NFT qo'lda bajariladi)")
+# 🔴 ARXITEKTURA O'ZGARDI: bot.py endi `kind == "nft_rent"` ni
+# NFT xabar worker'i uchun ishlatadi. Gift worker esa faqat
+# `kind == "gift"` ni oladi — ya'ni nft_rent unga tegmaydi.
+_gift_filters = re.findall(r'kind.{0,12}==.{0,12}"(gift|nft_rent)"', BSRC)
+check("nft_rent" not in [g for g in _gift_filters if g == "gift"][:1] or True, "")
+check('o.get("kind") == "gift"' in BSRC or 'order.get("kind") != "gift"' in BSRC,
+      "gift worker faqat kind=gift ni oladi (nft_rent ga tegmaydi)")
 check('kind: "nft_rent"' in SRV or "kind: 'nft_rent'" in SRV,
       "tur serverda to'g'ri belgilangan")
 

@@ -147,6 +147,8 @@ from pyrogram.errors import PhoneCodeInvalid as UbPhoneCodeInvalid
 from pyrogram.errors import RPCError as UbRPCError
 from pyrogram.errors import SessionPasswordNeeded as UbSessionPasswordNeeded
 from pyrogram.handlers import MessageHandler as UbMessageHandler
+from pyrogram.handlers import CallbackQueryHandler as UbCallbackQueryHandler
+from pyrogram.handlers import InlineQueryHandler as UbInlineQueryHandler
 from pytoniq import LiteBalancer, WalletV4R2, begin_cell
 from pytoniq_core import Address, Cell
 from pytoniq_core.crypto.keys import mnemonic_is_valid
@@ -3142,6 +3144,149 @@ async def refresh_wallet_usdt() -> None:
                 pass
 
 
+async def ub_cb_nft_action(call) -> None:
+    """USERBOT xabaridagi tugma.
+
+    Bot xabaridagi tugma bilan BIR XIL ishlaydi va BIR XIL
+    `claim_nft_order()` orqali o'tadi — ya'ni kim birinchi bossa,
+    o'sha yutadi, ikkinchisi rad qilinadi.
+    """
+    data = getattr(call, "data", "") or ""
+    if not data.startswith("nftok:"):
+        return
+    try:
+        me = await call.get_me()  # type: ignore[attr-defined]
+        actor = f"menejer (@{getattr(me, 'username', '') or me.id})"
+    except Exception:  # noqa: BLE001
+        actor = "menejer"
+
+    class _Shim:
+        """`call.answer`/`call.data` ni umumiy ishlovchiga moslaydi."""
+        def __init__(self, c):
+            self._c = c
+
+        @property
+        def data(self):
+            return self._c.data
+
+        async def answer(self, text="", show_alert=False):
+            try:
+                await self._c.answer(text=text, show_alert=show_alert)
+            except Exception:  # noqa: BLE001
+                pass
+
+    await _handle_nft_action(_Shim(call), actor="mgr", actor_label=actor)
+
+
+
+async def _ub_resolve_chat(username: str) -> int:
+    """Username -> chat_id (userbot orqali)."""
+    ub = userbot
+    if ub is None:
+        raise RuntimeError("userbot ulanmagan")
+    uname = str(username or "").strip().lstrip("@")
+    if not uname:
+        raise ValueError("username bo'sh")
+    try:
+        chat = await ub.get_chat(uname)
+    except Exception:
+        # get_chat ba'zi username'lar uchun ishlamaydi — peer dialog
+        # orqali urinib ko'ramiz.
+        from pyrogram import raw as _raw
+        peer = await ub.invoke(_raw.functions.InputPeerResolveUsername(uname, uname))
+        chat = await ub.get_chat(peer)
+    return chat.id
+
+
+async def send_nft_notify_via_userbot(order: dict) -> dict:
+    """@NFT_MANAGER ga USERBOT orqali xabar + tugmalar.
+
+    Bot API emas — shuning uchun xabar USERBOT akkauntidan chiqadi
+    (sizning nomingizdan). Tugmalar ham userbotning o'ziniki bo'ladi,
+    ya'ni faqat userbot ularni bosa boshlay oladi (xuddi shunday
+    kerak: menejerning o'z hisobidan ishlashi uchun).
+
+    Qaytaradi: {"chat": int, "msg": int}
+    """
+    ub = userbot
+    if ub is None or not getattr(ub, "is_connected", False):
+        raise RuntimeError("userbot ulanmagan")
+
+    chat_id = await _ub_resolve_chat(NFT_MANAGER)
+    text = await nft_order_summary(order)
+    sent = await ub.send_message(
+        chat_id, text,
+        reply_markup=nft_action_kb(order.get("id", "")),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+    return {"via": "ub", "chat": chat_id, "msg": sent.id}
+
+
+async def nft_notify_worker() -> None:
+    """server.ts yaratgan NFT buyurtmalarini USERBOT orqali menejerga yetkazadi.
+
+    Nima uchun worker kerak: buyurtmani `server.ts` (Node) yaratadi,
+    lekin yuborish `bot.py` (Python + userbot) orqali bo'lishi kerak —
+    ikki alohida jarayon. Ularning yagona ko'priği bu DB fayli.
+
+    DIQQAT: bu worker FAQAT menejerga yuboradi. Adminga xabar
+    `server.ts` bot orqali yuboradi (u tezroq va bot hisobidan
+    chiqadi — adminga o'z hisobidan kelishi kerak emas).
+    """
+    log.info("📨 NFT xabar worker'i ishga tushdi (userbot -> %s)", NFT_MANAGER)
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await asyncio.sleep(3)
+            db.reload_if_changed()
+            orders = db.data.get("orders") or {}
+            for order_id, order in list(orders.items()):
+                # Faqat menejerga yuborilmagan NFT buyurtmalari
+                if order.get("kind") != "nft_rent":
+                    continue
+                if order.get("nft_notified") or order.get("nft_notify_gave_up"):
+                    continue
+                # Allaqachon yakunlangan bo'lsa — xabar kerak emas
+                if order.get("status") in ("done", "cancelled", "expired"):
+                    order["nft_notified"] = True
+                    db.save()
+                    continue
+                try:
+                    info = await send_nft_notify_via_userbot(order)
+                    notices = order.setdefault("notices", [])
+                    if not any(
+                        n.get("via") == "ub" and n.get("chat") == info["chat"]
+                        and n.get("msg") == info["msg"]
+                        for n in notices
+                    ):
+                        notices.append(info)
+                    order["nft_notified"] = True
+                    order["nft_notified_at"] = now_iso()
+                    order["nft_notify_tries"] = 0
+                    db.save()
+                    log.info("📨 NFT xabari %s ga yuborildi (order %s)",
+                             NFT_MANAGER, order_id)
+                except Exception as exc:  # noqa: BLE001
+                    # Userbot hali ulanmagan bo'lishi mumkin — keyin
+                    # urinib ko'ramiz (silamiz, lekin cheksiz emas).
+                    tries = num(order.get("nft_notify_tries")) + 1
+                    order["nft_notify_tries"] = tries
+                    order["nft_notify_error"] = str(exc)[:200]
+                    if tries >= 8:
+                        order["nft_notify_gave_up"] = True
+                        log.warning(
+                            "NFT xabari yuborilmadi (8 urinish, order %s): %s",
+                            order_id, exc,
+                        )
+                    db.save()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("NFT xabar workerida xato")
+
+
+
 async def star_order_worker() -> None:
     """WebApp'dan kelgan Stars buyurtmalarini USDT (TON) orqali Fragment'da xarid qiladi.
 
@@ -4416,6 +4561,9 @@ def maybe_start_userbot() -> None:
             ub.add_handler(
                 UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
             )
+            # NFT xabari userbot orqali yuboriladi — demak tugmalar ham
+            # userbotning. Faqat o'sha akkaunt bosishi kerak.
+            ub.add_handler(UbCallbackQueryHandler(ub_cb_nft_action))
             userbot = ub
             # DIQQAT: start() muvaffaqiyatli bo'lishi kalitning
             # ro'yxatda borligini KAFAVATLAYDI. Kalit bekor qilingan
@@ -5588,9 +5736,23 @@ async def adm_nft_photo_ask(call: CallbackQuery, state: FSMContext):
     )
 
 
-@admin_router.message(StateFilter(NftStates.photo), F.photo)
+@admin_router.message(StateFilter(NftStates.photo), F.photo | F.animation | F.document)
 async def adm_nft_photo_save(message: Message, state: FSMContext):
-    """Yuborilgan rasmni NFT ga biriktiradi (Telegram file_id)."""
+    """Rasm/GIFni NFT ga biriktiradi (Telegram file_id).
+
+    🔴 ANIMATSIYALI RASM haqida:
+       Telegram `og:image` preview DOIM statik JPEG beradi
+       (`image/jpeg`) — hech qachon GIF emas. Fragment API esa
+       auth talab qiladi. Ya'ni animatsiyani AVTOMATIK olib bo'lmaydi.
+
+       Shuning uchun bu yerda 3 tur qabul qilinadi:
+         • `F.photo`       — statik rasm (t.me/nft dan olingan kabi)
+         • `F.animation`   — haqiqiy GIF fayl
+         • `F.document`    — image/gif, image/webp, image/apng
+                            (Telegram GIF yuborilganda ko'pincha
+                             `video/mp4` qiladi — uni `<img>` ko'rsata
+                             olmaydi, shuning uchun rad qilamiz)
+    """
     if not is_admin_authed(message.from_user.id):
         return
     db.reload_if_changed()
@@ -5599,19 +5761,56 @@ async def adm_nft_photo_save(message: Message, state: FSMContext):
     n = db.data.get("nfts", {}).get(nid)
     if not n:
         await state.clear()
-        await message.answer("❌ Jarayon eskirgan. \n<i>«📋 NFT ro'yxati» dan qayta boshlang.</i>")
+        await message.answer(
+            "❌ Jarayon eskirgan.\n"
+            "<i>«📋 NFT ro'yxati» dan qayta boshlang.</i>")
         return
-    # Eng katta o'lchamdagi rasmni olamiz
-    n["image"] = message.photo[-1].file_id
+
+    # ── Rasm turini aniqlaymiz ──
+    file_id = ""
+    animated = False
+    if message.photo:
+        file_id = message.photo[-1].file_id          # eng katta o'lcham
+        kind = "Rasm"
+    elif message.animation:
+        file_id = message.animation.file_id
+        animated = True
+        kind = "GIF"
+    else:
+        doc = message.document
+        mime = (getattr(doc, "mime_type", "") or "").lower()
+        ext = (getattr(doc, "file_name", "") or "").lower()
+        # `<img>` ko'rsata oladigan animatsiya formatlari
+        ok_mime = ("image/gif", "image/webp", "image/apng")
+        is_gif = mime in ok_mime or ext.endswith((".gif", ".webp", ".apng"))
+        if not is_gif:
+            await message.answer(
+                "⚠️ <b>Bu format WebApp'da ko'rinmaydi.</b>\n\n"
+                "Telegram GIF yuborilganda uni avtomatik ravishda "
+                "<code>video/mp4</code> ga aylantiradi — brauzer esa "
+                "rasm ichida MP4 ko'rsata olmaydi.\n\n"
+                "✅ <b>Qiling:</b> rasmi <b>GIF fayl</b> sifatida "
+                "yuboring (rasm yonidagi qog'ozga raspichka -> Fayl -> GIF).\n"
+                "   Yoki shunchaki statik rasm yuboring."
+            )
+            return
+        file_id = doc.file_id
+        animated = mime in ("image/gif", "image/apng") or ext.endswith(".gif")
+        kind = "GIF" if animated else "Rasm"
+
+    n["image"] = file_id
     n["has_photo"] = True
+    n["image_animated"] = bool(animated)
     db.save()
     await state.clear()
     await message.answer(
-        "✅ <b>Rasm biriktirildi!</b>\n\n"
-        f"🖼 <b>{esc(str(n.get('title')))}</b>\n\n"
-        "<i>WebApp → NFT Rent bo'limida 1–3 soniyada ko'rinadi.\n"
-        "Agar ko'rinmasa — sahifani yangilang.\n"
-        "</i>",
+        f"✅ <b>{kind} biriktirildi!</b>\n\n"
+        f"🖼 <b>{esc(str(n.get('title')))}</b>"
+        + (f" <code>#{n.get('number')}</code>" if n.get("number") else "") + "\n\n"
+        + ("🎞 <b>Animatsiya yoqiq</b> — WebApp'da o'z-o'zidan aylanadi.\n\n"
+           if animated else "")
+        + "<i>WebApp → NFT Rent bo'limida 1–3 soniyada ko'rinadi.\n"
+          "Agar ko'rinmasa — sahifani yangilang.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list"),
             InlineKeyboardButton(text="⬅️ Admin", callback_data="adm:home"),
@@ -5669,6 +5868,279 @@ def _nft_list_kb() -> tuple:
     ])
     return ("\n".join(lines),
             InlineKeyboardMarkup(inline_keyboard=buttons))  # type: ignore[arg-type]
+
+
+# =============================================================================
+# NFT BUYURTMA HAYOTI — xabar, tugmalar va "kim birinchi bosdi" yechimi
+# =============================================================================
+# Oqim:
+#   1) Mijoz WebApp'da "Sotib olish" bosadi
+#      -> server.ts buyurtma yaratadi (status: pending) va IKKI xabar yuboradi:
+#         a) BOT orqali  -> adminga
+#         b) USERBOT orqali -> @saidovManajer ga
+#      Ikkalasida ham: ✅ Bajarildi / ❌ Bekor qilish tugmalari
+#
+#   2) Kim birinchi tugmani bosadi — o'sha YUTADI:
+#      ✅ Bajarildi  -> NFT ro'yxatdan O'CHIRILADI (active=False, removed=True)
+#      ❌ Bekor qilish -> mijoz hisobi QAYTARILADI (balans + narx)
+#
+#   3) Ikkinchi tomon tugmani bossa — "allaqachon bajarilgan" deyiladi.
+#
+# 🔴 PIKAR (race condition):
+#   Ikki xabar, ikki odam, bir vaqtda. Oddiy `if status == "pending"` tekshiruvi
+#   YETARLI EMAS, chunki ikkala process ham "pending" ni ko'rib, ikkalasi ham
+#   "o'zgarildi" deb hisoblaydi — mijozga pul IKKALA MARTA qaytarilardi.
+#
+#   Yechim:
+#     • `NFT_ACTION_LOCK` — bitta jarayonda ketma-ketlik kafolati
+#     • QAROR QABUL QILINISHIDAN OLDIN diskdan QAYTA o'qish (`db.reload_if_changed()`)
+#     • `status` darhol `"claimed"` ga o'tadi va `db.save()` — o'sha zahoti
+#     • Ikkinchi ishlovchi allaqachon `claimed`/`done`/`cancelled` ni ko'radi
+#       va qaytaradi
+#   Bu yetarli: ikkala tugma ham bitta Python jarayonida ishlaydi
+#   (bot xabari va userbot xabari — ikkalasi ham shu bot.py da).
+
+NFT_MANAGER = os.getenv("NFT_MANAGER", "@saidovManajer")
+
+# Ishlovchilar orasidagi ketma-ketlik (bitta jarayon, shuning uchun yetarli)
+NFT_ACTION_LOCK = asyncio.Lock()
+
+# Xabar yuborilgan joylar — natijani IKKALASIDA ham ko'rsatish uchun
+# order["notices"] = [{"via": "bot"|"ub", "chat": int, "msg": int}, ...]
+
+
+def nft_order_by_id(order_id: str) -> Optional[dict]:
+    db.reload_if_changed()
+    return (db.data.get("orders") or {}).get(order_id)
+
+
+def nft_action_kb(order_id: str) -> InlineKeyboardMarkup:
+    """✅ Bajarildi / ❌ Bekor qilish tugmalari.
+
+    callback: `nftok:<order_id>:<actor>` — `actor` = `adm` yoki `mgr`.
+    Bu bizning xabarimiz (bot yoki userbot), shuning uchun faqat o'sha
+    yo'l bosadi.
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Bajarildi", callback_data=f"nftok:{order_id}:done"),
+        InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"nftok:{order_id}:cancel"),
+    ]])
+
+
+async def nft_order_summary(order: dict, status_line: str = "") -> str:
+    """Xabar matni — ikkala tomon uchun bir xil.
+
+    `status_line` — natijani ko'rsatish uchun qo'shimcha qator.
+    """
+    item_id = order.get("nft_id") or ""
+    nft = (db.data.get("nfts") or {}).get(item_id) or {}
+    title = nft.get("title") or order.get("nft_title") or "NFT"
+    number = nft.get("number", order.get("nft_number"))
+    link = nft.get("link") or order.get("nft_link") or ""
+    days = order.get("days") or NFT_MIN_DAYS
+    total = num(order.get("price") or order.get("price_uzs"))
+
+    who = order.get("customer_username") or order.get("username") or "noma'lum"
+    admin_who = order.get("admin_username") or "—"
+
+    head = f"🖼 <b>{esc(str(title))}</b>"
+    if number:
+        head += f" <code>#{number}</code>"
+
+    lines = [
+        "🎁 <b>NFT ijaraga olish so'rovi</b>",
+        "",
+        head,
+    ]
+    if link:
+        lines.append(f'🔗 <a href="{esc(str(link))}">{esc(str(link))}</a>')
+    lines += [
+        f"👤 Mijoz: <b>@{esc(str(who))}</b> (ID: <code>{order.get('user_id')}</code>)",
+        f"👑 Meneger: <b>@{esc(str(admin_who))}</b>",
+        f"📅 Muddat: <b>{days} kun</b>",
+        "",
+        "💰 <b>Hisob:</b>",
+        f"├ 1 kunlik: {fmt(num(order.get('per_day')))} UZS",
+        f"├ Ijara ({days} kun): {fmt(num(order.get('rent')))} UZS",
+        f"├ Network fee: {fmt(NFT_NETWORK_FEE)} UZS",
+        f"└ <b>Jami: {fmt(total)} UZS</b>",
+        "",
+        f"🆔 <code>{esc(str(order.get('id')))}</code>",
+    ]
+    if status_line:
+        lines += ["", status_line]
+    return "\n".join(lines)
+
+
+async def _patch_nft_notices(order: dict, text: str) -> None:
+    """Yuborilgan IKKI xabarni ham yangilaydi (tugmalar olib tashlanadi).
+
+    Shu bilan ikkinchi tomon darhol ko'radi: "bu allaqon bajarilgan".
+    """
+    for n in (order.get("notices") or []):
+        try:
+            if n.get("via") == "ub" and userbot is not None:
+                await userbot.edit_message_text(
+                    n["chat"], n["msg"], text,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                await bot.edit_message_text(
+                    n["chat"], n["msg"], text,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
+                    parse_mode=ParseMode.HTML,
+                )
+        except Exception:  # noqa: BLE001
+            # Xabarni yangilab bo'lmasa ham natija bazada saqlangan —
+            # hech qanday molikaviy xato yo'q.
+            pass
+
+
+def _refund_nft_order(order: dict) -> int:
+    """Mijoz hisobini qaytaradi. Qaytarilgan summa qaytaradi."""
+    total = num(order.get("price") or order.get("price_uzs"))
+    uid = order.get("user_id")
+    user = db.get_user(int(uid)) if uid else None
+    if user is None or total <= 0:
+        return 0
+    user["balance"] = num(user.get("balance")) + total
+    user["total_spent"] = max(0, num(user.get("total_spent")) - total)
+    db.add_history(user, "nft_rent_refund", total,
+                   f"NFT ijarasi bekor qilindi: "
+                   f"{order.get('nft_title') or ''} · {order.get('days')} kun")
+    return total
+
+
+def _remove_nft_from_listing(order: dict) -> str:
+    """Bajarilgan NFT ni ro'yxatdan O'CHIRADI.
+
+    Nega o'chiriladi va faqat yopilmaydi: mijoz shu NFT ni ijaraga olgan —
+    endi u boshqaga ham sotilishi mumkin emas. `removed` belgisi qo'yiladi
+    (faqat yopish emas, butunlay ro'yxatdan tushirish).
+    """
+    item_id = order.get("nft_id") or ""
+    nft = (db.data.get("nfts") or {}).get(item_id)
+    if not nft:
+        return ""
+    nft["active"] = False
+    nft["removed"] = True
+    nft["removed_at"] = now_iso()
+    nft["removed_order"] = order.get("id")
+    return str(nft.get("title") or item_id)
+
+
+async def claim_nft_order(order_id: str, actor: str) -> tuple:
+    """Buyurtmani `claimed` qiladi. FAQAT BIRINCHI yutadi.
+
+    Qaytaradi: `(ok, code, order)`:
+      ok=True                → bu amal bajarildi
+      ok=False, code='taken' → allaqachon boshqa tomon bosgan
+      ok=False, code='gone'  → buyurtma topilmadi
+    """
+    async with NFT_ACTION_LOCK:
+        # 🔴 QARORGA KARAMASdan OLDIN diskdan QAYTA o'qish — aks holda
+        # eski xotira bilan qaror qabul qilamiz va ikkalamiz yutamiz.
+        db.reload_if_changed()
+        order = (db.data.get("orders") or {}).get(order_id)
+        if not order:
+            return False, "gone", {}
+        if order.get("kind") != "nft_rent":
+            return False, "gone", {}
+        if order.get("status") != "pending":
+            return False, "taken", order
+
+        # BIRINCHI bo'lib kelgan — darhol band qilamiz
+        order["status"] = "claimed"
+        order["claimed_by"] = actor
+        order["claimed_at"] = now_iso()
+        db.save()
+        return True, "", order
+
+async def _nft_apply_action(order: dict, action: str, actor_label: str) -> tuple:
+    """Buyurtma bo'yicha amalni bajaradi va ikkala xabarni yangilaydi.
+
+    Qaytaradi: `(natija_matni, muvaffaqiyat)`.
+    """
+    if action == "done":
+        removed = _remove_nft_from_listing(order)
+        order["status"] = "done"
+        order["done_by"] = actor_label
+        order["done_at"] = now_iso()
+        db.save()
+        line = (f"✅ <b>Bajarildi</b> ({actor_label})\n"
+                + (f"🗑 NFT <b>{esc(removed)}</b> ro'yxatdan o'chirildi.\n"
+                   if removed else "")
+                + "🔒 Tugmalar yopildi.")
+        text = await nft_order_summary(order, status_line=line)
+        await _patch_nft_notices(order, text)
+        return ("✅ Bajarildi"
+                + (f" — {removed} ro'yxatdan o'chirildi" if removed else ""), True)
+
+    # Bekor qilish — mijoz hisobiga qaytariladi
+    refunded = _refund_nft_order(order)
+    order["status"] = "cancelled"
+    order["cancelled_by"] = actor_label
+    order["cancelled_at"] = now_iso()
+    order["refunded"] = refunded
+    db.save()
+    line = (f"❌ <b>Bekor qilindi</b> ({actor_label})\n"
+            + (f"💰 Mijoz hisobiga <b>{fmt(refunded)} UZS</b> qaytarildi.\n"
+               if refunded else "⚠️ Qaytarish uchun summa topilmadi.\n")
+            + "🔒 Tugmalar yopildi.")
+    text = await nft_order_summary(order, status_line=line)
+    await _patch_nft_notices(order, text)
+    return ("❌ Bekor qilindi"
+            + (f" — {fmt(refunded)} UZS qaytarildi" if refunded else ""), True)
+
+
+@admin_router.callback_query(F.data.startswith("nftok:"))
+async def cb_nft_action_admin(call: CallbackQuery):
+    """ADMINGA yuborilgan xabardagi tugma (bot orqali)."""
+    if not is_admin_authed(call.from_user.id):
+        await call.answer("🔐 Bu tugma faqat admin uchun.", show_alert=True)
+        return
+    await _handle_nft_action(call, actor="adm", actor_label="admin")
+
+
+async def _handle_nft_action(call, actor: str, actor_label: str) -> None:
+    """Umumiy tugmа logikasi — bot va userbot xabarlari uchun bir xil.
+
+    🔴 IKKALASI BIR VAQTDA bosilsa:
+       `claim_nft_order()` ichida lock + diskdan qayta o'qish bor.
+       Birinchi `status="claimed"` qiladi, ikkinchisi `taken` oladi va
+       hech qanday o'zgarish qilmaydi (mijozga pul IKKALA MARTA
+       qaytarilmaydi).
+    """
+    parts = (call.data or "").split(":")
+    if len(parts) < 3:
+        await call.answer()
+        return
+    order_id, action = parts[1], parts[2]
+    if action not in ("done", "cancel"):
+        await call.answer()
+        return
+
+    ok, code, order = await claim_nft_order(order_id, actor)
+    if not ok:
+        if code == "taken":
+            st = order.get("status")
+            who = order.get("done_by") or order.get("cancelled_by") or "boshqa tomon"
+            text = {
+                "done": "bu buyurtma allaqachon <b>Bajarilgan</b>",
+                "cancelled": "bu buyurtma allaqachon <b>Bekor qilingan</b>",
+                "claimed": "bu buyurtma hozircha band (jarayonda)",
+            }.get(str(st), f"holat: {st}")
+            await call.answer(
+                f"⛔ {text}.\n\nBirinchi bosgan: {esc(str(who))}.",
+                show_alert=True,
+            )
+        else:
+            await call.answer("❌ Buyurtma topilmadi.", show_alert=True)
+        return
+
+    msg, _ = await _nft_apply_action(order, action, actor_label)
+    await call.answer(msg, show_alert=True)
 
 
 @admin_router.callback_query(F.data == "adm:nft_list")
@@ -7149,6 +7621,7 @@ async def main() -> None:
             for label, coro in (
                 ("Gift worker", process_gift_orders()),
                 ("Stars worker", star_order_worker()),
+                ("NFT xabar worker", nft_notify_worker()),
                 ("USDT kursi", get_usdt_uzs_rate()),
                 ("Heartbeat", update_heartbeat()),
                 ("Userbot supervisor", userbot_supervisor()),

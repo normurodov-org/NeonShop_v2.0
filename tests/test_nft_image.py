@@ -101,7 +101,10 @@ BSRC = open("bot.py", encoding="utf-8").read()
 check("def nft_has_viewable_image(" in BSRC, "nft_has_viewable_image()")
 check('F.data.startswith("adm:nft_photo:")' in BSRC, "rasm so'rash handleri")
 check("NftStates.photo" in BSRC, "photo state")
-check('n["image"] = message.photo[-1].file_id' in BSRC, "file_id saqlanadi")
+# Endi tur (photo/animation/document) avval aniqlanadi, keyin bitta
+# o'zgaruvchiga yoziladi — GIF/WebP ham shu yo'l bilan keladi.
+check('file_id = message.photo[-1].file_id' in BSRC, "rasm file_id olinadi")
+check('n["image"] = file_id' in BSRC, "file_id bazaga saqlanadi")
 check('adm:nft_photo:{nid}' in BSRC or 'adm:nft_photo:{n.get(' in BSRC,
       "\"🖼 Rasm qo'shish\" tugmasi")
 check("Rasm biriktirilmagan" in BSRC, "rasm yo'q bo'lsa ogohlantiriladi")
