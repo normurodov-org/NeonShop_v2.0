@@ -61,8 +61,13 @@ LOGIN_CODE = strip_code(LOGIN)
 # =============================================================================
 section("1) 🔴🔴 BIR TAB — ikkinchi tab OCHILMAYDI")
 # =============================================================================
-check("window.open(" not in LOGIN_CODE,
-      "🔴🔴 `window.open` KODDA YO'Q (tab ochilib yopilmasin)")
+# 📜 Asosiy yoʴl BIR TABDA; `window.open` faqat ZAXIRA yoʴlda
+#    (Telegram ilovasini ochish uchun) — bu toʸgʸri.
+check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
+      "📜 asosiy tugma bir tabda (OAuth sahifasi)")
+check("/api/auth/telegram/start" in LOGIN, "🌐 zaxira yoʴl: kod soʸraladi")
+check("/api/auth/telegram/status" in LOGIN, "🌐 zaxira yoʴl: javob kutiladi")
+check('data-testid="tg-login-deep"' in LOGIN, "🌐 zaxira tugmasi bor")
 check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
       "📖 asl tab o'zi Telegram'ga boradi")
 check("pollRef" not in LOGIN_CODE,

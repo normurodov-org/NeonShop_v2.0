@@ -154,8 +154,18 @@ section("7) 🔐 📖 WEBSITE KIRISH — Telegram rasmiy OAuth")
 check("telegramAuthUrl" in LOGIN, "🌐 rasmiy OAuth URL quruvchisi")
 check("https://oauth.telegram.org/auth?" in LOGIN, "🔴🔴 RASMIY manzil")
 # 🔴 Ikkinchi tab umuman ochilmaydi
-check("window.open(" not in LOGIN_CODE,
-      "🔴🔴 `window.open` KODDA YOʸQ (tab ochilib yopilmasin)")
+# 📜 ASOSIY tugma — BIR TABDA (ikkinchi tab ochilmaydi).
+#    🔶 `window.open` ZAXIRA yoʸlda (Telegram ILOVASINI ochish uchun)
+#    ishlatiladi — bu toʸgʸri, shuning uchun YOʸQLIGI tekshirilmaydi.
+check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
+      "📜📜 asosiy tugma bir tabda (OAuth sahifasi)")
+
+# 🌐 ZAXIRA YOʸL — Telegram ilovasi orqali. Bu domen
+#    roʼyxatidan qatʴ nazar — shuning uchun mijoz hech qachon
+#    saytga kira olmay qolmaydi.
+check("/api/auth/telegram/start" in LOGIN, "🌐 zaxira: kod soʸraladi")
+check("/api/auth/telegram/status" in LOGIN, "🌐 zaxira: javob kutiladi")
+check('data-testid="tg-login-deep"' in LOGIN, "🌐 zaxira tugmasi testlanadi")
 check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
       "📖 asl tab oʸzi Telegramʼaga boradi")
 check("?tg=1" in LOGIN, "📖 `return_to` da `?tg=1` marker")

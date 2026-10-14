@@ -101,6 +101,9 @@ export const TelegramLogin: React.FC<Props> = ({
   cbRef.current = { onSuccess, onError };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [deepBusy, setDeepBusy] = useState(false);
+  const [deepErr, setDeepErr] = useState<string | null>(null);
+  const deepPoll = useRef<number | undefined>(undefined);
 
   /** 🔴 IZOHLANGAN NATIJANI serverga yuboradi. */
   const submit = useCallback(async (data: string) => {
@@ -148,6 +151,59 @@ export const TelegramLogin: React.FC<Props> = ({
       setErr('Telegram tasdiqlamadi. Qayta urinib ko‘ring.');
     }
   }, [submit]);
+
+  /** 🌐 ZAXIRA YOʴL — bot orqali (Telegram ilovasi ichida).
+
+   *  🔴️ NIMA UCHUN BU SHART?
+   *    `oauth.telegram.org/auth` sahifasi baʼzi brauzerlarda OʸZI
+   *    yopiladi (toppingich yoki "Bot domain invalid"). Bunday holatda
+   *    foydalanuvchi hech qanday xato koʼrmaydi, sayt esa
+   *    «kutilayotgan» holatda qoladi — mijoz uchun eng noqulay holat.
+   *
+   *  ✅ Bu yoʴl POPUP ham, VEB-SAHIFA ham yoʸq:
+   *      1. server bir martalik kod beradi (`web_<48hex>`)
+   *      2. `t.me/<bot>?start=<kod>` ochiladi → Telegram ILOVASI
+   *      3. mijoz «Start» ni bosadi
+   *      4. bot.py kodni `*_login_codes.json` ga yozadi
+   *      5. biz `GET /api/auth/telegram/status` bilan kutamiz
+   *
+   *  Ikkalasi ham Telegramʼning RASMIY mexanizmlari. Birinchisi
+   *  ishlamagan sayt ikkinchisi bilan ishlayveradi — mijoz hech qachon
+   *  saytga kira olmay qolmaydi. */
+  const deepStart = async () => {
+    setDeepErr(null);
+    setDeepBusy(true);
+    try {
+      const res = await fetch('/api/auth/telegram/start', { method: 'POST' });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j?.telegram_url) {
+        setDeepBusy(false);
+        setDeepErr(j?.error || 'Serverga ulanib boʼlmadi');
+        return;
+      }
+      window.open(j.telegram_url, '_blank');
+      if (deepPoll.current) window.clearInterval(deepPoll.current);
+      deepPoll.current = window.setInterval(async () => {
+        try {
+          const r = await fetch(`/api/auth/telegram/status?code=${encodeURIComponent(j.code)}`);
+          const s2 = await r.json().catch(() => ({}));
+          if (s2?.status === 'ok' && s2?.token) {
+            if (deepPoll.current) window.clearInterval(deepPoll.current);
+            setDeepBusy(false);
+            setSessionToken(s2.token);
+            cbRef.current.onSuccess();
+          } else if (s2?.status === 'error') {
+            if (deepPoll.current) window.clearInterval(deepPoll.current);
+            setDeepBusy(false);
+            setDeepErr(s2?.error || 'Telegram tasdiqlamadi');
+          }
+        } catch { /* tarmoq uzildi — keyingi urinishga */ }
+      }, 1500);
+    } catch (e: any) {
+      setDeepBusy(false);
+      setDeepErr(e?.message || 'Tarmoq xatosi');
+    }
+  };
 
   const go = () => {
     if (!botId) { setErr('Bot aniqlanmadi'); return; }
@@ -240,6 +296,52 @@ export const TelegramLogin: React.FC<Props> = ({
         Telegram ochiladi, tasdiqlang — sayt avtomatik qaytib keladi.
         {botId ? '' : ' (bot aniqlanmoqda…)'}
       </p>
+
+      {/* 🔐 ZAXIRA: Telegram ilovasi orqali (web sahifa ochilmasa)
+
+          🔴️ `oauth.telegram.org/auth` baʼzi brauzerlarda oʸzi
+          yopadi — mijoz hech narsani koʼrmaydi. Bu yoʴl POPUP ham,
+          WEB-SAHIFA ham yoʸq: toʸgʴridan Telegram ILOVASI ochiladi,
+          mijoz «Start» ni bosadi, sayt oʸzi ishlaydi.
+
+          Ikkalasi ham Telegramʼning rasmiy mexanizmi — birinchisi
+          ishlamagan sayt ikkinchisi bilan ishlayveradi. */}
+      {!deepBusy ? (
+        <button
+          type="button"
+          onClick={deepStart}
+          data-testid="tg-login-deep"
+          className={`mt-2 w-full text-[12px] underline underline-offset-2 ${
+            isDark ? 'text-neutral-400 hover:text-neutral-300' : 'text-neutral-600 hover:text-neutral-500'
+          }`}
+        >
+          Telegram ochilmadi? Ilova orqali kirish
+        </button>
+      ) : (
+        <div className="mt-2 flex items-center justify-center gap-2">
+          <div className={`h-3.5 w-3.5 rounded-full border-2 border-t-transparent animate-spin ${
+            isDark ? 'border-[#2AABEE]' : 'border-[#229ED9]'
+          }`} />
+          <span className={`text-[12px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
+            Telegram ilovasida «Start» ni bosing
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              if (deepPoll.current) window.clearInterval(deepPoll.current);
+              setDeepBusy(false);
+            }}
+            className={`text-[12px] underline underline-offset-2 ${
+              isDark ? 'text-neutral-400' : 'text-neutral-600'
+            }`}
+          >
+            Bekor qilish
+          </button>
+        </div>
+      )}
+      {deepErr && (
+        <p className="mt-2 text-[12px] text-center text-rose-500">{deepErr}</p>
+      )}
     </div>
   );
 };
