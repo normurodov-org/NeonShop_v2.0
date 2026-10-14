@@ -89,9 +89,18 @@ check("https://oauth.telegram.org/auth?" in LOGIN,
       "🔴 Telegram'ning RASMIY OAuth manzili")
 check("bot_id:" in LOGIN, "🔴 `bot_id` (nomi emas, RAQAM) beriladi")
 check("origin," in LOGIN, "🔴 `origin` — sayt manzili")
-check("return_to:" in LOGIN, "🔴 `return_to` — qaytish manzili")
-check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
-      "🔴 oddiy sahifa navigatsiyasi (popup emas)")
+# 📖 Telegram 🌟️ YANGI OYNADA ochiladi.
+#    🔴 sababi: `location.href = oauth...` bilan ASL TAB Telegram'ga
+#    ketar, mijoz esa telefon/SMS orqali qaytishi kerak bo'lardi —
+#    tab «yopilib qaytmay qolgan» degan taassurot paydo bo'lardi.
+check("window.open(" in LOGIN, "📖 Telegram YANGI OYNADA ochiladi")
+check("width=560,height=640" in LOGIN, "📖 oyna o'lchami beriladi")
+check("pollRef" in LOGIN and "setInterval" in LOGIN,
+      "📖 asl tab localStorage ni kutib turadi")
+check("sessionToken()" in LOGIN, "📖 oyna yopilgani ham tekshiriladi")
+check("window.close()" in LOGIN, "📖 qaytgan oyna o'zini yopadi")
+check("window.location.href = url" in LOGIN,
+      "📖 popup bloklansa — asl tabga qaytish (zaxira)")
 
 # =============================================================================
 section("3) 🔒 SERVER TOMONI")

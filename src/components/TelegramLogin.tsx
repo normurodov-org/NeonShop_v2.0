@@ -37,7 +37,7 @@
  * faqat popup va uning zaif tomonlari yo'q.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { setSessionToken } from '../lib/tgAuth';
+import { setSessionToken, sessionToken } from '../lib/tgAuth';
 
 interface Props {
   botUsername: string;
@@ -128,6 +128,9 @@ export const TelegramLogin: React.FC<Props> = ({
       if (j?.ok && j.token) {
         setSessionToken(j.token);
         cbRef.current.onSuccess();
+        // 🛑️ Bu OYNA Telegram'dan qaytgan — endi o'zini yopamiz.
+        //    Asl tab oyna boshqaruvini oldida turadi.
+        try { if (window.opener) window.close(); } catch { /* ignore */ }
       } else {
         setBusy(false);
         setErr(j?.error || 'Telegram tasdiqlamadi');
@@ -162,10 +165,73 @@ export const TelegramLogin: React.FC<Props> = ({
     return () => window.removeEventListener('message', onMsg);
   }, [submit, busy]);
 
+  /** 📱 Telegram oynasini ochib, undan natijani KUTAMIZ.
+
+   *  🔴️ NIMA UCHUN YANGI OYNA (eski yo'l esa bu edi):
+   *    `window.location.href = oauth...` bilan ASL TAB Telegram'ga ketar
+   *    edi — mijoz u yerga kirib, telefon raqamini kiritib, SMS kodini
+   *    yozib, keyin saytga QAYTIB kelishi kerak edi. Ko'pchilik bu
+   *    oynani yopib tashlab, «kirish ishlamadi» deb o'ylardi.
+   *
+   *  ✅ YANGI: asl tab HECH QACHON ko'chmaydi. Telegram yangi oynada
+   *    ochiladi, tasdiqlangach o'sha oyna `return_to` ga qaytadi — ya'ni
+   *    yana ham ilova — `#tgAuthResult` ni o'qiydi, sessiyani yozadi va
+   *    o'zini yopadi. Asl tab esa `localStorage` ni kuzatib, kirish
+   *  tugallanishini darhol ko'radi.
+   *
+   *  🔒 `localStorage` origin bo'yicha UMUMIY bo'lgani uchun popup
+   *  qanday ochilishidan qat'i nazar bu usul ishlaydi (COOP ham ahamiyat
+   *  yo'q — biz `postMessage` ga bog'liq emasmiz). */
+  const popupRef = useRef<Window | null>(null);
+  const pollRef = useRef<number | undefined>(undefined);
+
+  const cleanupPoll = () => {
+    if (pollRef.current) window.clearInterval(pollRef.current);
+    pollRef.current = undefined;
+  };
+
+  useEffect(() => () => cleanupPoll(), []);
+
   const go = () => {
     if (!botId) { setErr('Bot aniqlanmadi'); return; }
-    // 🔴 Odiiy sahifa navigatsiyasi — popup yo'q, `popup.closed` yopiqligi yo'q
-    window.location.href = telegramAuthUrl(botId);
+    const before = sessionToken();
+    const url = telegramAuthUrl(botId);
+
+    // 📴 YANGI OYNA — asl tab joyida qoladi
+    const w = window.open(
+      url, 'tg_login',
+      'width=560,height=640,left=' + Math.max(0, (screen.width - 560) / 2)
+      + ',top=' + Math.max(0, (screen.height - 640) / 2) + ',menubar=0,toolbar=0'
+    );
+    popupRef.current = w;
+
+    if (!w) {
+      // 🔴 Popup bloklangan (brauzer so'rogan bo'lishi mumkin).
+      //    Bunday holatda ASL TABni ko'chirish yaxshiroq — biror narsa
+      //    qilish kerak.
+      setErr('Oyna bloklandi — asl tabda ochilmoqda…');
+      window.location.href = url;
+      return;
+    }
+
+    setBusy(true);
+    setErr(null);
+    cleanupPoll();
+    // 🔍 `localStorage` ni kuzatamiz — sessiya yozilishi bilan
+    pollRef.current = window.setInterval(() => {
+      const now = sessionToken();
+      if (now && now !== before) {
+        cleanupPoll();
+        setBusy(false);
+        cbRef.current.onSuccess();
+      }
+      // 🛑️ Foydalanuvchi bekor qildi (oynani yopdi)
+      if (popupRef.current && popupRef.current.closed) {
+        cleanupPoll();
+        setBusy(false);
+        if (!sessionToken()) setErr('Telegram orqali kirish bekor qilindi');
+      }
+    }, 900);
   };
 
   return (
