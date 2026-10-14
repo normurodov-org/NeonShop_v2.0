@@ -55,12 +55,9 @@ export const Header: React.FC<HeaderProps> = ({
        `glass-scroll-edge` — kontent sarlavha ostida eriydi, matn
        o'qilmay qolmaydi. Avval oddiy `backdrop-blur-2xl` edi. */
     <header className="glass-scroll-edge liquid-glass-nav sticky top-0 z-30 px-4 pt-3 pb-2.5 border-b transition-colors duration-300 border-white/[0.08]">
-      <div className={
-        `max-w-md md:max-w-none md:px-6 xl:px-10 mx-auto flex items-center justify-between gap-2.5 `
-        // 🔶 Desktopda chap menyu paneli bor — sarlavha ham
-        //    o'ngga siljishi kerak, aks holda menyu ustiga tushadi.
-        + (isDesktop ? 'md:pl-[124px]' : '')
-      }>
+      <div
+        className="max-w-md md:max-w-none md:px-6 md:pl-[124px] xl:px-10 mx-auto flex items-center justify-between gap-2.5"
+      >
         {/* User Avatar + Greeting */}
         <div className="flex items-center gap-2.5">
           <div className="relative">

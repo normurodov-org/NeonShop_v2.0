@@ -2026,12 +2026,47 @@ async function resolveBotUsername(): Promise<string> {
  * 🔗 Ommaviy sozlama — Telegram ichida ham, brauzerda ham
  * kerak (Login Widget bot nomini oladi).
  */
+/**
+ * \U0001F510 `/api/config` — mijoz uchun bot ma'lumotlari.
+ *
+ * \U0001F512 `bot_id` NIMA UCHUN QO'SHILDI?
+ *    Telegram'ning rasmiy OAuth kirishi URL ma'luktasini talab qiladi:
+ *      https://oauth.telegram.org/auth?bot_id=<ID>&origin=<sayt>&return_to=<sayt>
+ *    `bot_id` — bu botning RAQAMLI id si (nomi emas). Uni qo'lda
+ *    yozib qo'yish xato bo'lardi (bot yangilanishi mumkin), shuning uchun
+ *    `getMe` orqali olinadi va 1 soatga keshlanadi.
+ */
+let botIdCache: { value: number; at: number } | null = null;
+
+async function resolveBotId(): Promise<number> {
+  if (botIdCache && Date.now() - botIdCache.at < 3_600_000 && botIdCache.value) {
+    return botIdCache.value;
+  }
+  const env = Number(process.env.BOT_ID || 0);
+  if (env > 0) { botIdCache = { value: env, at: Date.now() }; return env; }
+  const token = (process.env.BOT_TOKEN || '').trim();
+  if (!token) return 0;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    const j: any = await r.json();
+    if (j?.ok && j?.result?.id) {
+      botIdCache = { value: Number(j.result.id), at: Date.now() };
+      return botIdCache.value;
+    }
+  } catch { /* tarmoq yo'q */ }
+  return 0;
+}
+
 app.get("/api/config", async (_req: Request, res: Response) => {
   try {
     const username = await resolveBotUsername();
+    const botId = await resolveBotId();
     res.json({
       ok: true,
       bot_username: username,
+      bot_id: botId,
       support_username: (process.env.SUPPORT_USERNAME || "").replace(/^@/, ""),
     });
   } catch (e) {

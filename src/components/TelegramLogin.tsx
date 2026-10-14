@@ -1,248 +1,215 @@
 /**
- * 🔐 Telegram orqali kirish — Telegram'ning rasmiy **Login Widget**'i.
+ * 🔐 Telegram orqali kirish.
  *
- * 🔴 BU YO'L 3 MARTA ISHLAMADI — shuning uchun har bir nuqta qayta
- *    ko'rib chiqildi va xatolar kiritildi. Quyidagi hamma Telegram'ning
- *    o'z skriptidan (`telegram-widget.js`, `widget-frame.js`) o'qib olingan.
+ * 🔴🔴 BU — ISHONCHLI YECHIM. Oldingi yechim ishlamasligining SABABI
  *
- * 1) `data-onauth` — ENG MUHIM. Yo'q bo'lsa:
- *        if (el.hasAttribute('data-onauth')) {
- *          onAuthUser = __parseFunction(el.getAttribute('data-onauth'), ['user']);
- *        } // aks holda `onAuthUser` = undefined
- *    → popup ochiladi, yopiladi, HECH NARSA chaqirilmaydi.
+ * Telegram'ning eski Login Widget skripti (`telegram-widget.js?23`)
+ * natijani ICHKI funksiya orqali qaytaradi:
  *
- * 2) `data-onunauth` — ikkinchi yo'l:
- *        onAuth(origin, authData) {
- *          if (authData) data = {event:'auth_user', ...};
- *          else          data = {event:'unauthorized'};   // ← shu yerga tushadi
- *        }
- *        // ota tomonda: onUnauth && onUnauth();
- *    Oldin `data-onunauth` YO'Q EDI → natija kelmasa sahifa JIMGINA
- *    o'z-o'zidan qolardi («ekran ochildi-yopildi, lekin kirmadi»).
+ *     onInitAuthUser = onAuthUser = __parseFunction('onTelegramAuth', ['user']);
+ *     // = eval("(function(user){onTelegramAuth})")  → funksiya QAYTARILADI,
+ *     //   lekin HECH QACHON chaqirilmaydi
+ *     ...
+ *     var auth_result = haveTgAuthResult();
+ *     if (auth_result && onAuthUser) { onAuthUser(auth_result); }
  *
- * 3) `window.open` kuzatuvchisi — 🔴 ASOSIY MITIGATSIYA.
- *    Tugma IFRAME ichida (oauth.telegram.org), shuning uchun biz
- *    bosilishni bevosita bilmaymiz. Lekin iframe `window.parent` dagi
- *    `window.open` ni chaqiradi — ya'ni BIZNING oynamiz orqali.
- *    Shu sababli `window.open` ni o'rab, bosilganini aniqlaymiz va
- *    **watchdog** yoqamiz: natija kelmasa, foydalanuvchiga aniq
- *    xabar beramiz (jimgina qolmasin).
+ * Bu skript o'z ichida `window.open` bilan popup ochadi, `postMessage` bilan
+ * natija kutadi va `checkClose()` bilan har 100 ms da `popup.closed` ni
+ * tekshiradi. Agar popup bir zumda yopilgan deb hisoblansa — `getAuth()`
+ * chaqiriladi, u hali tasdiqlanmagan natija qaytaradi, `authFinished = true`
+ * bo'ladi va butun oqim **o'limga** tortiladi. Natijada:
  *
- * 4) Tiklash — `TWidgetLogin.authFinished` IFRAME ichida yashaydi.
- *    Bir marta `true` bo'lsa, o iframe boshqa hech qachon natija bermaydi
- *    (`onAuth` darhol qaytadi). Shuning uchun «Qayta urinish» iframe'ni
- *    butunlay YO'Q QILADI va yangisini qo'yadi — `authFinished` sifirlanadi.
+ *     tugma bosiladi → popup ochiladi → yopiladi → HECH NARSA
  *
- * 5) Skript KARTA ICHIGA qo'yiladi (`box.appendChild`), `document.body`
- *    ga emas — aks holda iframe kartadan tashqarida, ko'rinmaydi.
+ * Bu Telegram'ning ichki ishi — biz uni tuzatamiz emas, balki
+ * 🟢 RASMIY VA ISHONCHLI YO'LGA O'TAMIZ:
+ *
+ *     1. `https://oauth.telegram.org/auth?bot_id=…&origin=…&return_to=…`
+ *        (Telegram'ning RASMIY OAuth sahifasi — popup emas, oddiy
+ *         sahifa navigatsiyasi)
+ *     2. Mijoz Telegram'da tasdiqlaydi
+ *     3. Telegram `return_to#tgAuthResult=<base64url>` ga qaytaradi
+ *     4. 🔴 Qaytishni TUGINKI O'ZIMIZ qaytaramiz — Telegram skriptiga
+ *        bog'liq bo'lmaymiz
+ *
+ * Bu ham Telegram'ning rasmiy mexanizmi (bir xil imzo, bir xil
+ * `SHA256(bot_token)` kaliti, bir xil `/api/auth/telegram` endpoint),
+ * faqat popup va uning zaif tomonlari yo'q.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { setSessionToken } from '../lib/tgAuth';
 
 interface Props {
   botUsername: string;
+  botId: number;
   isDark: boolean;
   onSuccess: () => void;
   onError?: (msg: string) => void;
 }
 
-declare global {
-  interface Window {
-    onTelegramAuth?: (user: any) => void;
-    onTelegramLoginError?: (message: string) => void;
-    onTelegramLoginUnauth?: () => void;
+const TG_AUTH_ORIGIN = 'https://oauth.telegram.org';
+
+/**
+ * 🔴 `location.hash` dagi `#tgAuthResult=…` ni o'qiydi.
+ *
+ * 📌 FORMAT: base64url(JSON). Ichida:
+ *      { id, first_name, username, photo_url, auth_date, hash }
+ *
+ * 📌 Telegram'ning skripti bu ma'lumotni `onAuthUser` ga **obyekt**
+ *    sifatida beradi, popup oqimida esa **MATN** beradi. Serverimiz
+ *    matn formatini kutadi, shuning uchun obyektni kanonik matnga
+ *    qaytarib beramiz.
+ */
+export function readTelegramAuthResult(): string | null {
+  const m = location.hash.match(/[#?&]tgAuthResult=([A-Za-z0-9\-_=]*)$/);
+  if (!m || !m[1]) return null;
+  // 🔴 HASH NI DARHOL TOZALAYMIZ — aks holda sahifa yangilanganda
+  //    bir xil natija yana keladi (eskirgan sessiya bilan aralashadi)
+  location.hash = location.hash.replace(/[#?&]tgAuthResult=[A-Za-z0-9\-_=]*$/, '');
+  try {
+    let b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4;
+    if (pad > 1) b64 += new Array(5 - pad).join('=');
+    const obj = JSON.parse(window.atob(b64));
+    if (!obj || !obj.id || !obj.hash) return null;
+    // 🔴📌 FORMAT: server `parseInitData` ishlatadi — ya'ni BUZILGAN
+    //    QUERY STRING (`id=…&first_name=…&hash=…`) kutadi. Agar
+    //    `k=v\n` ko'rinishida yuborsak, server «hash yo'q» deydi
+    //    (2024-yilda shu sababdan kulrang xatolik chiqadi).
+    //
+    //    ✅ Telegram'ning o'z widget skripti ham `onAuthUser` ga shu
+    //       formatda MATN yuboradi (popup oqimida). Biz shu formatni
+    //       qo'lda tiklaymiz — imzo serverda `SHA256(bot_token)` bilan
+    //       tekshiriladi, ya'ni bu Telegram'ning rasmiy imzosi.
+    const keys = ['id', 'first_name', 'last_name', 'username', 'photo_url', 'auth_date'];
+    const parts: string[] = [];
+    for (const k of keys) {
+      if (obj[k] !== undefined && obj[k] !== null) {
+        parts.push(`${k}=${encodeURIComponent(String(obj[k]))}`);
+      }
+    }
+    parts.push(`hash=${encodeURIComponent(String(obj.hash))}`);
+    return parts.join('&');
+  } catch {
+    return null;
   }
 }
 
-const WIDGET_SRC = 'https://telegram.org/js/telegram-widget.js?23';
-
-/** Bosilgandan keyin natija kelmaydigan maksimal kutish (ms) */
-const WATCHDOG_MS = 12_000;
+/** Rasmiy OAuth havolasi (popup yo'q). */
+export function telegramAuthUrl(botId: number): string {
+  const origin = `${location.origin}`;
+  const params = new URLSearchParams({
+    bot_id: String(botId),
+    origin,
+    return_to: `${location.origin}${location.pathname}`,
+  });
+  return `${TG_AUTH_ORIGIN}/auth?${params.toString()}`;
+}
 
 export const TelegramLogin: React.FC<Props> = ({
-  botUsername, isDark, onSuccess, onError,
+  botUsername, botId, isDark, onSuccess, onError,
 }) => {
-  const boxRef = useRef<HTMLDivElement>(null);
   const cbRef = useRef({ onSuccess, onError });
   cbRef.current = { onSuccess, onError };
-  const [stuck, setStuck] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  /** Skriptni konteyner ichiga qo'shadi (iframe shu yerda chiqadi). */
-  const inject = useCallback(() => {
-    const box = boxRef.current;
-    if (!box || !botUsername) return;
-
-    // Allaqachon shu konteynerda skript/iframe bormi?
-    if (box.querySelector('script[data-telegram-login]') || box.querySelector('iframe')) {
-      return;
+  /** 🔴 IZOHLANGAN NATIJANI serverga yuboradi. */
+  const submit = useCallback(async (data: string) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch('/api/auth/telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j?.ok && j.token) {
+        setSessionToken(j.token);
+        cbRef.current.onSuccess();
+      } else {
+        setBusy(false);
+        setErr(j?.error || 'Telegram tasdiqlamadi');
+        cbRef.current.onError?.(j?.error || 'Telegram tasdiqlamadi');
+      }
+    } catch (e: any) {
+      setBusy(false);
+      setErr(e?.message || 'Tarmoq xatosi');
+      cbRef.current.onError?.(e?.message || 'Tarmoq xatosi');
     }
+  }, []);
 
-    const s = document.createElement('script');
-    s.src = WIDGET_SRC;
-    s.async = true;
-    s.setAttribute('data-telegram-login', botUsername);
-
-    // 🔴🔴 ENG MUHIM — callback bu atribut orqali topiladi.
-    s.setAttribute('data-onauth', 'onTelegramAuth');
-    // 🔴🔴 IKKINCHI YO'L — ruxsat berilmasa. Bu YO'Q EDI, ya'ni
-    //    natija kelmasa hech narsa bo'lmasdi.
-    s.setAttribute('data-onunauth', 'onTelegramLoginUnauth');
-    s.setAttribute('data-onerror', 'onTelegramLoginError');
-
-    s.setAttribute('data-size', 'large');
-    s.setAttribute('data-radius', '18');
-    s.setAttribute('data-userpic', 'true');
-    // 🔐 `write` — bot foydalanuvchiga xabar yubora oladi
-    //    (Stars yetkazildi, to'lov tasdiqlandi, va h.k.)
-    s.setAttribute('data-request-access', 'write');
-    // 🔴 Iframe QAYERDA chiqishini hal qilish uchun marker
-    s.setAttribute('data-neon-login-widget', '1');
-
-    box.appendChild(s);
-  }, [botUsername]);
-
-  /** Iframe'ni butunlay olib tashlab, yangisini qo'yadi.
-   *  🔴 `TWidgetLogin.authFinished` iframe ichida — buni FAQAT
-   *     yangi iframe reset qiladi. */
-  const resetWidget = useCallback(() => {
-    const box = boxRef.current;
-    if (!box) return;
-    box.querySelectorAll('script[data-telegram-login], iframe').forEach((n) => n.remove());
-    inject();
-  }, [inject]);
-
+  // 🔴 Sahifa ochilganda Telegram qaytarib qoldirgan natijani olamiz
   useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-    let retry: number | undefined;
-    let watchdog: number | undefined;
+    const data = readTelegramAuthResult();
+    if (data) submit(data);
+  }, [submit]);
 
-    // ---------------------------------------------------------- 1) callback
-    window.onTelegramAuth = async (data: string) => {
-      try {
-        // 📌 Telegram callbackga IZOHLAYDIGAN MATN yuboradi (obyekt emas):
-        //    `id=...&first_name=...&hash=...`. `server.ts` ham shuni kutadi.
-        const res = await fetch('/api/auth/telegram', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data }),
-        });
-        const j = await res.json().catch(() => ({}));
-        if (j?.ok && j.token) {
-          if (watchdog) window.clearTimeout(watchdog);
-          setSessionToken(j.token);
-          cbRef.current.onSuccess();
-        } else {
-          cbRef.current.onError?.(j?.error || 'Tasdiqlash muvaffaqiyatsiz');
-        }
-      } catch (e: any) {
-        cbRef.current.onError?.(e?.message || 'Tarmoq xatosi');
+  // 🔴 Popup oqimidan qolgan natija (agar Telegram skripti ishlasa)
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== TG_AUTH_ORIGIN) return;
+      let d: any = {};
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (d?.event === 'auth_user' && d.auth_data && !busy) {
+        submit(String(d.auth_data));
+      } else if (d?.event === 'unauthorized' && !busy) {
+        setErr('Telegram ruxsat bermadi');
       }
     };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [submit, busy]);
 
-    /** 🔶 RUXSAT BERILMADI (`{event:'unauthorized'}`).
-     *  Eski yo'lda bu HANDSHI kelardi va hech narsa bo'lmasdi. */
-    window.onTelegramLoginUnauth = () => {
-      if (watchdog) window.clearTimeout(watchdog);
-      setStuck(true);
-      cbRef.current.onError?.(
-        "Telegram ruxsat bermadi. Agar birinchi marta bo'lsangiz, "
-        + "Telegram da botga «Start» bering va qayta urinib ko'ring."
-      );
-    };
-
-    /** 🔶 WIDGET ichidagi xato («Bot domain invalid» va h.k.) */
-    window.onTelegramLoginError = (message: string) => {
-      const m = String(message || '').toLowerCase();
-      let hint = 'Telegram bilan bog‘lanishda xatolik yuz berdi.';
-      if (m.includes('domain')) {
-        hint = 'Telegram shu saytga ruxsat bermagan. Sayt administratoriga xabar bering.';
-      } else if (m.includes('not found') || m.includes('unavailable')) {
-        hint = 'Bot topilmadi — bot nomi noto‘g‘ri.';
-      }
-      cbRef.current.onError?.(hint);
-    };
-
-    // ------------------------------------------- 2) `window.open` kuzatuvchisi
-    // 🔴 Tugma IFRAME ichida, shuning uchun bosilishni bevosita
-    //    ko'ra olmaymiz. Lekin iframe `window.parent` dagi `window.open`
-    //    ni chaqiradi — demak bu oyna orqali o'tadi. Shu yerda
-    //    bosilganini aniqlab, watchdog yoqamiz.
-    const origOpen = window.open;
-    window.open = function (u?: any, n?: any, f?: any) {
-      const p = origOpen.call(window, u as any, n as any, f as any);
-      try {
-        if (String(u).indexOf('/auth') >= 0) {
-          setStuck(false);
-          cbRef.current.onError?.('');           // eski xatoni tozalash
-          if (watchdog) window.clearTimeout(watchdog);
-          // 🔴 12 soniyada natija kelmasa — jimgina qolmaymiz
-          watchdog = window.setTimeout(() => {
-            if (!cancelled) setStuck(true);
-          }, WATCHDOG_MS);
-        }
-      } catch { /* noqa: BLE001 */ }
-      return p;
-    };
-
-    // ---------------------------------------------------------- 3) yuklash
-    const tryInject = () => {
-      if (cancelled) return;
-      inject();
-      // 🔴 Skript yuklangan, lekin iframe Hali chiqmagan bo'lishi mumkin.
-      //    2.5 sekunddan keyin tekshirib, yo'q bo'lsa QAYTA qo'shamiz.
-      retry = window.setTimeout(() => {
-        const box = boxRef.current;
-        if (!cancelled && box && !box.querySelector('iframe')) {
-          box.querySelectorAll('script[data-telegram-login]').forEach((n) => n.remove());
-          inject();
-        }
-      }, 2500);
-    };
-
-    if (document.readyState === 'complete') {
-      timer = window.setTimeout(tryInject, 0);
-    } else {
-      window.addEventListener('load', tryInject, { once: true });
-    }
-
-    return () => {
-      cancelled = true;
-      window.open = origOpen;                    // 🔴 o'ramani qaytarish
-      window.removeEventListener('load', tryInject);
-      if (timer) window.clearTimeout(timer);
-      if (retry) window.clearTimeout(retry);
-      if (watchdog) window.clearTimeout(watchdog);
-    };
-  }, [botUsername, inject]);
+  const go = () => {
+    if (!botId) { setErr('Bot aniqlanmadi'); return; }
+    // 🔴 Odiiy sahifa navigatsiyasi — popup yo'q, `popup.closed` yopiqligi yo'q
+    window.location.href = telegramAuthUrl(botId);
+  };
 
   return (
     <div className="mt-7 w-full">
-      <div
-        ref={boxRef}
-        className="flex justify-center items-center min-h-[54px] w-full"
-        aria-live="polite"
-      />
-
-      {/* 🔴 Natija kelmasa — JIM qolmaydi, aniq yo'l ko'rsatiladi */}
-      {stuck && (
-        <div
-          className={`mt-3 rounded-2xl p-3.5 text-center ${
-            isDark ? 'bg-white/[0.06] border border-white/10' : 'bg-neutral-100 border border-neutral-200'
+      {busy ? (
+        <div className={`rounded-2xl p-4 text-center ${
+          isDark ? 'bg-white/[0.06] border border-white/10' : 'bg-neutral-100 border border-neutral-200'
+        }`}>
+          <div className={`mx-auto mb-3 h-7 w-7 rounded-full border-[3px] border-t-transparent animate-spin ${
+            isDark ? 'border-[#2AABEE]' : 'border-[#229ED9]'
+          }`} />
+          <p className={`text-[13px] font-semibold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+            Telegram tasdiqlamoqda…
+          </p>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={go}
+          data-testid="tg-login"
+          className={`w-full h-[54px] rounded-2xl font-semibold text-[15px] flex items-center
+                      justify-center gap-2.5 transition active:scale-[.98] ${
+            isDark
+              ? 'bg-[#2AABEE] text-white hover:bg-[#3cb3f2]'
+              : 'bg-[#229ED9] text-white hover:bg-[#1b8cc2]'
           }`}
         >
-          <p className={`text-[12.5px] leading-relaxed ${isDark ? 'text-neutral-300' : 'text-neutral-700'}`}>
-            Telegram tasdiqlamadi. Ochilgan oynada <b>Start</b> tugmasini bosdingizmi?
-          </p>
-          <button
-            type="button"
-            onClick={() => { setStuck(false); resetWidget(); }}
-            className="mt-2.5 h-9 w-full rounded-xl text-[12.5px] font-semibold text-white transition active:scale-[.98] bg-[#229ED9] hover:bg-[#1b8cc2]"
-          >
-            Qayta urinish
-          </button>
-        </div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M21.9 4.3c-.2-.9-1-1.6-1.9-1.8C18.2 2.2 12 2.2 12 2.2s-6.2 0-8 .3c-.9.2-1.7.9-1.9 1.8C1.8 6.1 1.8 12 1.8 12s0 5.9.3 7.7c.2.9 1 1.6 1.9 1.8 1.8.3 8 .3 8 .3s6.2 0 8-.3c.9-.2 1.7-.9 1.9-1.8.3-1.8.3-7.7.3-7.7s0-5.9-.3-7.7zM9.9 15.6V8.4l6.3 3.6-6.3 3.6z" />
+          </svg>
+          Telegram orqali kiring
+        </button>
       )}
+
+      {err && (
+        <p className="mt-3 text-[12px] text-center text-rose-500">{err}</p>
+      )}
+
+      <p className={`mt-3 text-[11.5px] text-center leading-relaxed ${
+        isDark ? 'text-neutral-500' : 'text-neutral-500'
+      }`}>
+        Telegram ochiladi, tasdiqlang — bu saytga qaytib keladi.
+        {botId ? '' : ' (bot aniqlanmoqda…)'}
+      </p>
     </div>
   );
 };

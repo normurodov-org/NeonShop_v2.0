@@ -118,36 +118,45 @@ check('aria-label="Asosiy menyu"' in NAV, "\u00abAsosiy menyu\u00bb (kirish uchu
 check("aria-current" in NAV, "faol tab belgilangan")
 
 # =============================================================================
-section("7) 🔐 📖 WEBSITE KIRISH — Telegram Login Widget")
+section("7) 🔐 📖 WEBSITE KIRISH — Telegram rasmiy OAuth")
 # =============================================================================
-# 🔴 Widget popup oqimi 3 marta ishlamadi. Sabablari Telegram''ning o'z
-#    skriptidan (`telegram-widget.js`, `widget-frame.js`) o'qib topildi va
-#    hammasi tuzatildi — bu blok shu tuzatmalarni DIQQATLAB ushlaydi.
-check("data-onauth" in LOGIN,
-      "🔴🔴 `data-onauth` bor — aks holda `onAuthUser = undefined`")
-check("'data-onauth', 'onTelegramAuth'" in LOGIN,
-      "global funksiya nomi atribut bilan bir xil")
-check("data-onunauth" in LOGIN,
-      "🔴🔴 `data-onunauth` bor — `{event:'unauthorized'}` da "
-      "`onUnauth && onUnauth()` bo'sh qolmasdi")
-check("onTelegramLoginUnauth" in LOGIN,
-      "global `onTelegramLoginUnauth` mavjud")
-check("window.onTelegramAuth" in LOGIN, "global `window.onTelegramAuth` mavjud")
+# 🔴🔴 ESKI WIDGET POPUP OQIMI ISHLAMADI, SABABI ANIQLANDI:
+#
+#   Telegram'ning `telegram-widget.js` skripti `checkClose()` bilan har
+#   100 ms da `popup.closed` ni tekshiradi. Popup bir zumda yopilgan
+#   deb hisoblansa → `getAuth()` → `{"error":"NOT_AUTHORIZED"}` →
+#   `authFinished = true` → butun oqim o'ladi:
+#
+#       tugma bosiladi → popup ochiladi → yopiladi → HECH NARSA
+#
+#   Bu Telegram'ning ICHKI ishi — skriptni tuzatib bo'lmaydi.
+#
+#   ✅ YANGI: rasmiy OAuth sahifasi (popup yo'q). Telegram foydalanuvchi
+#   tasdiqlagach `return_to#tgAuthResult=...` ga qaytaradi, qaytishni
+#   TUGINKI o'zimiz qaytaramiz.
+check("telegramAuthUrl" in LOGIN, "🌐 rasmiy OAuth URL quruvchisi")
+check("https://oauth.telegram.org/auth?" in LOGIN, "🔴🔴 RASMIY manzil")
+check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
+      "📖 oddiy sahifa navigatsiyasi (popup emas)")
+check("bot_id:" in LOGIN, "🔒 `bot_id` — raqamli id (nomi emas)")
+check("readTelegramAuthResult" in LOGIN, "📖 qaytishni o'zimiz o'qitamiz")
+check("parts.join('&')" in LOGIN,
+      "🔴🔴 QUERY STRING yig'iladi (server `parseInitData` kutadi)")
 check("setSessionToken" in LOGIN, "sessiya saqlanadi")
-check("box.appendChild(s)" in LOGIN,
-      "🔴 skript karta ICHIGA qo'yiladi (iframe tashqarida chiqmasin)")
-check("document.body.appendChild(s)" not in LOGIN, "document.body ga qo'yish yo'q")
+check("addEventListener('message'" in LOGIN,
+      "📖 Telegram skriptining `postMessage` orqali zaxira yo'l")
+check("data-testid=\"tg-login\"" in LOGIN, "📖 tugma testlanadi")
 
-# 🔴 ASOSIY MITIGATSIYA: popup bosilganini aniqlash + watchdog
-check("window.open = function" in LOGIN,
-      "🔒 `window.open` o'raladi (tugma IFRAME ichida — bosilishni bilamiz)")
-check("WATCHDOG_MS" in LOGIN, "⏱️ watchdog bor (12s — natija kelmasa xabar)")
-check("setStuck(true)" in LOGIN, "🔔 jimgina qolmaydi — xabar ko'rsatiladi")
-check("Qayta urinish" in LOGIN, "🔄 qayta urinish (iframe qayta yaratiladi)")
-check("resetWidget" in LOGIN,
-      "🔄 `TWidgetLogin.authFinished` FAQAT yangi iframe bilan reset bo'ladi")
-check("window.open = origOpen" in LOGIN,
-      "🔒 o'ram ish vaqtida to'liq tiklanadi (memory leak yo'q)")
+check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
+check("inBrowser" in APP, "brauzer alohida ko'rib chiqiladi")
+check("X-Session-Token" in AUTH, "sessiya header'i bor")
+check("tgHeadersGet" in AUTH, "GET uchun yordamchi")
+check("tgHeaders" in AUTH, "POST uchun yordamchi")
+check("headers: tgHeadersGet(" in APP, "🔴 App'ning asosiy so'rovi sessiya yuboradi")
+check(APP.count("x-telegram-init-data") == 0,
+      "🔴 qo'lda header bloki qolmadi (sessiya yuborilmas edi)")
+check(APP.count("headers: tgHeadersGet(") >= 2,
+      "poller ham sessiya yuboradi (avto-to'ldirish ishlaydi)")
 
 check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
 check("inBrowser" in APP, "brauzer alohida ko'rib chiqiladi")
@@ -197,9 +206,10 @@ check("href={BOT_WEBAPP_URL}" not in APP and "href=\"https://t.me/" not in APP,
 
 section("9) 🔐 KIRISH TUGMASI VA XATO HOLATLARI")
 # =============================================================================
-check("Qayta urinish" in LOGIN, "🔄 qayta urinish mumkin")
-check("'failed'" in DEEP if False else "setStuck" in LOGIN,
-      "🔔 xato holati bor — jimgina qolmaydi")
+check("setBusy(true)" in LOGIN, "📢 qayta yuborish bloklanadi (double-submit)")
+check("setErr(" in LOGIN, "🔔 xato holati bor — jimgina qolmaydi")
+check("unauthorized" in LOGIN, "🔔 Telegram ruxsat bermasa ko'rsatiladi")
+
 check("bot_username" in read("server.ts"), "server bot nomini qaytaradi")
 
 

@@ -34,6 +34,14 @@ export default function App() {
   // 🔶 Bot nomi state'i (serverdan, `/api/config`) — `isDesktop`
   //    deklaratsiyasi YONIDA, chunki undan foydalanadi (TDZ xatosi).
   const [botUsername, setBotUsername] = useState<string>('');
+  // 🔐 Botning RAQAMLI id si (nomi emas). Telegram'ning rasmiy
+  // OAuth URL'i shuni talab qiladi:
+  //   https://oauth.telegram.org/auth?bot_id=<ID>&…
+  //
+  // Server `getMe` orqali aniqlaydi. Agar u ishlamasa (tarmoq, noto'g'ri
+  // token), oxirgi zaxira — Telegram'ning o'z widget HTML'ida yozilgan
+  // raqam (FALLBACK_BOT_ID). Xuddi shu sabab FALLBACK_BOT_USERNAME ham bor.
+  const [botId, setBotId] = useState<number>(0);
 
   // 🔴 ZAXIRA ZAXIRALAR (birinchi topilgani ishlatiladi):
   //    1) `botUsername` — serverdan (`/api/config` → bazadagi bot nomi)
@@ -45,6 +53,13 @@ export default function App() {
   const BUILD_BOT_USERNAME =
     (import.meta.env.VITE_BOT_USERNAME || '').replace(/^@/, '');
   const FALLBACK_BOT_USERNAME = 'shop_neonbot';
+  /**
+   * 🔐 Botning raqamli id si — zaxira qiymat.
+   * Telegram'ning `oauth.telegram.org/embed/<bot>` sahifasida
+   * `TWidgetLogin.init('widget_login', <ID>, …)` shaklida yoziladi.
+   * `VITE_BOT_ID` build paytida berilsa, u ustun keladi.
+   */
+  const FALLBACK_BOT_ID = Number(import.meta.env.VITE_BOT_ID || 8604259613);
   const BOT_USERNAME =
     botUsername || BUILD_BOT_USERNAME || FALLBACK_BOT_USERNAME;
 
@@ -79,7 +94,11 @@ export default function App() {
     fetch('/api/config')
       .then((r) => r.json())
       .then((j) => {
-        if (alive && j?.ok && j.bot_username) setBotUsername(j.bot_username);
+        if (alive && j?.ok) {
+          if (j.bot_username) setBotUsername(j.bot_username);
+          if (j.bot_id) setBotId(Number(j.bot_id));
+          else if (FALLBACK_BOT_ID) setBotId(FALLBACK_BOT_ID);
+        }
       })
       .catch(() => { /* server yo'q — build fallback */ });
     return () => { alive = false; };
@@ -558,6 +577,7 @@ export default function App() {
                      `TWidgetLogin.authFinished` faqat shunda sifirlanadi. */}
               <TelegramLogin
                 botUsername={BOT_USERNAME}
+                botId={botId}
                 isDark={isDark}
                 onSuccess={() => {
                   setLoginError(null);
@@ -694,10 +714,16 @@ export default function App() {
       </ErrorBoundary>
 
       {/* Main View Area */}
-      <main className={
-        `flex-1 max-w-md md:max-w-none w-full mx-auto px-4 md:px-6 xl:px-10 pt-3.5 relative z-10 `
-        + `${isDesktop ? 'md:pl-[124px]' : ''}`
-      }>
+      {/* 🔒️ `md:pl-[124px]` — chap menyu uchun xavfsizlik oralig'i.
+        🔴️ AVVAL shartli yozilgan edi: `isDesktop ? 'md:pl-[124px]' : ''`
+        Tailwind v4 skaneri klassni `qo'shtirnoq` ICHIDA topa olmaydi —
+        faqat `pl-[124px]` ni (prefiksiz!) topadi. Natijada build'da
+        `md:pl-[124px]` UMUMAN yo'q edi va kontent chap menyuning
+        ustiga chiqib qolardi.
+
+        Endi shart kerak emas: `md` breakpoint (768px) bilan
+        `useIsDesktop` breakpoint'i bir xil — `md:` o'zi yetarli. */}
+      <main className="flex-1 max-w-md md:max-w-none w-full mx-auto px-4 md:px-6 md:pl-[124px] xl:px-10 pt-3.5 relative z-10">
         <ErrorBoundary label="Bosh sahifa">
         {currentTab === 'home' && (
           <HomeView

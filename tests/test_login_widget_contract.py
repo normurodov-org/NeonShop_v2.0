@@ -1,26 +1,37 @@
-"""Telegram Login Widget KONTRAKTI.
+"""Telegram orqali kirish KONTRAKTI.
 
-XABAR: «Login as ... ni bosganimda ekran ochilib 1 soniyada yopiladi,
-lekin kirmaydi — sahifa o'z-o'zidan qoldi».
+🔴🔴 ESKI YECHIM ISHLAMADI — sababi va yangi yechim:
 
-🔴 SABAB — Telegram'ning o'z skriptlari (widget-frame.js):
+ESKI: Telegram'ning `telegram-widget.js?23` skripti.
+    Skript o'z ichida `window.open` bilan popup ochadi, `postMessage` bilan
+    natija kutadi va `checkClose()` bilan har 100 ms da `popup.closed` ni
+    tekshiradi:
 
-    onAuth: function (origin, authData, init) {
-      if (authData) data = {event: 'auth_user', auth_data: authData};
-      else          data = {event: 'unauthorized'};   // shu yerga tushadi
-      PostMessage.send(data, origin);
-    }
+        function checkClose() {
+          if (!activePopup || activePopup.closed) {
+            return TWidgetLogin.onClose();   // → getAuth() (XHR)
+          }
+          setTimeout(checkClose, 100);
+        }
 
-Ota tomonda esa:
+    Agar popup bir zumda yopilgan deb hisoblansa — `getAuth()` chaqiriladi,
+    u hali tasdiqlanmagan natija qaytaradi (`{"error":"NOT_AUTHORIZED"}`),
+    `authFinished = true` bo'ladi va butun oqim o'ladi. Natijada:
 
-    else if (data.event == 'unauthorized') {
-      onUnauth && onUnauth();      // data-onunauth YO'Q EDI
-    }
+        tugma bosiladi → popup ochiladi → yopiladi → HECH NARSA
 
-Natija: hech narsa bo'lmasdi, sahifa jimgina o'z-o'zidan qolardi.
+    Bu Telegram'ning ICHKI ishi — skriptni tuzatish mumkin emas.
 
-✅ TUZATILGAN: `data-onauth` + `data-onunauth` + `window.open` kuzatuvchisi
-   (watchdog) + iframe qayta yaratish (authFinished reset).
+✅ YANGI: Telegram'ning RASMIY OAuth sahifasi (popup yo'q).
+
+    1. `https://oauth.telegram.org/auth?bot_id=…&origin=…&return_to=…`
+    2. Mijoz Telegram'da tasdiqlaydi
+    3. Telegram `return_to#tgAuthResult=<base64url(JSON)>` ga qaytaradi
+    4. 🔴 Qaytishni TUGINKI O'ZIMIZ qaytaramiz
+
+    Bu bir xil rasmiy mexanizm, bir xil `SHA256(bot_token)` imzosi va
+    bir xil `/api/auth/telegram` endpointi — faqat popup va uning zaif
+    tomonlari yo'q.
 """
 import io
 import os
@@ -52,80 +63,81 @@ def section(t):
 
 
 APP_CODE = strip_code(APP)
+LOGIN_CODE = strip_code(LOGIN)
 
 # =============================================================================
-section("1) 🔴🔴 `data-onauth` — ENG MUHIM")
+section("1) 🔴 `#tgAuthResult` — TAYINLANUVCHI FORMAT")
 # =============================================================================
-check("setAttribute('data-onauth', 'onTelegramAuth')" in LOGIN,
-      "🔴🔴 `data-onauth` = 'onTelegramAuth'")
-check("setAttribute('data-telegram-login', botUsername)" in LOGIN,
-      "`data-telegram-login` = bot nomi")
-check("window.onTelegramAuth = async (data: string) => {" in LOGIN,
-      "global `window.onTelegramAuth` mavjud")
+check("readTelegramAuthResult" in LOGIN, "🔴 hash o'quvchi funksiya bor")
+check(r"/[#?&]tgAuthResult=([A-Za-z0-9\-_=]*)$/" in LOGIN,
+      "🔴 regex Telegram skripti bilan BIR XIL (manzili bo'yicha)")
+check("location.hash = location.hash.replace" in LOGIN,
+      "🔴 hash darhol tozalanadi (sahifa yangilanganda eskirgan natija)")
+check("window.atob(b64)" in LOGIN, "base64url -> base64 -> JSON")
+
+# 🔴 ENG MUHIM: server `parseInitData` ishlatadi — BUZILGAN QUERY STRING
+#    kutadi. `k=v\n` formatida yuborsak, server «hash yo'q» deydi.
+check("parts.join('&')" in LOGIN, "🔴🔴 QUERY STRING yig'iladi (`k=v&k=v`)")
+check("encodeURIComponent(String(obj[k]))" in LOGIN, "🔴 qiymatlar URL-kodlanadi")
+check("parts.push(`hash=" in LOGIN, "🔴 `hash` maydoni qo'shiladi")
 
 # =============================================================================
-section("2) 🔴🔴 `data-onunauth` — IKKINCHI YO'L")
+section("2) 🔴 RASMIY OAUTH URL")
 # =============================================================================
-# {event:'unauthorized'} -> onUnauth && onUnauth(). Bu handler YO'Q EDI
-# -> natija kelmasa sahifa JIMGINA o'z-o'zidan qolardi.
-check("setAttribute('data-onunauth', 'onTelegramLoginUnauth')" in LOGIN,
-      "🔴🔴 `data-onunauth` atributi bor")
-check("window.onTelegramLoginUnauth = " in LOGIN,
-      "global `onTelegramLoginUnauth` mavjud")
-check("setStuck(true)" in LOGIN, "ruxsat berilmaganda xabar beriladi")
+check("telegramAuthUrl" in LOGIN, "URL quruvchi funksiya bor")
+check("https://oauth.telegram.org/auth?" in LOGIN,
+      "🔴 Telegram'ning RASMIY OAuth manzili")
+check("bot_id:" in LOGIN, "🔴 `bot_id` (nomi emas, RAQAM) beriladi")
+check("origin," in LOGIN, "🔴 `origin` — sayt manzili")
+check("return_to:" in LOGIN, "🔴 `return_to` — qaytish manzili")
+check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
+      "🔴 oddiy sahifa navigatsiyasi (popup emas)")
 
 # =============================================================================
-section("3) 🔒 WATCHDOG — bosilishni aniqlash")
+section("3) 🔒 SERVER TOMONI")
 # =============================================================================
-# Tugma IFRAME ichida (oauth.telegram.org), lekin `window.open` bizning
-# oynamiz orqali o'tadi — shuning uchun bosilishni ANIQLASH mumkin.
-check("window.open = function" in LOGIN, "`window.open` o'rnaladi")
-check("WATCHDOG_MS" in LOGIN, "watchdog muddati belgilangan")
-check("'/auth'" in LOGIN,
-      "faqat Telegram `/auth` popup'ini kuzatadi (boshqa `window.open`lar emas)")
-check("setStuck(true)" in LOGIN, "natija kelmasa foydalanuvchi xabardan biladi")
+check("app.post(\"/api/auth/telegram\"" in SERVER, "kirish endpointi mavjud")
+check("verifyTelegramLoginWidget" in SERVER, "imzo tekshiruvchi")
+check("parseInitData(data)" in SERVER, "🔴 `parseInitData` — query string")
+check('createHash("sha256").update(token' in SERVER,
+      "🔴 kalit `SHA256(bot_token)` (WebApp HMAC emas)")
 
 # =============================================================================
-section("4) 🔄 TIKLASH — `authFinished` reset")
+section("4) 📌 bot_id — server orqali + zaxira")
 # =============================================================================
-# `TWidgetLogin.authFinished` IFRAME ichida yashaydi va bir marta `true`
-# bo'lsa, o iframe boshqa hech qachon natija bermaydi.
-check("resetWidget" in LOGIN, "reset funksiyasi bor")
-check("querySelectorAll('script[data-telegram-login], iframe')" in LOGIN,
-      "iframe va skript to'liq olib tashlanadi")
-check("setStuck(false)" in LOGIN, "qayta urishda holat tozalanadi")
+check("resolveBotId" in SERVER, "🔴 server `getMe` orqali bot_id aniqlaydi")
+check("bot_id: botId" in SERVER, "📌 `/api/config` da qaytariladi")
+check("FALLBACK_BOT_ID" in APP,
+      "📌 zaxira qiymat (server ishlamasa ham tugma o'lmaydi)")
+check("else if (FALLBACK_BOT_ID) setBotId(FALLBACK_BOT_ID)" in APP_CODE,
+      "📌 fallback ishlatiladi")
 
 # =============================================================================
-section("5) 🧹 TOZA LIK (memory leak)")
+section("5) 🔄 IKKITA YO'L — HAMMOSI ISHLASHI SHART")
 # =============================================================================
-check("window.open = origOpen" in LOGIN, "`window.open` tiklanadi (cleanup)")
-check("clearTimeout" in LOGIN, "barcha timerlar tozalanadi")
+check("useEffect" in LOGIN and "readTelegramAuthResult()" in LOGIN,
+      "📌 1) hash orqali qaytish (asosiy)")
+check("addEventListener('message'" in LOGIN,
+      "📌 2) Telegram skriptining `postMessage` orqali natijasi (zaxira)")
+check("auth_user" in LOGIN, "🔴 `auth_user` hodisasi qayd etiladi")
+check("unauthorized" in LOGIN, "🔴 `unauthorized` hodisasi qayd etiladi")
+check("TG_AUTH_ORIGIN" in LOGIN, "🔴 xabar faqat Telegram'dan qabul qilinadi")
 
 # =============================================================================
-section("6) 📖 INJSIYA va KARTA ICHIDA")
+section("6) 🧹 TOZA LIK")
 # =============================================================================
-check("box.appendChild(s)" in LOGIN, "skript karta ichiga qo'shiladi")
-check("document.body.appendChild(s)" not in LOGIN,
-      "🔴 `document.body` ga qo'shish yo'q (iframe tashqarida chiqardi)")
-check("2500" in LOGIN, "iframe chiqmasa QAYTA qo'shish (2.5s)")
+check("removeEventListener('message'" in LOGIN, "🔴 listener tozalanadi")
+check("setBusy(true)" in LOGIN, "🔴 qayta yuborish bloklanadi")
+check("setSessionToken" in LOGIN, "sessiya saqlanadi")
 
 # =============================================================================
-section("7) 🔒 SERVER tomoni")
+section("7) 🔴 ESKI WIDGET YO'LI OLIB TASHLANGAN")
 # =============================================================================
-check("/api/auth/telegram" in SERVER and "verifyTelegramLoginWidget" in SERVER,
-      "server endpoint mavjud")
-check("verifyTelegramLoginWidget" in SERVER,
-      "🔴 SHA256(bot_token) bilan tekshiriladi (initData emas)")
-check("/api/auth/telegram" in LOGIN, "frontend serverga imzo yuboradi")
-check("JSON.stringify({ data })" in LOGIN,
-      "📖 Telegram IZOHLAYDIGAN MATN yuboradi (obyekt emas)")
-
-# =============================================================================
-section("8) 🔴 ESKI DEEP-LINK YO'LI OLIB TASHLANGAN")
-# =============================================================================
+check("telegram-widget.js" not in LOGIN_CODE,
+      "🔴 zaif `telegram-widget.js` skripti ishlatilmaydi")
 check("TelegramDeepLogin" not in APP_CODE, "🔴 deep-link komponenti yo'q")
-check("TelegramLogin" in APP_CODE, "Widget komponenti ishlatilmoqda")
 check("Botga o'tish" not in APP_CODE, "🔴 «Botga o'tish» tugmasi yo'q")
+check("data-testid=\"tg-login\"" in LOGIN, "📌 tugma testlanadi (`data-testid`)")
 
 print()
 print("=" * 70)
