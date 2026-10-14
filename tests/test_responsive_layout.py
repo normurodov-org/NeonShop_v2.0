@@ -182,6 +182,26 @@ check("2500" in LOGIN, "iframe chiqmasa QAYTA qo'shish (2.5s)")
 check("querySelector('iframe')" in LOGIN,
       "iframe mavjudligi tekshiriladi")
 
+# 🔴🔴 `data-onauth` — ENG MUHIM QATOR.
+#    Telegram'ning skriptida:
+#        if (el.hasAttribute('data-onauth')) {
+#            onAuthUser = __parseFunction(el.getAttribute('data-onauth'), ['user']);
+#        } else if (el.hasAttribute('data-auth-url')) { ... }
+#        // → data-onauth YO'Q bo'lsa `onAuthUser` = undefined
+#
+#    Natija: tugma bosiladi → popup ochiladi → Telegram ruxsat beradi
+#    → popup YOPILADI → … lekin HECH NARSA chaqirilmaydi.
+#    Mijoz «kirdim» deb o'ylaydi, ammo hech qanday natija bo'lmaydi.
+#
+#    Bu xato «testda ko'rinmadi» chunki test `window.onTelegramAuth`
+#    ni QO'LCHA chaqirdi — real popup oqimi sinov qilinmagan edi.
+check("data-onauth" in LOGIN,
+      "🔴🔴 `data-onauth` atributi bor (callback ISHLAB KETADI)")
+check("s.setAttribute('data-onauth', 'onTelegramAuth')" in LOGIN,
+      "📖 `data-onauth` = global funksiya nomi")
+check("window.onTelegramAuth = async (user: any) => {" in LOGIN,
+      "global `window.onTelegramAuth` mavjud")
+
 check("bot_username" in read("server.ts"), "server bot nomini qaytaradi")
 
 

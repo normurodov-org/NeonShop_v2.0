@@ -70,6 +70,16 @@ export const TelegramLogin: React.FC<Props> = ({
     s.src = WIDGET_SRC;
     s.async = true;
     s.setAttribute('data-telegram-login', botUsername);
+    // 🔴🔴 `data-onauth` — ENG MUHIM QATOR, U YO'Q EDI!
+    //    Bu atribut Telegram'ga QAYSI GLOBAL FUNKSIYAGA murojaat
+    //    qilish kerakligini aytadi. Yo'q bo'lsa:
+    //      → tugma bosiladi → popup ochiladi → Telegram ruxsat beradi
+    //      → popup YOPILADI → … lekin hech narsa chaqirilmaydi
+    //    Ya'ni foydalanuvchi «kirdim» deb o'ylaydi, lekin hech qanday
+    //    natija bo'lmaydi. Aynan sizning holatingiz.
+    //    (`window.onTelegramAuth` qo'lda chaqirilgani uchun test
+    //     o'tkazib yuborilgan edi — bu xato ko'zdan o'tib ketgan.)
+    s.setAttribute('data-onauth', 'onTelegramAuth');
     s.setAttribute('data-size', 'large');
     s.setAttribute('data-radius', '18');
     s.setAttribute('data-userpic', 'true');
