@@ -97,8 +97,16 @@ check("window.open(" in LOGIN, "📖 Telegram YANGI OYNADA ochiladi")
 check("width=560,height=640" in LOGIN, "📖 oyna o'lchami beriladi")
 check("pollRef" in LOGIN and "setInterval" in LOGIN,
       "📖 asl tab localStorage ni kutib turadi")
-check("sessionToken()" in LOGIN, "📖 oyna yopilgani ham tekshiriladi")
+# 🔴 `popup.closed` ISHLATILMASIN — u ishonchsiz: boshqa origin
+# dan ochilgan popup da brauzer `WindowProxy` ni kesadi va `.closed`
+# DARHOL `true` qaytaradi → mijoz hech narsa qilmagan holda
+# «bekor qilindi» xabarini olardi.
+check("popup.closed" not in LOGIN_CODE, "🔴🔴 `popup.closed` tekshiruvi KODDA YO'Q")
+check("OPEN_TIMEOUT_MS" in LOGIN, "📖 vaqt chegarasi bilan")
 check("window.close()" in LOGIN, "📖 qaytgan oyna o'zini yopadi")
+check("M9.78 18.65" in LOGIN, "📖 RASMIY Telegram icon (qogʻoz-nokurasi)")
+check("Bekor qilish" in LOGIN, "🛑️ mijoz istalgan paytda bekor qila oladi")
+check("data-testid=\"tg-login-retry\"" in LOGIN, "🔄 xatodan keyin qayta urinish")
 check("window.location.href = url" in LOGIN,
       "📖 popup bloklansa — asl tabga qaytish (zaxira)")
 

@@ -49,6 +49,9 @@ interface Props {
 
 const TG_AUTH_ORIGIN = 'https://oauth.telegram.org';
 
+/** Telegram oynasini kutish vaqti (ms) */
+const OPEN_TIMEOUT_MS = 3 * 60 * 1000;
+
 /**
  * 🔴 `location.hash` dagi `#tgAuthResult=…` ni o'qiydi.
  *
@@ -217,6 +220,7 @@ export const TelegramLogin: React.FC<Props> = ({
     setBusy(true);
     setErr(null);
     cleanupPoll();
+    const startedAt = Date.now();
     // 🔍 `localStorage` ni kuzatamiz — sessiya yozilishi bilan
     pollRef.current = window.setInterval(() => {
       const now = sessionToken();
@@ -225,11 +229,22 @@ export const TelegramLogin: React.FC<Props> = ({
         setBusy(false);
         cbRef.current.onSuccess();
       }
-      // 🛑️ Foydalanuvchi bekor qildi (oynani yopdi)
-      if (popupRef.current && popupRef.current.closed) {
+      // 🔴 `popup.closed` ISHLATILMAYDI — u ISHONCHSIZ.
+      //
+      //    Popup boshqa ORIGIN dan ochilganda brauzerlar `WindowProxy`
+      //    ni kesib qoʼydi (`Cross-Origin-Opener-Policy` yoki uning
+      //    tabiiy ta'siri natijasida) va `.closed` DARHOL `true` qaytaradi —
+      //    foydalanuvchi hech narsa qilmagan holda. Natija: mijoz tugmani
+      //    bosadi, oyna ochiladi, va biz «bekor qilindi» deb xabar
+      //    beramiz — bu 💨 RASMDAGI xatolik.
+      //
+      //    🟢 Endi FAQAT `localStorage` ga ishonamiz (origin boʼyicha
+      //    umumiy, 100% ishonchli) va VAQT bilan chegaralaymiz.
+      const waited = Date.now() - startedAt;
+      if (waited > OPEN_TIMEOUT_MS) {
         cleanupPoll();
         setBusy(false);
-        if (!sessionToken()) setErr('Telegram orqali kirish bekor qilindi');
+        setErr('Vaqt tugadi. Telegram oynasida tasdiqlanmadingiz.');
       }
     }, 900);
   };
@@ -244,8 +259,29 @@ export const TelegramLogin: React.FC<Props> = ({
             isDark ? 'border-[#2AABEE]' : 'border-[#229ED9]'
           }`} />
           <p className={`text-[13px] font-semibold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-            Telegram tasdiqlamoqda…
+            Telegram oynasida tasdiqlang
           </p>
+          {/* 📖 Nima qilish kerakligini ANIQ aytamiz — mijoz
+              nima qilishini bilmasligi kerak emas. */}
+          <p className={`mt-1.5 text-[12px] leading-relaxed ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
+            Ochilgan kichik oynada Telegram <b>Continue</b> tugmasini bosing.
+            Tugilgach sayt avtomatik ochiladi.
+          </p>
+          {/* 🛑️ Ixtiyoriy: mijoz Telegram oynasini yopib
+              qoʼysa, u hech qachon «kutilayotgan» holatda qolmasin. */}
+          <button
+            type="button"
+            onClick={() => {
+              cleanupPoll();
+              try { popupRef.current?.close(); } catch { /* ignore */ }
+              setBusy(false);
+            }}
+            className={`mt-2.5 text-[12px] underline underline-offset-2 ${
+              isDark ? 'text-neutral-400' : 'text-neutral-600'
+            }`}
+          >
+            Bekor qilish
+          </button>
         </div>
       ) : (
         <button
@@ -259,15 +295,32 @@ export const TelegramLogin: React.FC<Props> = ({
               : 'bg-[#229ED9] text-white hover:bg-[#1b8cc2]'
           }`}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M21.9 4.3c-.2-.9-1-1.6-1.9-1.8C18.2 2.2 12 2.2 12 2.2s-6.2 0-8 .3c-.9.2-1.7.9-1.9 1.8C1.8 6.1 1.8 12 1.8 12s0 5.9.3 7.7c.2.9 1 1.6 1.9 1.8 1.8.3 8 .3 8 .3s6.2 0 8-.3c.9-.2 1.7-.9 1.9-1.8.3-1.8.3-7.7.3-7.7s0-5.9-.3-7.7zM9.9 15.6V8.4l6.3 3.6-6.3 3.6z" />
+          {/* 🔴 RASMIY Telegram logotipi (qog'oz-nokurasi).
+              Avvalgi path «video/play» belgisiga oʼhardi — mijoz
+              rasmda shuni koʼrdi. */}
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"
+               aria-hidden="true" focusable="false">
+            <path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z" />
           </svg>
           Telegram orqali kiring
         </button>
       )}
 
       {err && (
-        <p className="mt-3 text-[12px] text-center text-rose-500">{err}</p>
+        <div className="mt-3 text-center">
+          <p className="text-[12px] text-rose-500">{err}</p>
+          <button
+            type="button"
+            onClick={go}
+            data-testid="tg-login-retry"
+            className={`mt-2 h-9 w-full rounded-xl text-[12.5px] font-semibold text-white
+                        transition active:scale-[.98] ${
+              isDark ? 'bg-[#2AABEE] hover:bg-[#3cb3f2]' : 'bg-[#229ED9] hover:bg-[#1b8cc2]'
+            }`}
+          >
+            Qayta urinish
+          </button>
+        </div>
       )}
 
       <p className={`mt-3 text-[11.5px] text-center leading-relaxed ${
