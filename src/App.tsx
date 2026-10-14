@@ -16,7 +16,6 @@ import { CheckCircle2, ArrowLeft, PauseCircle, ShieldAlert } from 'lucide-react'
 import { useIsDesktop } from './lib/useLayout';
 import { isInsideTelegram, tgHeadersGet } from './lib/tgAuth';
 import TelegramLogin from './components/TelegramLogin';
-import BotNameWait from './components/BotNameWait';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('home');
@@ -36,12 +35,19 @@ export default function App() {
   //    deklaratsiyasi YONIDA, chunki undan foydalanadi (TDZ xatosi).
   const [botUsername, setBotUsername] = useState<string>('');
 
+  // 🔴 ZAXIRA ZAXIRALAR (birinchi topilgani ishlatiladi):
+  //    1) `botUsername` — serverdan (`/api/config` → bazadagi bot nomi)
+  //    2) build vaqtidagi `VITE_BOT_USERNAME`
+  //    3) `FALLBACK_BOT_USERNAME` — qat'iy qiymat
+  //    3-bosqich YO&Q bo!lishi SHART: `/api/config` javob bermasa
+  //    yoki server hali ishga tushmagan bo!lsa, Login Widget bot
+  //    NOMISIZ yuklanmaydi → mijoz saytga umuman kira olmaydi.
   const BUILD_BOT_USERNAME =
     (import.meta.env.VITE_BOT_USERNAME || '').replace(/^@/, '');
-  const BOT_USERNAME = botUsername || BUILD_BOT_USERNAME;
-  const BOT_WEBAPP_URL = BOT_USERNAME
-    ? `https://t.me/${BOT_USERNAME}?start=webapp`
-    : 'https://t.me/';
+  const FALLBACK_BOT_USERNAME = 'shop_neonbot';
+  const BOT_USERNAME =
+    botUsername || BUILD_BOT_USERNAME || FALLBACK_BOT_USERNAME;
+
 
   // Tema klassi faqat asosiy `<div>` da bo'lsa, `document.body` ga
   // PORTAL qilingan modal (NftRentView) tema ranglarini OLMAYDI:
@@ -69,7 +75,6 @@ export default function App() {
 
   // 🔗 Bot nomini serverdan oliramiz (Login Widget uchun zarur)
   useEffect(() => {
-    if (BUILD_BOT_USERNAME) return;   // build da berilgan bo'lsa — yetarli
     let alive = true;
     fetch('/api/config')
       .then((r) => r.json())
@@ -457,98 +462,75 @@ export default function App() {
           </h2>
 
           {inBrowser ? (
+            /* 🌐 YANGI KO'RINISH — FAQAT «Connect Telegram».
+               🔴 Mijozning so'rovi: «Botga o'tish» tugmasi
+               umuman kerak emas. Sayt — sayt; mijoz shu yerda
+               Telegram orqali kiradi va shu yerdan foydalanadi.
+               Ilgari ikkita yo'l bor edi (Widget + Botga o'tish) —
+               bu chalkashlik keltirardi va Widget yuklanmagan paytda
+               «Botga o'tish» bilan bo'sh joy qolardi. */
             <>
               <p
                 className={`text-[12.5px] mt-2.5 leading-relaxed ${
                   isDark ? 'text-neutral-400' : 'text-neutral-600'
                 }`}
               >
-                Xizmatlardan foydalanish uchun avval o'z Telegram
-                profilingiz bilan ro'yxatdan o'ting. Ma'lumotlaringiz
-                faqat Telegram orqali tasdiqlanadi va hech qaerda
-                saqlanmaydi.
+                Xizmatlardan foydalanish uchun Telegram orqali kiring.
+                Sizning nomingiz, usernamingiz va profil rasmingiz
+                Telegram tomonidan tasdiqlanadi.
               </p>
 
-              {/* 🌐 Telegram'ning rasmiy Login Widget.
-                  Bot nomi kelgandan keyin ko'rsatiladi — aks holda
-                  Telegram bo'sh joy chiqaradi va mijoz "ishlamadi"
-                  deb o'ylaydi. */}
-              <div className="mt-6 min-h-[54px]">
-                {BOT_USERNAME ? (
-                  <TelegramLogin
-                    botUsername={BOT_USERNAME}
-                    isDark={isDark}
-                    onSuccess={() => {
-                      setLoginError(null);
-                      setNeedTelegram(null);
-                      window.location.reload();
-                    }}
-                    onError={(msg) => setLoginError(msg)}
-                  />
-                ) : (
-                  /* 📖 Bot nomi kelmasa mijoz "ishlamadi" deb
-                     o'ylaydi. Shuning uchun:
-                     — 4 sekund kutamiz (server javob bermasligi mumkin)
-                     — keyin aniq xabar + "Botga o'tish" havolasi
-                     — 3 sekunddan keyin «Qayta urinish» */
-                  <BotNameWait isDark={isDark} onRetry={() => {
-                    setBotUsername('');
+              {/* Telegram'ning rasmiy Login Widget — «Connect Telegram» */}
+              <div className="mt-7 min-h-[54px]">
+                {/* 🔴 Shart (`{BOT_USERNAME ? ... }`) OLIB TASHLANDI:
+                    `BOT_USERNAME` uch zaxiradan keyin HAR DOIM to'g!ri
+                    (`shop_neonbot`), shuning uchun «Bot nomi
+                    yuklanmoqda» ekrani HECH QACHON chiqmasdi — o(lik kod. */}
+                <TelegramLogin
+                  botUsername={BOT_USERNAME}
+                  isDark={isDark}
+                  onSuccess={() => {
+                    setLoginError(null);
                     setNeedTelegram(null);
                     window.location.reload();
-                  }} />
-                )}
+                  }}
+                  onError={(msg) => setLoginError(msg)}
+                />
               </div>
 
               {loginError && (
                 <p className="mt-3 text-[12px] text-rose-400">{loginError}</p>
               )}
-
-              <div
-                className={`mt-6 pt-5 border-t ${
-                  isDark ? 'border-white/10' : 'border-black/8'
-                }`}
-              >
-                <p
-                  className={`text-[11.5px] mb-3 ${
-                    isDark ? 'text-neutral-500' : 'text-neutral-500'
-                  }`}
-                >
-                  Yoki Telegram ilovasi orqali oching
-                </p>
-                <a
-                  href={BOT_WEBAPP_URL}
-                  className="block py-3 rounded-[18px] text-[13px] font-bold apple-spring cursor-pointer text-center bg-[var(--accent)] text-white"
-                >
-                  Botga o&apos;tish
-                </a>
-              </div>
             </>
           ) : (
             <>
+              {/* 📐 Bu holat NORMAL DEGIL — Telegram ichida
+                  `initData` bo'ladi va server uni avtomatik tekshiradi.
+                  Bu ekran faqat sessiya muddati tuggan yoki `initData`
+                  kelmagan holatda chiqadi.
+                  🔴 Mijozning so'rovi bo!yicha «Botga o'tish»
+                  tugmasi QO'SHILMADI — faqat qayta urinish. */}
               <p
                 className={`text-[12.5px] mt-2.5 leading-relaxed ${
                   isDark ? 'text-neutral-400' : 'text-neutral-600'
                 }`}
               >
-                Bu ilova Telegram ichida ishlaydi. Botdagi{' '}
-                <b>📱 Web App</b> tugmasidan oching.
+                Telegram akkauntingizga ulanish muvaffaqiyatsiz bo'ldi.
+                Qayta urinib ko'ring — bot orqali qayta ochsangiz,
+                🔄 tugmasini bosing.
               </p>
-              <a
-                href={BOT_WEBAPP_URL}
-                className="mt-5 block py-3.5 rounded-[20px] text-sm font-bold apple-spring cursor-pointer text-center bg-[var(--accent)] text-white"
-              >
-                Botga o&apos;tish
-              </a>
               <button
                 onClick={() => {
                   setNeedTelegram(null);
                   window.location.reload();
                 }}
-                className={`mt-2.5 w-full py-2.5 text-[12px] font-semibold apple-spring cursor-pointer ${
-                  isDark ? 'text-neutral-400' : 'text-neutral-600'
+                className={`mt-5 w-full py-3 rounded-[18px] text-[13px] font-bold apple-spring cursor-pointer ${
+                  isDark
+                    ? 'liquid-glass-pill text-white'
+                    : 'liquid-glass-pill text-neutral-900'
                 }`}
               >
-                Qayta urinish
+                🔄 Qayta urinish
               </button>
             </>
           )}

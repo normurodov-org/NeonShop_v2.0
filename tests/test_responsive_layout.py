@@ -17,6 +17,9 @@ Ikki xil talab:
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from helpers import strip_code  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -34,7 +37,6 @@ BUY = read("src/components/views/BuyView.tsx")
 TOPUP = read("src/components/views/TopupView.tsx")
 PROF = read("src/components/views/ProfileView.tsx")
 RANK = read("src/components/views/RankingView.tsx")
-WAIT = read("src/components/BotNameWait.tsx")
 LOGIN = read("src/components/TelegramLogin.tsx")
 AUTH = read("src/lib/tgAuth.ts")
 
@@ -142,17 +144,49 @@ check(APP.count("headers: tgHeadersGet(") >= 2,
       "poller ham sessiya yuboradi (avto-to\u0027ldirish ishlaydi)")
 
 # =============================================================================
-section("8) \U0001F4F7 Bot nomi kelmaydigan holat")
+section("8) 🔐 «BOTGA O'TISH» TUGMASI BO'LMASIN")
 # =============================================================================
-check("BotNameWait" in APP, "vaqtidan o'tgan holat komponenti")
-check("setTimeout(() => setSlow(true), 4000)" in WAIT, "4 sekund kutadi")
-check("Qayta urinish" in WAIT, "qayta urinish tugmasi")
-check("\\u0027" not in WAIT,
-      "\U0001F534 JSX matnida `\\u0027` qolmadi (brauzerda LITERAL ko\u0027rinardi)")
+# Mijozning so'rovi: "bu tugma umuman kerakmas ... Botga o'tishi
+# umuman kerakmas."
+check("BOT_WEBAPP_URL" not in APP, "🔴 «Botga o'tish» URL o'zgaruvchisi o'chirilgan")
+# 📐 FAQAT KOD tekshiriladi (IZOH emas) — aks holda o'z
+#    ««Botga o'tish» o'chirilgani» izohimiz testni qizil
+#    qilardi. `strip_code` shu uchun ishlatiladi.
+APP_CODE = strip_code(APP)
+check("Botga o&apos;tish" not in APP_CODE and "Botga o'tish" not in APP_CODE,
+      "🔴 «Botga o'tish» TUGMASI butunlay olib tashlandi (kodda)")
+check("Yoki Telegram ilovasi orqali oching" not in APP,
+      "📖 «Yoki Telegram ilovasi orqali oching» matni ham ketsin")
+check("href={BOT_WEBAPP_URL}" not in APP and "href=\"https://t.me/" not in APP,
+      "kirish ekranida bot havolasi yo'q")
+
+section("9) 🌐 WIDGET DOIM CHIQADI (bot nomi bo'sh bo'lsa ham)")
+# =============================================================================
+# Mijoz rasmda BO'SH joy ko'rdi — widget chiqmagan edi. Sabab:
+# bot nomi `/api/config` dan keladi; u javob bermasa — bo'sh.
+check("FALLBACK_BOT_USERNAME" in APP,
+      "🔴 qat'iy zaxira bot nomi bor (server javob bermasa ham)")
+check("botUsername || BUILD_BOT_USERNAME || FALLBACK_BOT_USERNAME" in APP,
+      "🔐 uchta manba ketma-ket sinanadi")
+check("BotNameWait" not in APP,
+      "📖 «Bot nomi yuklanmoqda» o'lik ekrani olib tashlandi")
+
+# 🔴 Widget QAYERDA chiqishi SHART: skript konteyner ICHIGA
+#    qo'shiladi, aks holda iframe kartadan TASHQARIDA chiqadi
+#    (mijoz bo'sh joy ko'rdi — bu rasmda bo'lgan muammo).
+check("box.appendChild(s)" in LOGIN,
+      "🔴 skript konteyner ichiga qo'shiladi (iframe kartada chiqadi)")
+check("document.body.appendChild(s)" not in LOGIN,
+      "📖 document.body ga qo'shish yo'q (iframe tashqarida chiqardi)")
+check("2500" in LOGIN, "iframe chiqmasa QAYTA qo'shish (2.5s)")
+check("querySelector('iframe')" in LOGIN,
+      "iframe mavjudligi tekshiriladi")
+
 check("bot_username" in read("server.ts"), "server bot nomini qaytaradi")
+
 
 print()
 print("=" * 70)
-print("NATIJA: \u2705 BARCHASI TO'G'RI" if ok else "NATIJA: \u274c MUAMMO BOR")
+print("NATIJA: ✅ BARCHASI TO'G'RI" if ok else "NATIJA: ❌ MUAMMO BOR")
 print("=" * 70)
 raise SystemExit(0 if ok else 1)

@@ -4,18 +4,32 @@
  * NIMA UCHUN?
  * Telegram ichida (`t.me/bot/app`) `initData` imzosi avtomatik keladi
  * va server uni BOT_TOKEN bilan tekshiradi — mijoz hech narsa bosmaydi.
- * Lekin saytni BRAUZERDA (kompyuter / planshet) ochsa `initData` YO'Q:
- * ilova «Telegram orqali kiring» ekranida qolardi va hech qanday
- * xizmat ishlamasdi.
+ * Lekin saytni BRAUZERDA ochsa `initData` YO'Q: ilova
+ * «Telegram orqali kiring» ekranida qolar edi.
  *
  * Yechim — Telegram'ning rasmiy **Login Widget**'i:
- *   • brauzerda `my.telegram.org` orqali Telegram'ning o'z oynasini ochadi
- *   • foydalanuvchi «Telegram bilan davom etish» bosadi
+ *   • «Connect Telegram» tugmasi
+ *   • bosilganda Telegram oynasi (qurilma / IP / Log in)
  *   • IMZOLANGAN ma'lumot qaytariladi
  * Server uni SHA256(bot_token) kaliti bilan tekshiradi va sessiya
  * beradi (WebApp'dan FARQ qilib HMAC("WebAppData") emas).
+ *
+ * 🔴 IKKI MUHIM NUQTA (bitta-birta tuzatilgan xato):
+ *
+ * 1) SKript NERAGA QO'SHILADI?
+ *    Telegram'ning skripti iframe'ni o'zi yaratadi va o'sha yerda
+ *    joylashtiradi — skript qaysi konteynerda bo'lsa, tugma ham
+ *    shu yerda chiqadi. Skriptni `document.body` ga qo'shganimda
+ *    tugma KARTA TASHQARISIDA (va ko'rinmay) chiqardi — mijoz
+ *    bo'sh joy ko'rardi. Endi skript `boxRef` ICHIGA qo'shiladi.
+ *
+ * 2) QAYTA YUKLASH
+ *    Skript `async` — `onload` voqeasi `body` yuklanganda bo'lishi
+ *    mumkin emas. Shu sababli faqat `load` hodisasiga ishonib
+ *    bo'lmaydi: `readyState` tekshiriladi va yuklanmagan bo'lsa
+ *    tugma QAYTA qo'shiladi.
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { setSessionToken } from '../lib/tgAuth';
 
 interface Props {
@@ -31,30 +45,46 @@ declare global {
   }
 }
 
-export const TelegramLogin: React.FC<Props> = ({ botUsername, isDark, onSuccess, onError }) => {
+const WIDGET_SRC = 'https://telegram.org/js/telegram-widget.js?23';
+
+export const TelegramLogin: React.FC<Props> = ({
+  botUsername, isDark, onSuccess, onError,
+}) => {
   const boxRef = useRef<HTMLDivElement>(null);
+  const cbRef = useRef({ onSuccess, onError });
+  cbRef.current = { onSuccess, onError };
+
+  /** Skriptni konteyner ichiga qo'shadi (iframe shu yerda chiqadi). */
+  const inject = useCallback(() => {
+    const box = boxRef.current;
+    if (!box || !botUsername) return;
+
+    // Allaqachon shu konteynerda skript/iframe bormi?
+    if (box.querySelector('script[data-telegram-login]') || box.querySelector('iframe')) {
+      return;
+    }
+
+    const s = document.createElement('script');
+    s.src = WIDGET_SRC;
+    s.async = true;
+    s.setAttribute('data-telegram-login', botUsername);
+    s.setAttribute('data-size', 'large');
+    s.setAttribute('data-radius', '18');
+    s.setAttribute('data-userpic', 'true');
+    // 🔐 `write` — bot foydalanuvchiga xabar yubora oladi
+    // (Stars yetkazildi, to'lov tasdiqlandi, va h.k.)
+    s.setAttribute('data-request-access', 'write');
+    // 🔴 Iframe QAYERDA chiqishini hal qilish uchun marker
+    s.setAttribute('data-neon-login-widget', '1');
+    box.appendChild(s);
+  }, [botUsername]);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
+    let retry: number | undefined;
 
-    // 1) Telegram'ning rasmiy skriptini yuklaymiz
-    const existing = document.querySelector('script[data-neon-login-widget]');
-    const inject = () => {
-      if (cancelled || !boxRef.current) return;
-      if (existing) return;
-      const s = document.createElement('script');
-      s.src = 'https://telegram.org/js/telegram-widget.js?23';
-      s.async = true;
-      s.setAttribute('data-telegram-login', botUsername);
-      s.setAttribute('data-size', 'large');
-      s.setAttribute('data-radius', '18');
-      s.setAttribute('data-userpic', 'true');
-      s.setAttribute('data-request-access', 'write');
-      s.setAttribute('data-neon-login-widget', '1');
-      document.body.appendChild(s);
-    };
-
-    // 2) Telegram autentifikatsiya qilinganda chaqiriladi
+    // ---------------------------------------------------------- 1) callback
     window.onTelegramAuth = async (user: any) => {
       try {
         const res = await fetch('/api/auth/telegram', {
@@ -65,44 +95,53 @@ export const TelegramLogin: React.FC<Props> = ({ botUsername, isDark, onSuccess,
         const j = await res.json();
         if (j?.ok && j.token) {
           setSessionToken(j.token);
-          onSuccess();
+          cbRef.current.onSuccess();
         } else {
-          onError?.(j?.error || 'Tasdiqlash muvaffaqiyatsiz');
+          cbRef.current.onError?.(j?.error || 'Tasdiqlash muvaffaqiyatsiz');
         }
       } catch (e: any) {
-        onError?.(e?.message || 'Tarmoq xatosi');
+        cbRef.current.onError?.(e?.message || 'Tarmoq xatosi');
       }
     };
 
-    // Skript allaqachon yuklangan bo'lsa bo'sh joyga to'g'ridan-to'g'ri qo'yamiz
-    if (typeof (window as any).TelegramLoginWidget !== 'undefined'
-      && !existing && document.querySelector('iframe[src*="telegram.org"]')) {
+    // ---------------------------------------------------------- 2) yuklash
+    const tryInject = () => {
+      if (cancelled) return;
       inject();
-      return () => { cancelled = true; };
-    }
+      // 🔴 Skript yuklanib bo'lib, lekin iframe Hali chiqmagan bo'lishi
+      // mumkin (Telegram o'z serveridan yuklaydi). 2.5 sekundan keyin
+      // tekshirib, yo'q bo'lsa QAYTA qo'shamiz — aks holda tugma
+      // bo'sh joy qolib, mijoz "ishlamadi" deb o'ylaydi.
+      retry = window.setTimeout(() => {
+        const box = boxRef.current;
+        if (!cancelled && box && !box.querySelector('iframe')) {
+          const old = box.querySelector('script[data-telegram-login]');
+          if (old) old.remove();
+          inject();
+        }
+      }, 2500);
+    };
 
-    if (document.readyState === 'complete') setTimeout(inject, 0);
-    else window.addEventListener('load', inject, { once: true });
+    if (document.readyState === 'complete') {
+      timer = window.setTimeout(tryInject, 0);
+    } else {
+      window.addEventListener('load', tryInject, { once: true });
+    }
 
     return () => {
       cancelled = true;
-      window.removeEventListener('load', inject);
-      window.onTelegramAuth = undefined;
+      window.removeEventListener('load', tryInject);
+      if (timer) window.clearTimeout(timer);
+      if (retry) window.clearTimeout(retry);
     };
-  }, [botUsername, onSuccess, onError]);
+  }, [botUsername, inject]);
 
   return (
     <div
       ref={boxRef}
       className="flex justify-center items-center min-h-[54px] w-full"
       aria-live="polite"
-    >
-      {!botUsername && (
-        <p className={`text-xs ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
-          Bot nomi sozlanmagan
-        </p>
-      )}
-    </div>
+    />
   );
 };
 
