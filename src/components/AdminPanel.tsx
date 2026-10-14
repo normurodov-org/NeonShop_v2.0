@@ -170,7 +170,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
 
   if (!authenticated) {
     return (
-      <div className="max-w-md mx-auto my-12 rounded-3xl bg-slate-900 border border-white/10 p-8 shadow-2xl space-y-6">
+      <div className="max-w-md md:max-w-none md:px-6 xl:px-10 mx-auto my-12 rounded-3xl bg-slate-900 border border-white/10 p-8 shadow-2xl space-y-6">
         <div className="text-center space-y-2">
           <div className="w-14 h-14 mx-auto rounded-2xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
             <Lock className="w-6 h-6" />

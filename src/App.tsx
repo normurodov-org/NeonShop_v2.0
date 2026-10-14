@@ -13,6 +13,10 @@ import { LiquidPointer } from './components/LiquidPointer';
 import { toastText } from './lib/telegramText';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CheckCircle2, ArrowLeft, PauseCircle, ShieldAlert } from 'lucide-react';
+import { useIsDesktop } from './lib/useLayout';
+import { isInsideTelegram, tgHeadersGet } from './lib/tgAuth';
+import TelegramLogin from './components/TelegramLogin';
+import BotNameWait from './components/BotNameWait';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('home');
@@ -28,8 +32,16 @@ export default function App() {
   const isDark = theme === 'dark';
 
   // Botga o'tish havolasi (401 ekrani uchun)
-  const BOT_WEBAPP_URL =
-    `https://t.me/${import.meta.env.VITE_BOT_USERNAME || 'NeonStarsStoreBot'}?start=webapp`;
+  // 🔶 Bot nomi state'i (serverdan, `/api/config`) — `isDesktop`
+  //    deklaratsiyasi YONIDA, chunki undan foydalanadi (TDZ xatosi).
+  const [botUsername, setBotUsername] = useState<string>('');
+
+  const BUILD_BOT_USERNAME =
+    (import.meta.env.VITE_BOT_USERNAME || '').replace(/^@/, '');
+  const BOT_USERNAME = botUsername || BUILD_BOT_USERNAME;
+  const BOT_WEBAPP_URL = BOT_USERNAME
+    ? `https://t.me/${BOT_USERNAME}?start=webapp`
+    : 'https://t.me/';
 
   // Tema klassi faqat asosiy `<div>` da bo'lsa, `document.body` ga
   // PORTAL qilingan modal (NftRentView) tema ranglarini OLMAYDI:
@@ -51,6 +63,23 @@ export default function App() {
     h.classList.add(theme);
   }, [theme]);
 
+  // 🌐 EKRAN O'LSAMI: desktopda (>=768px) ilova telefon
+  // ko'rinishida qolmasin — chap menyu + keng kontent.
+  const isDesktop = useIsDesktop();
+
+  // 🔗 Bot nomini serverdan oliramiz (Login Widget uchun zarur)
+  useEffect(() => {
+    if (BUILD_BOT_USERNAME) return;   // build da berilgan bo'lsa — yetarli
+    let alive = true;
+    fetch('/api/config')
+      .then((r) => r.json())
+      .then((j) => {
+        if (alive && j?.ok && j.bot_username) setBotUsername(j.bot_username);
+      })
+      .catch(() => { /* server yo'q — build fallback */ });
+    return () => { alive = false; };
+  }, []);
+
   const [user, setUser] = useState<User | null>(null);
   const [settings, setSettings] = useState<StoreSettings | null>(null);
   const [contest, setContest] = useState<Contest | null>(null);
@@ -61,6 +90,14 @@ export default function App() {
   // ilovani bo'sh qoldirmaslik kerak, chunki aks holda mijoz
   // NIMAGANI bilmay qoladi.
   const [needTelegram, setNeedTelegram] = useState<string | null>(null);
+  // 📖 Login Widget xatosi alohida — `needTelegram` esa
+  // «kirish kerak» holatini bildiradi (401 dan keladi)
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  // 🔶 Telegram ICHIDA yoki BRAUZERDAmi? Brauzerda Login
+  //  Widget kerak; Telegram ichida — hech narsa ko'rsatilmaydi
+  //  (`initData` bor va server uni avtomatik tekshiradi).
+  const inBrowser = !isInsideTelegram();
   // 🔴 Poller ham o'ziga IMZO yuborishi SHART — aks holda server
   // identifikatsiyani topa olmay, 401 qaytaradi (yoki eski kodda —
   // ADMIN bo'lib qolardi va mijozning ekrani "dilbek"ga aylanardi).
@@ -100,14 +137,20 @@ export default function App() {
       }
 
       const res = await fetch(url, {
-        headers: {
-          // 🔴 Asosiy (imzolangan) identifikatsiya
-          'x-telegram-init-data': initData || '',
+        // 🔴 `tgHeadersGet()` — avval qo'lda header bloki
+        // yozilgan edi va u **sessiya tokenini YUBORMASDI**. Ya'ni
+        // brauzerda Telegram Login Widget orqali kirgandan keyin ham
+        // ilova «Telegram orqali kiring» ekranida QOLARDI —
+        // `fetch('/api/me')` ‘X-Session-Token’siz 401 beradi.
+        // 📖 Barcha so'rovlar `tgAuth` yordamchisidan o'tadi:
+        //    Telegram ichida → `X-Telegram-Init-Data` (imzo)
+        //    brauzerda         → `X-Session-Token` (sessiya)
+        headers: tgHeadersGet({
           'x-telegram-user-id': tgId ? tgId.toString() : '',
           'x-telegram-username': tgUsername || '',
           'x-telegram-photo-url': photoUrl || '',
           'x-telegram-first-name': firstName || '',
-        },
+        }),
       });
       const data = await res.json();
       if (res.status === 401 || data.need_telegram) {
@@ -323,10 +366,12 @@ export default function App() {
     const poll = async () => {
       try {
         const res = await fetch('/api/me', {
-          headers: {
-            'x-telegram-init-data': initData,
+          // 🔴 `sessiya` ham yuborilishi SHART — brauzerda
+          // poller har 8 sekundda 401 olardi va to'lov hech qachon
+          // avtomatik yangishmasdi.
+          headers: tgHeadersGet({
             'x-telegram-user-id': user?.id?.toString() || '',
-          },
+          }),
         });
         const data = await res.json();
         if (!alive || !data.ok) return;
@@ -379,56 +424,134 @@ export default function App() {
     showToast(msg);
   };
 
-  // 🔴 Telegram orqali KIRISH KERAK (401)
-  // Telegram ichida ochilganda `initData` bo'ladi va server imzosini
-  // tekshiradi. Brauzerda ochilganda imzo yo'q — avvalgi kabi "ADMIN
-  // sifatida" ochilmas, balki bu ekran chiqadi.
+  // 🔐 KIRISH EKRANI
+  // 🔴 Telegram ICHIDA ochilganda — `initData` avtomatik keladi,
+  //     server imzosini tekshiradi va bu ekran umuman chiqMAYDI
+  //     («Telegram orqali kiring» deb so'ramaymiz).
+  // 📖 BRAUZERDA ochilganda — `initData` yo'q. Endi mijoz
+  //     «Login via Telegram» tugmasini bosadi (Telegram'ning rasmiy
+  //     Login Widget) va o'z Telegram profil bilan ro'yxatdan
+  //     o'tadi. Keyinchalik sessiya `localStorage` da saqlanadi.
   if (needTelegram) {
     return (
       <div
-        className={`${theme} min-h-screen flex flex-col items-center justify-center text-center p-8 relative overflow-hidden ${
+        className={`${theme} min-h-screen flex flex-col items-center justify-center text-center p-6 sm:p-8 relative overflow-hidden ${
           isDark ? 'bg-[#000000] text-white' : 'bg-[#f2f2f7] text-neutral-900'
         }`}
       >
         <div className="aurora-blob aurora-1 -top-24 -left-20 w-96 h-96" />
         <div className="aurora-blob aurora-2 -bottom-24 -right-20 w-96 h-96" />
         <div className="noise-overlay" />
-        <div className="relative z-10 liquid-glass-card rounded-[36px] p-8 max-w-xs w-full sheet-in">
+
+        <div className="relative z-10 liquid-glass-card rounded-[36px] p-7 sm:p-9 w-full max-w-sm sm:max-w-md sheet-in">
           <div
             className={`w-16 h-16 mx-auto rounded-[22px] liquid-glass-pill flex items-center justify-center mb-5 ${
-              isDark ? 'text-amber-300' : 'text-amber-600'
+              isDark ? 'text-blue-300' : 'text-blue-600'
             }`}
           >
             <ShieldAlert className="w-8 h-8" />
           </div>
-          <h2 className={`text-base font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+
+          <h2 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
             Telegram orqali kiring
           </h2>
-          <p
-            className={`text-[12px] mt-2 leading-relaxed ${
-              isDark ? 'text-neutral-400' : 'text-neutral-500'
-            }`}
-          >
-            Bu ilova Telegram ichida ishlaydi. Botdagi{' '}
-            <b>📱 Web App</b> tugmasidan oching.
-          </p>
-          <a
-            href={BOT_WEBAPP_URL}
-            className="mt-5 block py-3.5 rounded-[20px] text-sm font-bold apple-spring cursor-pointer bg-[var(--accent)] text-white"
-          >
-            Botga o&apos;tish
-          </a>
-          <button
-            onClick={() => {
-              setNeedTelegram(null);
-              window.location.reload();
-            }}
-            className={`mt-2.5 w-full py-2.5 text-[12px] font-semibold apple-spring cursor-pointer ${
-              isDark ? 'text-neutral-400' : 'text-neutral-500'
-            }`}
-          >
-            Qayta urinish
-          </button>
+
+          {inBrowser ? (
+            <>
+              <p
+                className={`text-[12.5px] mt-2.5 leading-relaxed ${
+                  isDark ? 'text-neutral-400' : 'text-neutral-600'
+                }`}
+              >
+                Xizmatlardan foydalanish uchun avval o'z Telegram
+                profilingiz bilan ro'yxatdan o'ting. Ma'lumotlaringiz
+                faqat Telegram orqali tasdiqlanadi va hech qaerda
+                saqlanmaydi.
+              </p>
+
+              {/* 🌐 Telegram'ning rasmiy Login Widget.
+                  Bot nomi kelgandan keyin ko'rsatiladi — aks holda
+                  Telegram bo'sh joy chiqaradi va mijoz "ishlamadi"
+                  deb o'ylaydi. */}
+              <div className="mt-6 min-h-[54px]">
+                {BOT_USERNAME ? (
+                  <TelegramLogin
+                    botUsername={BOT_USERNAME}
+                    isDark={isDark}
+                    onSuccess={() => {
+                      setLoginError(null);
+                      setNeedTelegram(null);
+                      window.location.reload();
+                    }}
+                    onError={(msg) => setLoginError(msg)}
+                  />
+                ) : (
+                  /* 📖 Bot nomi kelmasa mijoz "ishlamadi" deb
+                     o'ylaydi. Shuning uchun:
+                     — 4 sekund kutamiz (server javob bermasligi mumkin)
+                     — keyin aniq xabar + "Botga o'tish" havolasi
+                     — 3 sekunddan keyin «Qayta urinish» */
+                  <BotNameWait isDark={isDark} onRetry={() => {
+                    setBotUsername('');
+                    setNeedTelegram(null);
+                    window.location.reload();
+                  }} />
+                )}
+              </div>
+
+              {loginError && (
+                <p className="mt-3 text-[12px] text-rose-400">{loginError}</p>
+              )}
+
+              <div
+                className={`mt-6 pt-5 border-t ${
+                  isDark ? 'border-white/10' : 'border-black/8'
+                }`}
+              >
+                <p
+                  className={`text-[11.5px] mb-3 ${
+                    isDark ? 'text-neutral-500' : 'text-neutral-500'
+                  }`}
+                >
+                  Yoki Telegram ilovasi orqali oching
+                </p>
+                <a
+                  href={BOT_WEBAPP_URL}
+                  className="block py-3 rounded-[18px] text-[13px] font-bold apple-spring cursor-pointer text-center bg-[var(--accent)] text-white"
+                >
+                  Botga o&apos;tish
+                </a>
+              </div>
+            </>
+          ) : (
+            <>
+              <p
+                className={`text-[12.5px] mt-2.5 leading-relaxed ${
+                  isDark ? 'text-neutral-400' : 'text-neutral-600'
+                }`}
+              >
+                Bu ilova Telegram ichida ishlaydi. Botdagi{' '}
+                <b>📱 Web App</b> tugmasidan oching.
+              </p>
+              <a
+                href={BOT_WEBAPP_URL}
+                className="mt-5 block py-3.5 rounded-[20px] text-sm font-bold apple-spring cursor-pointer text-center bg-[var(--accent)] text-white"
+              >
+                Botga o&apos;tish
+              </a>
+              <button
+                onClick={() => {
+                  setNeedTelegram(null);
+                  window.location.reload();
+                }}
+                className={`mt-2.5 w-full py-2.5 text-[12px] font-semibold apple-spring cursor-pointer ${
+                  isDark ? 'text-neutral-400' : 'text-neutral-600'
+                }`}
+              >
+                Qayta urinish
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -510,11 +633,15 @@ export default function App() {
           onOpenTopup={() => setCurrentTab('topup')}
           onOpenAdmin={isAdmin ? () => setCurrentTab('admin') : undefined}
           isAdmin={isAdmin}
+          isDesktop={isDesktop}
         />
       </ErrorBoundary>
 
       {/* Main View Area */}
-      <main className="flex-1 max-w-md w-full mx-auto px-4 pt-3.5 relative z-10">
+      <main className={
+        `flex-1 max-w-md md:max-w-none w-full mx-auto px-4 md:px-6 xl:px-10 pt-3.5 relative z-10 `
+        + `${isDesktop ? 'md:pl-[124px]' : ''}`
+      }>
         <ErrorBoundary label="Bosh sahifa">
         {currentTab === 'home' && (
           <HomeView
@@ -605,7 +732,7 @@ export default function App() {
 
         {/* 6. SECRET ADMIN VIEW (ONLY FOR USER 8307046273) */}
         {currentTab === 'admin' && isAdmin && (
-          <div className="space-y-4 pb-28 apple-view-animate">
+          <div className="space-y-4 pb-28 md:pb-10 apple-view-animate">
             <button
               onClick={() => setCurrentTab('profile')}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full liquid-glass-pill text-xs font-semibold apple-spring cursor-pointer"
@@ -635,6 +762,7 @@ export default function App() {
         }}
         lang={lang}
         isDark={isDark}
+        isDesktop={isDesktop}
       />
     </div>
   );

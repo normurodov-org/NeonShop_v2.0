@@ -3617,6 +3617,14 @@ async def star_order_worker() -> None:
 #   3) `/admin → ⭐ Bajarilmagan Stars` — «↻ Qayta urinish» va
 #      «↩️ Qaytarish» (balansga qaytariladi)
 
+# 🔴 `STAR_ORDER_LOCK` — bitta Stars buyurtmasini IKKALA
+#   yo'l (admin tugmasi va avtomatik worker) bir vaqtda ishga
+#   tushmasligi uchun. `NFT_ACTION_LOCK` kabi, ammo alohida.
+#   Aks holda `process_star_order` ikki marta ishlaydi va Fragment'da
+#   IKKALA marta xarid qilinadi — mijoz ikki marta Stars oladi,
+#   do'kon ikki marta pul sarflaydi.
+STAR_ORDER_LOCK = asyncio.Lock()
+
 STAR_MAX_ATTEMPTS = 3
 # 🔴 KALITLAR TOR TUTILADI — bu atama "pulsiz holat" degani
 #    IKKALA YO'L ham bo'lishi mumkin:
@@ -3726,14 +3734,47 @@ async def adm_star_retry(call: CallbackQuery):
     if not order or order.get("kind") != "stars":
         await call.answer("Buyurtma topilmadi.", show_alert=True)
         return
-    # 🔴 Avtomatik qayta urish blokini O'CHAMIZ: aks holda
-    #    worker ham, admin ham bir vaqtda ishlaydi — buyurtma ikki marta
-    #    Fragment'da xarid qilinadi va mijoz IKKALA marta Stars oladi.
-    order["auto_processed"] = False
-    order["star_attempts"] = 0
-    order["status"] = "processing"
-    order.pop("manual_pending", None)
-    db.save()
+
+    # 🔴🔴 QAYTARILGAN BUYURTMANI QAYTA ISHLAMASLIK.
+    # Eski kodda hech qanday holat tekshiruvi yo'q edi: ro'yxatdagi
+    # eski tugma bosilsa, `awaiting_payout` yoki allaqachon
+    # `refunded` bo'lgan buyurtma ham yana `processing` ga tushar,
+    # Fragment'da QAYTA xarid qilinardi va mijoz refund ham, Stars
+    # ham olardi — ya'ni do'kon ikki marta zarar ko'rardi.
+    if order.get("refunded"):
+        await call.answer("❌ Bu buyurtma allaqachon qaytarilgan.", show_alert=True)
+        return
+    # 🔴 MUHIM: `auto_processed` False bo'lgan zahoti
+    # `star_order_worker` (har 4 sekundda) ham shu buyurtmani oladi va
+    # `process_star_order` yana yana ishga tushadi — ya'ni admin
+    # tugmasi va worker BIR VAQTDA ishlab, Fragment'da IKKALA marta
+    # xarid qiladi. Endi lock bilan BIRINCHI ishlaydi, ikkinchisi
+    # kutadi.
+    async with STAR_ORDER_LOCK:
+        # lock ichida qayta o'qiymiz — boshqa task o'zgartirgan bo'lishi mumkin
+        db.reload_if_changed()
+        order = (db.data.get("orders") or {}).get(oid)
+        if not order or order.get("kind") != "stars":
+            await call.answer("Buyurtma topilmadi.", show_alert=True)
+            return
+        if order.get("refunded"):
+            await call.answer("❌ Bu buyurtma allaqachon qaytarilgan.",
+                              show_alert=True)
+            return
+        if order.get("status") not in ("manual_pending", "unknown", "failed"):
+            await call.answer(
+                "Bu buyurtma allaqachon ishlab bo'ldi — "
+                f"holati: {order.get('status')}", show_alert=True)
+            return
+
+        order["star_attempts"] = 0
+        order["status"] = "processing"
+        # 🔴 `auto_processed` ga tegilmaydi: u `True` bo'lib qoladi va
+        #    worker uni qayta olmaydi (aks holda juft xarid).
+        order["manual_retried_at"] = now_iso()
+        order["manual_retried_by"] = call.from_user.id
+        db.save()
+
     target = int(order.get("chat_id") or order["user_id"])
     await call.answer("🔄 Qayta urinish boshlandi", show_alert=True)
     asyncio.create_task(process_star_order(oid, target))
@@ -4049,6 +4090,35 @@ async def on_successful_payment(message: Message, state: FSMContext, db_user: di
 #   3) Admin to'laydi va tasdiqlaydi -> ✅ To'landi  (Stars qaytarilmaydi)
 #   4) Admin rad etsa             -> ❌ Bekor (Stars QAYTARILADI refund)
 
+async def _notify_bad_session(why: str) -> None:
+    """SESSION_STRING noto'g'ri ekanini adminga xabar beradi.
+
+    🔴 BU FUNKSIYA YO'Q EDI — lekin `maybe_start_userbot()` uni
+    chaqirardi. `NameError` butun worker blokini abort qilardi
+    (batafsil: `maybe_start_userbot` ichidagi izoh).
+
+    Qo'shimcha: barcha ishga tushiruvchilar ham shu sababdan
+    ISHLAMASDI — ya'ni noto'g'ri session bilan do'kon butunlay
+    qo'lda qolardi.
+    """
+    head = (why or "").strip().splitlines()
+    reason = head[0] if head else "noma'lum"
+    try:
+        await notify_admins(
+            "🚨 <b>SESSION_STRING noto'g'ri — avtomatik funksiyalar ISHLAMAYDI</b>\n\n"
+            f"🔧 Sabab: <code>{esc(reason[:220])}</code>\n\n"
+            "🚫 Bu holatda:\n"
+            "  • Stars/Stars sotish — qo'lda (Fragment orqali)\n"
+            "  • Giftlar — yuborilmaydi\n"
+            "  • Avto to'ldirish (HUMO) — ishlamaydi\n"
+            "  • NFT xabari menedjerga — yuborilmaydi\n\n"
+            "<b>🔧 Tuzatish:</b> Railway → Variables → SESSION_STRING\n"
+            "ni to'g'ri qiymat bilan almashtiring, so'ng botni qayta ishga tushiring."
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Session xabari yuborilmadi: %s", exc)
+
+
 def card_mask(card: str) -> str:
     c = re.sub(r"\D", "", str(card or ""))
     return (c[:4] + " **** **** " + c[-4:]) if len(c) >= 8 else ("*" * len(c))
@@ -4105,12 +4175,14 @@ async def adm_sell_card(message: Message, state: FSMContext, db_user: dict):
     )
 
 
-@admin_router.callback_query(F.data == "adm:sales")
-async def adm_sales(call: CallbackQuery):
-    """To'lanish kutilayotgan Stars savdolar."""
-    if not await _admin_guard(call):
-        return
-    await call.answer()
+async def _render_sales(message: Message) -> None:
+    """To'lanuvchi savdolar ro'yxatini chizadi — `call.answer()` ICHIDA EMAS.
+
+    📖 Nima uchun ajratdik: aks holda har bir amal tugmasi
+    o'z handler'ida ham, shu ro'yxatni qayta chizadigan funksiyada ham
+    `call.answer()` chaqirardi — ikkinchisi `query ID is invalid`
+    beradi va Telegram javobni ko'rsatmaydi.
+    """
     db.reload_if_changed()
     pend = sorted(
         (s for s in (db.data.get("sales") or {}).values()
@@ -4118,7 +4190,7 @@ async def adm_sales(call: CallbackQuery):
         key=lambda s: s.get("created_at") or "",
     )
     if not pend:
-        await call.message.answer(
+        await message.answer(
             "💸 <b>To'lanuvchi savdolar yo'q</b>\n\n"
             "<i>Mijozlar «💸 Stars sotish» orqali Stars yuborganda "
             "shu yerda paydo bo'ladi.</i>",
@@ -4152,10 +4224,19 @@ async def adm_sales(call: CallbackQuery):
                 text="🔍 Eslatish", callback_data=f"adm:sale_nudge:{s.get('id')}"))
         buttons.append(row)
     buttons.append([InlineKeyboardButton(text="⬅️ Admin", callback_data="adm:home")])
-    await call.message.answer(
+    await message.answer(
         "\n".join(lines),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),  # type: ignore[arg-type]
     )
+
+
+@admin_router.callback_query(F.data == "adm:sales")
+async def adm_sales(call: CallbackQuery):
+    """To'lanish kutilayotgan Stars savdolar."""
+    if not await _admin_guard(call):
+        return
+    await call.answer()
+    await _render_sales(call.message)
 
 
 @admin_router.callback_query(F.data.startswith("adm:sale_ok:"))
@@ -4186,7 +4267,8 @@ async def adm_sale_ok(call: CallbackQuery):
         except Exception as exc:  # noqa: BLE001
             log.warning("Savdo xabari yuborilmadi: %s", exc)
     await call.answer("✅ To'landi", show_alert=True)
-    await adm_sales(call)
+    # 📖 `call.answer()` allaqachon yuqorida chaqirilgan
+    await _render_sales(call.message)
 
 
 @admin_router.callback_query(F.data.startswith("adm:sale_refund:"))
@@ -4201,37 +4283,74 @@ async def adm_sale_refund(call: CallbackQuery):
         await call.answer("Faqat to'lash kutilayotgan savdo refund qilinadi.",
                           show_alert=True)
         return
+    # 🔴🔴 TARTIB MUHIM: avval Telegram refund qilinardi,
+    # keyin holat yozilardi. Eski kodda HOLAT AVVAL saqlanardi
+    # (`db.save()`), Telegram chaqiruvi KEYIN edi. Agar Telegram
+    # rad etsa (tarmoq, 24 soatlik cheklov, noto'g'ri charge_id):
+    #   * savdo `refunded` deb QOLIB KETARDI
+    #   * mijozga na Stars, na UZS berildi
+    #   * `status != "awaiting_payout"` tekshiruvi butun rad etishni
+    #     TAQIQLAB qo'yardi — ya'ni qayta urish ham mumkin emas edi
+    #   * admin esa hech qanday ogohlantirish olmaydi (faqat log,
+    #     va log'da `pass` bilan yutilgan xato)
+    # Endi: Telegram MUAFFAQIYATLI bo'lgach holat yoziladi.
+    u = db.get_user(num(sale.get("user_id")))
+    if not u:
+        await call.answer("Mijoz bazada topilmadi — refund qilinmadi.",
+                          show_alert=True)
+        return
+    try:
+        await bot.refund_star_payment(
+            user_id=u["id"],
+            telegram_payment_charge_id=str(sale.get("charge_id") or ""),
+        )
+    except Exception as exc:  # noqa: BLE001
+        # 🔴 Holat O'ZGARMAYDI — savdo `awaiting_payout` da qoladi
+        # va admin qayta urishi mumkin. Bundan tashqari ADMINGA ham
+        # xabar boradi (avval faqat mijozga borardi).
+        log.error("Stars refund qilinmadi (%s): %s", sale.get("id"), exc)
+        await notify_admins(
+            "🚨 <b>Stars refund QILINMADI</b>\n\n"
+            f"🆔 Savdo: <code>{esc(str(sale.get('id')))}</code>\n"
+            f"👤 Mijoz: <b>@{esc(str(u.get('username') or u.get('id')))}</b>\n"
+            f"💰 Summa: <b>{fmt(num(sale.get('uzs')))} UZS</b>\n"
+            f"🔎 Sabab: <code>{esc(str(exc)[:200])}</code>\n\n"
+            "<i>Savdo «to'lash kutilmoqda» holatida qoldi — "
+            "qayta urishingiz mumkin. Mijozga UZS to'lab qo'ying "
+            "(Stars qaytarilmagan).</i>"
+        )
+        try:
+            await bot.send_message(
+                u["id"],
+                "⚠️ <b>Stars qaytarilmadi</b>\n\n"
+                "Admin bilan bog'laning — summa qaytarilishi uchun "
+                "qo'llab-quvvatlash kerak.",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        await call.answer("❌ Telegram refund qilinmadi — holat saqlanib qoldi",
+                          show_alert=True)
+        await _render_sales(call.message)
+        return
+
+    # Telegram MUAFFAQIYATLI — endi holatni yozamiz
     sale["status"] = "refunded"
     sale["refunded_at"] = now_iso()
     sale["refunded_by"] = call.from_user.id
     db.save()
-    u = db.get_user(num(sale.get("user_id")))
-    if u:
-        try:
-            await bot.refund_star_payment(
-                user_id=u["id"], telegram_payment_charge_id=str(sale.get("charge_id"))
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Stars refund qilinmadi: %s", exc)
-            try:
-                await bot.send_message(
-                    u["id"],
-                    "⚠️ <b>Stars qaytarilmadi</b>\n\n"
-                    "Admin bilan bog'laning — summa qaytarilishi uchun "
-                    "qo'llab-quvvatlash kerak.",
-                )
-            except Exception:  # noqa: BLE001
-                pass
-        else:
-            try:
-                await bot.send_message(
-                    u["id"],
-                    "↩️ <b>To'lash bekor qilindi</b> — Stars qaytarildi.",
-                )
-            except Exception:  # noqa: BLE001
-                pass
+    try:
+        await bot.send_message(
+            u["id"],
+            "↩️ <b>To'lash bekor qilindi</b> — Stars qaytarildi.",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    # 🔴 `call.answer()` BITTA MARTA: avval bu yerda ham, keyin
+    # `adm_sales()` ichida ham chaqirilardi. Ikkinchisi Telegram'da
+    # `query ID is invalid` xatosi beradi va ko'pincha javob
+    # KO'RSATILMAYDI — ya'ni admin tugma bosganini bilmaydi.
     await call.answer("↩️ Refund qilindi", show_alert=True)
-    await adm_sales(call)
+    await _render_sales(call.message)
 
 
 @admin_router.callback_query(F.data.startswith("adm:sale_nudge:"))
@@ -4636,16 +4755,6 @@ def _extract_card(text: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-async def notify_admins(text: str) -> None:
-    if bot is None:
-        return
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, text)
-        except Exception:  # noqa: BLE001
-            pass
-
-
 async def on_humo_message(client: UserbotClient, message) -> None:
     try:
         text = message.text or ""
@@ -4673,12 +4782,22 @@ async def on_humo_message(client: UserbotClient, message) -> None:
             return
         amount, card = parsed
         msg_id = f"{message.chat.id}_{message.id}"
+
+        # 🔴🔴 TARTIB: `reload_if_changed()` `self.data = fresh`
+        # qilib, butun KONTEYNERNI ALMASHTIRADI. Eski kodda belgi
+        # `reload` dan OLDIN append qilindi → keyin reload kelganda u
+        # YO'QOLARDI va hech qachon saqlanmasdi. Natijada Telegram
+        # qayta yuborgan xabar (odatiy hodisa) BOSHQA TO'LOV
+        # sifatida qayta ishlab, balansni IKKINCHI MARTA to'ldirardi.
+        now = now_ms()
+        # WebApp'dan yaratilgan to'lovlar ham ko'rinishi uchun bazani
+        # yangilaymiz — LEKIN avval belgini tekshiramiz (chunki reload
+        # undan keyin keladi).
+        db.reload_if_changed()
+
         if msg_id in db.data["processed_bank_msgs"]:
             return
         db.data["processed_bank_msgs"].append(msg_id)
-        now = now_ms()
-        # WebApp'dan yaratilgan to'lovlar ham ko'rinishi uchun bazani yangilaymiz
-        db.reload_if_changed()
 
         # Muddati o'tgan so'rovlarni tozalaymiz.
         # DIQQAT: expires_at BIRLIGI — millisekund (server.ts bilan bir xil).
@@ -4758,6 +4877,24 @@ async def on_humo_message(client: UserbotClient, message) -> None:
                 if partial:
                     note += f" (qisman: so'ralgan {fmt(t['requested_amount'])} so'm)"
                 db.add_history(u, "topup", credit, note)
+
+                # 🔴🔴 PUL SAQLANADIGAN JOY — MIJOZ XABARIGA
+                # QADAM. Eski kodda `await bot.send_message(...)` (tarmoq
+                # chaqiruvi, 100-500 ms) `db.save()` dan OLDIN kelardi.
+                # Shu orada `reload_if_changed()` ishlasa (server.ts yoki
+                # boshqa worker yozsa), `self.data` butunlay
+                # ALMASHTIRILARDI va bizning xotiradagi balans
+                # o'zgarishi YO'QOLARDI. Natijada: mijoz kartaga pul
+                # yuboradi, biz "to'ldirildi" deb xabar yuboramiz,
+                # lekin balans BASEGA YOZILMAYDI — ya'ni **mijozning
+                # puli yo'qoladi** va tarixda iz ham qolmaydi.
+                db.data["settings"]["total_volume_uzs"] = (
+                    int(db.data["settings"].get("total_volume_uzs", 0))
+                    + int(t["amount"])
+                )
+                db.save()
+                balance_now = int(u.get("balance", 0))
+
                 try:
                     if partial:
                         txt = (
@@ -4766,19 +4903,22 @@ async def on_humo_message(client: UserbotClient, message) -> None:
                             f"ℹ️ Siz so'rovingizni <b>{fmt(t['requested_amount'])} so'm</b> qilib "
                             f"yaratgan edingiz, lekin <b>{fmt(credit)} so'm</b> yubordingiz — "
                             f"kelgan summa qo'shildi.\n"
-                            f"💰 Balans: <b>{fmt(u['balance'])} so'm</b>"
+                            f"💰 Balans: <b>{fmt(balance_now)} so'm</b>"
                         )
                     else:
                         txt = (
                             f"✅ <b>{fmt(credit)} UZS</b> balansingizga qo'shildi!\n\n"
                             f"💳 To'lov avtomatik aniqlanildi.\n"
-                            f"💰 Balans: <b>{fmt(u['balance'])} so'm</b>"
+                            f"💰 Balans: <b>{fmt(balance_now)} so'm</b>"
                         )
                     await bot.send_message(u["id"], txt)
                 except Exception:  # noqa: BLE001
                     pass
-            db.data["settings"]["total_volume_uzs"] = int(db.data["settings"].get("total_volume_uzs", 0)) + t["amount"]
-            db.save()
+            # 🔴 `db.save()` yuqoridagi `if u:` blokida ALMASHGAN
+            # qilindi. Bu yerda faqat `u` topilmagan holat uchun kerak
+            # (topup yopilishi ham saqlanishi SHART).
+            if not u:
+                db.save()
             await notify_admins(
                 f"💰 <b>To'lov avtomatik tasdiqlandi!</b>\n\n"
                 f"👤 User: <code>{t['user_id']}</code>\n"
@@ -5405,8 +5545,46 @@ SESSION_ERROR_HELP: dict[str, str] = {
 }
 
 
+# 🔴🔴 `_UB_STARTING` — `ub.start()` tugashidan oldingi
+#   oyna. Shu oynada global `userbot` hali ESKI qiymatda (yoki `None`),
+#   ya'ni `if userbot is not None: return` himoyasi ISHLAMAYDI.
+#   `userbot_supervisor` har 60 sekundda `maybe_start_userbot()` ni
+#   chaqiradi va `userbot is None` bo'lsa (birinchi ulash tugallangan
+#   paytgacha) YANA `_start()` yaratardi — ya'ni bir akkauntda IKKITA
+#   pyrofork Client. Telegram birini darhol bekor qiladi
+#   (`AUTH_KEY_DUPLICATE`) va gift yuborish ham, avto to'ldirish ham
+#   doimiy "ulandi → uzildi" holatida tepalaydi.
+_UB_STARTING = False
+# Oxirgi urinish vaqti (monotonic) — supervisor ichki tsiklda
+# chaqirilmasligi uchun qo'yma himoya.
+_UB_LAST_ATTEMPT = 0.0
+
+
 def maybe_start_userbot() -> None:
-    global userbot
+    global userbot, _UB_STARTING, _UB_LAST_ATTEMPT
+
+    # 🔴 QO'LADIM HIMOYASI 1: allaqachon ulangan bo'lsa — qayta
+    #    urinishning o'zi zarar: eski auth key bekor qilinadi.
+    if userbot is not None and getattr(userbot, "is_connected", False):
+        _UB_STARTING = False
+        return
+
+    # 🔴 QO'LADIM HIMOYASI 2: `start()` hali tugamagan.
+    if _UB_STARTING:
+        log.debug("Userbot allaqachon ulanmoqda — takroriy urinish bekor")
+        _UB_STARTING = False
+        return
+
+    # 🔴 QO'LADIM HIMOYASI 3: supervisor ichki tsiklda
+    #    chaqirsa, 10 sekiyada bir marta — rate limit va "ikkita
+    #    client" xavfsizligi uchun.
+    now_m = time.monotonic()
+    if now_m - _UB_LAST_ATTEMPT < 10.0:
+        _UB_STARTING = False
+        return
+    _UB_LAST_ATTEMPT = now_m
+    _UB_STARTING = True
+
     missing = []
     # QAYTA QATIK: avval bazadagi (eng yangi) session, keyin Railway ENV.
     # Sabab: telefon/QR orqali ulangan yangi session bazada saqlanadi va
@@ -5428,6 +5606,7 @@ def maybe_start_userbot() -> None:
             ", ".join(missing),
         )
         set_runtime_status(userbot="missing_env", missing=missing)
+        _UB_STARTING = False
         return
 
     # Session formatini oldindan tekshiramiz — Pyrofork ichidagi
@@ -5437,10 +5616,25 @@ def maybe_start_userbot() -> None:
     if not bank_valid:
         log.error("SESSION_STRING noto'g'ri: %s", bank_why.splitlines()[0])
         set_runtime_status(userbot="invalid_session", userbot_error=bank_why[:300])
+        # 🔴🔴 `_notify_bad_session` butun faylda YO'Q EDI — bu
+        # chaqiruv `NameError` berardi. `except RuntimeError` esa
+        # `NameError` ni USHLAMAYDI, u `main()` dagi keng `try:` gacha
+        # ko'tarilib, `for label, coro in (...)` blokidan OLDIN
+        # abort qilardi — ya'ni **HECH BIR WORKER ISHLAMASDI**:
+        # Stars yetkazish, gift yuborish, NFT xabari, heartbeat,
+        # supervisor. Ya'ni noto'g'ri SESSION_STRING butun do'konni
+        # qo'lda qoldirardi.
+        # Yechim: xabar yuborishi `except Exception` bilan himoyalangan
+        # (u hech qachon boshqa xatoni yopib qo'ymasdi) va o'z-o'zidan
+        # chaqiriladi (loop yo'q bo'lsa shunchaki o'tadi).
         try:
-            asyncio.get_running_loop().create_task(_notify_bad_session(bank_why))
+            asyncio.get_running_loop().create_task(
+                _notify_bad_session(bank_why))
         except RuntimeError:
             pass  # loop yo'q (import payti) — xabarsiz o'tamiz
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Session xabarini yuborib bo'lmadi: %s", exc)
+        _UB_STARTING = False
         return
 
     async def _start() -> None:
@@ -5542,7 +5736,17 @@ def maybe_start_userbot() -> None:
                 + tail
             )
 
-    asyncio.create_task(_start())
+    # 🔶 `finally` bilan: `_start()` qanday tugasa ham
+    # (muvaffaqiyat, xato, bekor qilish) `_UB_STARTING` tushadi.
+    # Aks holda flag `True` qolib, userbot BUTUNLAY qayta ulana olmasdi.
+    async def _start_guarded() -> None:
+        global _UB_STARTING
+        try:
+            await _start()
+        finally:
+            _UB_STARTING = False
+
+    asyncio.create_task(_start_guarded())
 
 
 async def userbot_supervisor() -> None:
@@ -5608,7 +5812,10 @@ async def userbot_supervisor() -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("userbot_supervisor xato: %s", exc)
 
-    asyncio.create_task(_start())
+    # 📖 O'LIK QATORNI O'CHIRDIK: avval shu yerda ham
+    # `asyncio.create_task(_start())` bor edi, lekin `_start` bu
+    # funksiyaning scope ida YO'Q (u `maybe_start_userbot` ichidagi
+    # closure). Agar bu qator reachable bo'lsa `NameError` berardi.
 
 
 def order_is_anonymous(order: dict) -> bool:
@@ -6038,6 +6245,17 @@ def stuck_gift_orders(older_than_days: Optional[float] = None) -> list[dict]:
     now = datetime.now(TZ)
     for o in db.data.get("orders", {}).values():
         if o.get("kind") != "gift" or o.get("gift_sent") or o.get("gift_cancelled"):
+            continue
+        # 🔴🔴 HAZIR YUBORILAYOTGAN GIFT'NI QAYTARIB BO'LMAYDI.
+        # `process_gift_orders()` yuborish paytida `gift_processing = True`
+        # qo'yadi va oxirida `False` qiladi. Eski ro'yxat bu belgini
+        # tekshirmasdi — ya'ni admin «🔴 Bekor qilish» bosgan
+        # buyurtma shu zahoti yuborilishi mumkin, keyin QAYTARILARDI:
+        # mijoz ham gift'ni oladi, ham UZS'ni qaytadi.
+        # (Bu `NFT_ACTION_LOCK` bilan emas, balki belgi bilan hal qilinadi
+        # — yuborish boshlangandan keyin bekor qilish o'rniga "kutish"
+        # ko'rsatiladi.)
+        if o.get("gift_processing"):
             continue
         if older_than_days is not None:
             raw = str(o.get("created_at") or o.get("date") or "")
@@ -6620,7 +6838,16 @@ async def adm_nft_photo_ask(call: CallbackQuery, state: FSMContext):
     nid = call.data.split(":", 2)[2]
     n = db.data.get("nfts", {}).get(nid)
     if not n:
-        await call.message.answer("❌ NFT topilmadi.")
+        # 🔴 `call.answer()` BU YERDA YO'Q EDI — faqat oxirida
+        # chaqirilardi va bu `return` undan oldin bajarilardi. Natija:
+        # admin tugma bosadi va tugma 🔄 (spinner) holatida
+        # CHEKSIZ qoladi — "ishlamadi" taassuroti. Telegram 3-5
+        # sekunddan keyin "query is too old" deydi.
+        await call.answer("❌ NFT topilmadi", show_alert=True)
+        await call.message.answer(
+            "🔴 NFT topilmadi — ro'yxatda o'zgargan bo'lishi mumkin.\n"
+            "<i>🔄 Qayta ochish uchun: /admin → 🏥 NFT ro'yxati</i>"
+        )
         return
     await state.set_state(NftStates.photo)
     await state.update_data(nft_id=nid)
@@ -7255,7 +7482,16 @@ async def adm_nft_toggle(call: CallbackQuery):
     nid = call.data.split(":", 2)[2]
     n = db.data.get("nfts", {}).get(nid)
     if not n:
-        await call.message.answer("❌ NFT topilmadi.")
+        # 🔴 `call.answer()` BU YERDA YO'Q EDI — faqat funksiya
+        # oxirida chaqirilardi va bu `return` undan oldin bajarilardi.
+        # Natija: admin tugma bosadi va tugma 🔄 (spinner) holatida
+        # CHEKSIZ qoladi — "ishlamadi" taassuroti (Telegram 3-5 sekunddan
+        # keyin "query is too old" deydi).
+        await call.answer("❌ NFT topilmadi", show_alert=True)
+        await call.message.answer(
+            "🔴 NFT topilmadi — ro'yxatda o'zgargan bo'lishi mumkin.\n"
+            "<i>🔄 Qayta ochish uchun: /admin → 🏥 NFT ro'yxati</i>"
+        )
         return
     n["active"] = not n.get("active", True)
     db.save()
@@ -8005,7 +8241,19 @@ async def adm_ub_qr(call: CallbackQuery, state: FSMContext):
     try:
         client = UserbotClient(
             "qr_login", api_id=API_ID, api_hash=API_HASH,
-            in_memory=True, no_updates=True,
+            in_memory=True,
+            # 🔴🔴 `no_updates=True` OLIB TASHLANDI.
+            # Pyrofork'da bu kanal va `add_handler` orqali keladigan
+            # update'larni umuman YO'Q qiladi. Ya'ni login'dan keyin
+            # `ub_finish_login` qo'shgan
+            #   * `on_humo_message`      -> AVTO TO'LDIRISH ishlamasdi
+            #   * `ub_cb_nft_action`     -> NFT tugmalari ishlamasdi
+            # Ikkalasi ham har qanday qayta login'dan keyin DOIMIY
+            # o'lik bo'lib qolardi.
+            # Login oynasi davomida `add_handler` hech narsa
+            # qo'shmaydi (u faqat `ub_finish_login` da chaqiriladi),
+            # shuning uchun `no_updates` bu yerda kerak emas.
+            no_updates=False,
         )
         await client.connect()
 
@@ -8154,17 +8402,62 @@ async def ub_finish_login(client, admin_msg: Message, state: FSMContext) -> None
     except Exception:  # noqa: BLE001
         who = "noma'lum"
 
+    # 🔴 ESKI CLIENTNI TO'XTATISH XATOSI YUTILMASIN.
+    # `pass` bilan yutilsa, TELEGRAM BIR AKKAUNTDA IKKITA AUTH KEY
+    # ko'radi va birini darhol bekor qiladi (`AUTH_KEY_DUPLICATE`)
+    # — gift yuborish va avto to'ldirish doim "ulandi → uzildi"
+    # holatida tepalashdi.
+    old_stopped = True
     if userbot is not None and userbot is not client:
         try:
             await userbot.stop()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            old_stopped = False
+            log.error("Eski userbot to'xtatilmadi: %s", exc)
     userbot = client
     await client.add_handler(
         UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
     )
+    # 🔴🔴 `UbCallbackQueryHandler(ub_cb_nft_action)` QO'SHILMAGAN
+    # EDI. Uni faqat `maybe_start_userbot()` qo'shadi (SESSION_STRING orqali
+    # avtomatik ulanganda). Telefon/QR bilan QO'LDA ulanganda — ya'ni
+    # bizning asosiy yo'limiz — NFT rent xabaridagi «✅ Bajarildi» /
+    # «❌ Bekor qilish» tugmalari MENEJERGA ISHLAMASDI: handler
+    # umuman yo'q edi.
+    # (`no_updates=True` ham tuzatildi — aks holda bu handler qo'shilgani
+    # ham, `on_humo_message` ham ishlamay qolardi.)
+    try:
+        await client.add_handler(UbCallbackQueryHandler(ub_cb_nft_action))
+    except Exception as exc:  # noqa: BLE001
+        log.error("NFT callback handler ulanmadi: %s", exc)
+
     asyncio.create_task(ub_idle())
     set_runtime_status(userbot="connected", account=who, chat=str(TOPUP_SOURCE_CHAT))
+
+    # 🔶 LOGINDAN KEYIN TIKLASH BOSQICHLARI.
+    # `maybe_start_userbot()` ulanganidan keyin shularni ishga tushiradi,
+    # lekin `ub_finish_login()` — alohida, parallel yo'l — ULAMAGAN
+    # edi. Farq: qo'lda ulangan akkauntda `gave_up` deb belgilangan NFT
+    # xabarlari va noto'g'ri "muvaffaqiyatsiz" deb yopilgan gift'lar
+    # abadi o'lik holda qolardi.
+    #
+    # 📖 IKKALASI HAM `def` (sinxron), `async def` EMAS —
+    # `asyncio.create_task()` bilan chaqirilsa `ValueError` berardi.
+    try:
+        n_nft = unblock_pending_nft_notifications()
+        n_gift = recover_stuck_gifts()
+        if n_nft or n_gift:
+            log.info("🔄 Qayta tiklash: %d NFT xabari, %d gift",
+                     n_nft, n_gift)
+            await notify_admins(
+                "🔄 <b>Qayta tiklandi</b>\n\n"
+                f"📦 NFT xabarlari: <b>{n_nft}</b> ta\n"
+                f"🎁 Gift buyurtmalari: <b>{n_gift}</b> ta\n\n"
+                "<i>Bular userbot ulanishidan oldin bekor qilingan edi — "
+                "endi avtomatik qayta uriniladi.</i>"
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Tiklash bosqichi xatosi: %s", exc)
 
     # Sessionni AVTOMATIK bazaga saqlaymiz — Railway ENV kerak emas.
     # Baza saqlanadigan papkada (/data) turgani uchun redeploy'da ham
@@ -8230,7 +8523,12 @@ async def adm_ub_phone_wait(message: Message, state: FSMContext):
     try:
         client = UserbotClient(
             "phone_login", api_id=API_ID, api_hash=API_HASH,
-            in_memory=True, no_updates=True,
+            in_memory=True,
+            # 🔴🔴 `no_updates=True` OLIB TASHLANDI — QR login bilan
+            # bir xil sabab: `on_humo_message` (bank kuzatuvi) va
+            # `ub_cb_nft_action` (NFT tugmalari) handler'lari hech qachon
+            # chaqirilmasdi. Batafsil QR login izohida.
+            no_updates=False,
         )
         await client.connect()
         sent = await client.send_code(phone)
@@ -8866,6 +9164,20 @@ async def main() -> None:
             return
 
         BOT_USERNAME = me.username or ""
+        # 🔗 BOT NOMINI BAZAGA YOZAMIZ.
+        # WebApp brauzerda Telegram Login Widget yuklaydi va u bot NOMINI
+        # talab qiladi. Server `getMe` orqali o'zi aniqlaydi, lekin
+        # (a) tarmoq uzilsa, (b) BOT_TOKEN vaqtincha nosoz bo'lsa —
+        # bo'sh qoladi va mijoz "Login" tugmasini umuman ko'rmaydi.
+        # Bot esa o'z nomini ALMASHTA allaqachon bilsa — eng ishonchli
+        # manba shu.
+        try:
+            if BOT_USERNAME:
+                db.data.setdefault("settings", {})["bot_username"] = BOT_USERNAME
+                db.save()
+                log.info("🔗 Bot nomi bazaga yozildi: @%s", BOT_USERNAME)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Bot nomini bazaga yozib bo'lmadi: %s", exc)
         try:
             await bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(text="Web App ❐", web_app=WebAppInfo(url=WEBAPP_URL))

@@ -48,7 +48,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   return (
-    <div className="space-y-4 max-w-md mx-auto pb-28 apple-view-animate">
+    <div className="space-y-4 max-w-md md:max-w-none md:px-6 xl:px-10 mx-auto pb-28 md:pb-10 apple-view-animate">
       {showRefScreen ? (
         <div className="space-y-4">
           <button
@@ -70,7 +70,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               Do'stlaringizni taklif qiling va har bir do'stingiz uchun <b>1 ⭐ Stars</b> oling!
             </p>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 xl:gap-3">
               <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
                 <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>Referallar</span>
                 <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
@@ -215,7 +215,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       <div className="rounded-[26px] liquid-glass-card p-4 space-y-2.5">
         <h3 className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-neutral-900'}`}>{t.purchaseStats}</h3>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 xl:gap-3">
           <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
             <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{t.spent}</span>
             <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>

@@ -58,8 +58,14 @@ def check(cond, msg):
 print("=" * 70)
 print("1) KARTADA apple-view-animate YO'Q (flicker manbai)")
 print("=" * 70)
-card = VIEW[VIEW.index("<div className=\"grid grid-cols-2 gap-3\">"):
-            VIEW.index("<NftImage")]
+# 📖 GRID SINFI O'ZGARDI (responsive): endi
+#    `grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4`.
+#    Aniq matnni qidirish testni har layout o'zgarishida sindiradi —
+#    endi `grid` boshlanishini olamiz.
+_grid_marker = '<div className="grid grid-cols-2'
+card = VIEW[VIEW.index(_grid_marker):VIEW.index("<NftImage")]
+check("2xl:grid-cols-5" in card,
+      "📖 karta grid'i responsive (telefon 2 / planshet 4 / katta 5 ustun)")
 check("nft-card-in" in card, "karta `nft-card-in` sinfini ishlatadi")
 check("apple-view-animate" not in card,
       "kartada `apple-view-animate` YO'Q (blur(8px) manbai olib tashlandi)")

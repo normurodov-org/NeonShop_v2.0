@@ -2,18 +2,20 @@
  * 🔐 Telegram API so'rovlari uchun yagona yordamchi.
  *
  * NIMA UCHUN?
- * Server foydalanuvchi id'sini FAQAT `X-Telegram-Init-Data`
- * (Telegram tomonidan imzolangan satr) dan oladi va uni BOT_TOKEN
- * bilan tekshiradi. Boshqa manbalar (`x-telegram-user-id`, `?uid=`)
- * ishonchsiz.
+ * Server foydalanuvchi id'sini faqat ISHONCHLI manbadan oladi:
+ *   1) `X-Telegram-Init-Data` — Telegram WebApp imzosi
+ *      (bot ichida ochilganda: `t.me/bot/app`)
+ *   2) `X-Session-Token` — Telegram Login Widget orqali berilgan
+ *      sessiya (BRAUZERDA ochilganda)
+ * Boshqa manbalar (`x-telegram-user-id`, `?uid=`) ishonchsiz.
  *
  * 🔴 Ilgari har bir komponent `x-telegram-user-id` yuborardi yoki
  * umuman yubormardi. Natijada:
  *   • yubormagan so'rovlar -> server ADMIN sifatida ishlardi
  *   • "O'zimga", "To'ldirish", "Reyting" va h.k. noto'g'ri ishlar edi
  *
- * Endi barcha so'rovlar shu yordamchidan o'tadi — imzo har doim
- * birga yuboriladi va hech qayerda yo'qolmaydi.
+ * Endi barcha so'rovlar shu yordamchidan o'tadi — imzo/sessiya har
+ * doim birga yuboriladi va hech qayerda yo'qolmaydi.
  */
 
 let cachedInitData: string = '';
@@ -33,19 +35,49 @@ export function telegramInitData(): string {
   return cachedInitData;
 }
 
-/** Faqat `initData` header'li to'liq header'lar. */
-export function tgHeaders(extra?: Record<string, string>): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    'X-Telegram-Init-Data': telegramInitData(),
-    ...(extra || {}),
-  };
+// ---------------------------------------------------------------------------
+// 🖥 BRAZER UCHUN SESSIYA (Telegram Login Widget)
+// ---------------------------------------------------------------------------
+const SESSION_KEY = 'neon_session_token';
+
+/** Ilova Telegram ichida ochilganmi? (brauzerda emas) */
+export function isInsideTelegram(): boolean {
+  try {
+    const w = window as any;
+    return Boolean(w?.Telegram?.WebApp?.initData || w?.Telegram?.WebApp?.initDataUnsafe?.user);
+  } catch {
+    return false;
+  }
 }
 
-/** GET uchun (Content-Type kerak emas). */
+export function sessionToken(): string {
+  try {
+    return window.localStorage.getItem(SESSION_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setSessionToken(token: string): void {
+  try {
+    if (token) window.localStorage.setItem(SESSION_KEY, token);
+    else window.localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* private mode — sessiya saqlanmaydi */
+  }
+}
+
+/** Faqat `initData` + sessiya header'lar (GET uchun). */
 export function tgHeadersGet(extra?: Record<string, string>): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     'X-Telegram-Init-Data': telegramInitData(),
-    ...(extra || {}),
   };
+  const t = sessionToken();
+  if (t) headers['X-Session-Token'] = t;
+  return { ...headers, ...(extra || {}) };
+}
+
+/** `tgHeadersGet` + JSON `Content-Type` (POST/PUT uchun). */
+export function tgHeaders(extra?: Record<string, string>): Record<string, string> {
+  return { 'Content-Type': 'application/json', ...tgHeadersGet(extra) };
 }

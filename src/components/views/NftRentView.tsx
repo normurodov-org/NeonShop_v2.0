@@ -513,7 +513,11 @@ export const NftRentView: React.FC<NftProps> = ({
          : 'bg-black/[0.04] text-neutral-700 border border-black/[0.06]'}`;
 
   return (
-    <div className="space-y-4">
+    /* 🖥️ Website: planshet/kompyuterda TO'LIQ EKRAN.
+       Telefonda «max-w-md» (448px) saqlanadi — o'zgarish yo'q.
+       md = 768px (planshet ham kirdi), lg emas — aks holda 1000px
+       kenglikdagi planshet telefon ko'rinishida qolardi. */
+    <div className="space-y-4 max-w-md md:max-w-none lg:px-6 xl:px-10 mx-auto pb-28 md:pb-10">
       {/* Tabs */}
       <div
         className={`flex items-center gap-1.5 p-1.5 rounded-[22px] liquid-glass overflow-x-auto ${
@@ -709,7 +713,7 @@ export const NftRentView: React.FC<NftProps> = ({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5 gap-3">
               {shown.map((n, idx) => (
                 <button
                   key={n.id}
@@ -785,7 +789,7 @@ export const NftRentView: React.FC<NftProps> = ({
       <Modal open={!!sel} onClose={() => setSel(null)} align="bottom" label="NFT ijarasi">
         {sel && (
           <div
-            className={`relative w-full sm:max-w-md rounded-t-[32px] sm:rounded-[32px]
+            className={`relative w-full sm:max-w-md md:max-w-4xl rounded-t-[32px] sm:rounded-[32px]
                         liquid-glass-card p-5 space-y-4 overflow-y-auto sheet-in
                         max-h-[calc(100dvh-1.5rem)] sm:max-h-[88vh]
                         pb-[max(1.25rem,env(safe-area-inset-bottom))]`}

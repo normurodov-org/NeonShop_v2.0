@@ -90,7 +90,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
   }, [user?.id, timeFilter]);
 
   return (
-    <div className="space-y-4 max-w-md mx-auto pb-28 apple-view-animate">
+    <div className="space-y-4 max-w-md md:max-w-none md:px-6 xl:px-10 mx-auto pb-28 md:pb-10 apple-view-animate">
       {/* Header */}
       <div>
         <h2 className={`text-xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>{t.ranking}</h2>

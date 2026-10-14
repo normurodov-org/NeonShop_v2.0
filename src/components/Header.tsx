@@ -4,6 +4,8 @@ import { Lang } from '../i18n';
 import { ShieldCheck, Plus, Settings, Globe, Sun, Moon } from 'lucide-react';
 
 interface HeaderProps {
+  /** `window.innerWidth >= 768` — sarlavhani chap menyudan o'ngga surish */
+  isDesktop?: boolean;
   user: User | null;
   settings: StoreSettings | null;
   lang: Lang;
@@ -25,6 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenTopup,
   onOpenAdmin,
   isAdmin,
+  isDesktop = false,
 }) => {
   const [avatarError, setAvatarError] = React.useState(false);
 
@@ -47,7 +50,12 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-30 px-4 pt-3 pb-2.5 backdrop-blur-2xl border-b transition-colors duration-300 border-white/[0.08]">
-      <div className="max-w-md mx-auto flex items-center justify-between gap-2.5">
+      <div className={
+        `max-w-md md:max-w-none md:px-6 xl:px-10 mx-auto flex items-center justify-between gap-2.5 `
+        // 🔶 Desktopda chap menyu paneli bor — sarlavha ham
+        //    o'ngga siljishi kerak, aks holda menyu ustiga tushadi.
+        + (isDesktop ? 'md:pl-[124px]' : '')
+      }>
         {/* User Avatar + Greeting */}
         <div className="flex items-center gap-2.5">
           <div className="relative">

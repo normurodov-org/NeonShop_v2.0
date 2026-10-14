@@ -187,7 +187,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
   };
 
   return (
-    <div className="space-y-4 max-w-md mx-auto pb-28 apple-view-animate">
+    <div className="space-y-4 max-w-md md:max-w-3xl md:px-6 mx-auto pb-28 md:pb-10 apple-view-animate">
       {/* Header bar */}
       <div className="flex items-center justify-between">
         <div>

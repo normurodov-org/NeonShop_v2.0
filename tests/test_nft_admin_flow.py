@@ -116,10 +116,20 @@ check("_nft_list_kb()" in tog, "ro'yxat QAYTA chiziladi")
 check("edit_text(" in tog, "inline xabar tahrirlanadi")
 check("await call.answer(" in tog, "tugma holati bildiriladi (toast)")
 check("Ochildi" in tog and "Yopildi" in tog, "natija aniq")
-# call.answer() tugmadan KEYIN bo'lishi SHART (Telegram "query too old")
+# 📖 `call.answer()` MUHIM qatorda EDIT dan KEYIN bo'lishi SHART
+#    (Telegram "query too old" deydi).
+# 🔴 DIQQAT: funksiyada IKKITA `await call.answer(` bor:
+#    1) xato yo'li (NFT topilmadi) — u `edit_text` dan OLDIN
+#    2) muvaffaqiyat yo'li — u `edit_text` dan KEYIN bo'lishi SHART
+#    `index()` birinchisini topar edi, shuning uchun `edit_text` dan
+#    KEYINGISINI qidiramiz.
 i_edit = tog.index("edit_text(")
-i_ans = tog.index("await call.answer(")
-check(i_ans > i_edit, "call.answer() oxirida (Telegram 'query too old' xavfi yo'q)")
+check("await call.answer(" in tog[i_edit:],
+      "call.answer() muvaffaqiyat yo'lida EDIT dan KEYIN "
+      "(Telegram 'query too old' xavfi yo'q)")
+_err = tog.split("if not n:")[1][:400] if "if not n:" in tog else ""
+check("await call.answer(" in _err and "show_alert=True" in _err,
+      "🔴 xato yo'lida ham call.answer() bor (spinner cheksiz qolmasin)")
 
 print()
 print("=" * 70)

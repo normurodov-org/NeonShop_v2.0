@@ -79,8 +79,16 @@ section("2) 🔴 QO'LDA QAYTA URISH — ikki marta xarid bo'lmasin")
 check("async def adm_star_retry(" in CODE, "admin «Qayta urinish» handler")
 rt = CODE[CODE.index("async def adm_star_retry("):
           CODE.index('@admin_router.callback_query(F.data.startswith("adm:star_refund:")')]
-check('order["auto_processed"] = False' in rt,
-      "🔴 avtomatik qayta urish bloklanadi (worker bilan BIRGA ishlamasin)")
+# 📖 IZOH: eski test `auto_processed = False` ni talab qilgan edi —
+# lekin bu ZARarli edi: `star_order_worker` shu belgi bilan buyurtmani
+# qayta olardi va admin tugmasi bilan BIRGA ishlar, Fragment'da IKKALA
+# marta xarid qilinardi. Endi `auto_processed` TEGILMAYDI, balki
+# `STAR_ORDER_LOCK` bilan birinchi ishlaydi.
+check('async with STAR_ORDER_LOCK:' in rt,
+      "🔴 lock bilan: worker va admin bir vaqtda ishlamaydi")
+check('STAR_ORDER_LOCK = asyncio.Lock()' in CODE, "lock yaratilgan")
+check('order["auto_processed"] = False' not in rt,
+      "📖 `auto_processed` tegilmaydi (eski xato yo'q)")
 check('order["star_attempts"] = 0' in rt, "urinishlar nolga qaytariladi")
 check('order["status"] = "processing"' in rt, "holat -> processing")
 check("asyncio.create_task(process_star_order(oid, target))" in rt,

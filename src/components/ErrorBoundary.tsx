@@ -34,7 +34,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (!this.state.error) return this.props.children;
 
     return (
-      <div className="max-w-md mx-auto mt-6 p-5 rounded-[26px] bg-[#12151d] border border-white/10
+      <div className="max-w-md md:max-w-4xl mx-auto mt-6 p-5 rounded-[26px] bg-[#12151d] border border-white/10
                     text-center space-y-3 shadow-xl">
         <div className="text-3xl">😕</div>
         <h3 className="text-sm font-bold text-white">

@@ -496,6 +496,171 @@ function contestIsActive(c: any): boolean {
  * Telegram dan tashqarida ochilgan har bir WebApp'ni ADMIN qilib
  * qo'yardi (profil, 357 813 UZS balans, AdminPanel). Endi — 401.
  */
+// =============================================================================
+// TELEGRAM LOGIN WIDGET — brauzerda (sayt orqali) kirish
+// =============================================================================
+// 📐 NIMA UCHUN?
+// WebApp ichida (`t.me/bot/app`) Telegram `initData` imzosini beradi —
+// server uni BOT_TOKEN bilan tekshiradi. Lekin mijoz saytni
+// BRAUZERDA (kompyuter/planshet) ochsa `initData` BO'LMAYDI:
+// ilova «Telegram orqali kiring» ekranida qolardi va hech qanday
+// xizmat ishlamasdi.
+//
+// Yechim — Telegram'ning rasmiy **Login Widget**'i:
+//   `https://telegram.org/js/telegram-widget.js`
+// Bu brauzerda `my.telegram.org` orqali Telegram'ning O'Z OAuth
+// oynasini ochadi va imzolangan ma'lumotni qaytaradi. Imzo
+// WebApp'dan FARQ qilib SHA256 kalit bilan tekshiriladi:
+//
+//   secret = SHA256(bot_token)          <- WebApp'da HMAC("WebAppData")
+//   hash   = HMAC_SHA256(data_check_string, secret)
+//
+// Ikki xil kalit — ikkalasi ham Telegram rasmiy hujjatida shunday.
+//
+// 📔 SESSIYA: tekshirilgan foydalanuvchiga token beriladi va
+// frontend uni `localStorage` da saqlab, har bir so'rovda
+// `X-Session-Token` header orqali yuboradi.
+// =============================================================================
+
+/** Login Widget ma'lumotini BOT_TOKEN bilan tekshiradi. */
+export function verifyTelegramLoginWidget(data: string): { ok: boolean; user?: any; why?: string } {
+  if (!data || !data.trim()) return { ok: false, why: "bo'sh" };
+  const token = (process.env.BOT_TOKEN || "").trim();
+  if (!token) return { ok: false, why: "BOT_TOKEN ENV yo'q" };
+
+  const fields = parseInitData(data);
+  const hash = fields.hash;
+  if (!hash) return { ok: false, why: "hash yo'q" };
+
+  const pairs: string[] = [];
+  for (const k of Object.keys(fields).sort()) {
+    if (k === "hash") continue;
+    pairs.push(`${k}=${fields[k]}`);
+  }
+  const dataCheckString = pairs.join("\n");
+
+  // 🔴 Login Widget kaliti: SHA256(bot_token) — WebApp'dagi
+  //    HMAC(bot_token, "WebAppData") dan FARQ qiladi.
+  const secret = crypto.createHash("sha256").update(token, "utf8").digest();
+  const expected = crypto.createHmac("sha256", secret)
+    .update(dataCheckString, "utf8").digest("hex");
+
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(hash, "utf8");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, why: "imzo mos emas" };
+  }
+
+  const authDate = Number(fields.auth_date || 0);
+  const maxAge = Number(process.env.WEBAPP_AUTH_MAX_AGE || 86400);
+  if (authDate && Date.now() / 1000 - authDate > maxAge) {
+    return { ok: false, why: "kirish eskirgan (1 kundan ko'p)" };
+  }
+
+  const id = Number(fields.id || 0);
+  if (!id || id <= 0) return { ok: false, why: "id yo'q" };
+
+  return {
+    ok: true,
+    user: {
+      id,
+      username: String(fields.username || "").replace(/^@/, ""),
+      first_name: fields.first_name || "",
+      last_name: fields.last_name || "",
+      photo_url: fields.photo_url || undefined,
+    },
+  };
+}
+
+/** `X-Session-Token` → foydalanuvchi (brauzer uchun). */
+function sessionUser(req: Request): any | null {
+  const token =
+    (req.headers["x-session-token"] as string) ||
+    (req.headers["authorization"] as string)?.replace(/^Bearer\s+/i, "") ||
+    "";
+  if (!token) return null;
+  const sessions: any = (store.settings as any).__sessions || {};
+  const rec = sessions[token];
+  if (!rec) return null;
+  // 🔴 Muddati o'tgan sessiya — tozalanadi
+  if (rec.expires_at && Date.parse(rec.expires_at) < Date.now()) {
+    delete sessions[token];
+    return null;
+  }
+  const user = store.users.get(Number(rec.user_id));
+  if (!user) return null;
+  return user;
+}
+
+/**
+ * 🔐 `POST /api/auth/telegram` — brauzerda Telegram orqali kirish.
+ *
+ * Telegram Login Widget imzosini tekshiradi, foydalanuvchini bazaga
+ * yozadi (yoki yangilaydi) va uzoq muddatli token qaytaradi.
+ */
+app.post("/api/auth/telegram", (req: Request, res: Response) => {
+  const v = verifyTelegramLoginWidget(String(req.body?.data || ""));
+  if (!v.ok || !v.user) {
+    return res.status(401).json({ ok: false, error: `Tasdiqlash muvaffaqiyatsiz: ${v.why}` });
+  }
+
+  // 🔄 Profilni yangilaymiz (username/rasm o'zgargan bo'lishi mumkin)
+  try {
+    loadDatabase();
+  } catch { /* bo'sh */ }
+  const uid = Number(v.user.id);
+  const existing = store.users.get(uid);
+  if (existing) {
+    if (v.user.username) existing.username = v.user.username;
+    if (v.user.first_name) existing.first_name = v.user.first_name;
+    if (v.user.photo_url) existing.photo_url = v.user.photo_url;
+  } else {
+    store.users.set(uid, {
+      id: uid,
+      username: v.user.username || "",
+      first_name: v.user.first_name || undefined,
+      photo_url: v.user.photo_url,
+      balance: 0,
+      total_spent: 0,
+      referrals_count: 0,
+      ref_stars: 0,
+      banned: false,
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  const token = crypto.randomBytes(24).toString("hex");
+  const days = Number(process.env.SESSION_DAYS || 30);
+  const settings: any = store.settings;
+  settings.__sessions = settings.__sessions || {};
+  settings.__sessions[token] = {
+    user_id: uid,
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + days * 86400000).toISOString(),
+    via: "login_widget",
+  };
+
+  // 🧹 Eskirgan sessiyalarni tozalaymiz
+  const nowMs = Date.now();
+  for (const [t, r] of Object.entries(settings.__sessions) as [string, any][]) {
+    if (r?.expires_at && Date.parse(r.expires_at) < nowMs) delete settings.__sessions[t];
+  }
+  syncAndSaveDb();
+
+  res.json({ ok: true, token, days, user: store.users.get(uid) });
+});
+
+/** `POST /api/auth/logout` — sessiyani o'chirish. */
+app.post("/api/auth/logout", (req: Request, res: Response) => {
+  const token = (req.headers["x-session-token"] as string) || "";
+  const settings: any = store.settings;
+  if (token && settings.__sessions) {
+    delete settings.__sessions[token];
+    syncAndSaveDb();
+  }
+  res.json({ ok: true });
+});
+
 function requireIdentity(req: Request): { user: any } | null {
   const initData = (req.headers['x-telegram-init-data'] as string) || '';
   if (initData) {
@@ -503,6 +668,12 @@ function requireIdentity(req: Request): { user: any } | null {
     if (v.ok && v.user) return { user: v.user };
     return null;   // imzo mos emas -> rad
   }
+
+  // 🔶 BRAUZER UCHUN: Telegram Login Widget orqali olingan sessiya.
+  //    Telegram ichida `initData` bo'ladi — bu yo'l faqat saytni
+  //    brauzerda ochganda ishlaydi.
+  const sess = sessionUser(req);
+  if (sess) return { user: sess };
   if (String(process.env.ALLOW_UNSIGNED_USER || '') === '1') {
     const raw = (req.headers['x-telegram-user-id'] as string) || '';
     const id = parseInt(raw, 10);
@@ -1603,6 +1774,82 @@ function adminHandle(): string {
   if (fromUser) return fromUser;
   return 'normuzb';
 }
+
+// =============================================================================
+// 🔗 BOT NOMI — runtime'da aniqlanadi
+// =============================================================================
+// 📐 NIMA UCHUN?
+// Telegram Login Widget bot NOMINI talab qiladi
+// (`data-telegram-login="..."`). Vite build vaqtidagi
+// `VITE_BOT_USERNAME` ga bog'liq qilsak, Railway ENV build paytida
+// berilmasa ilova noto'g'ri nom bilan chiqadi — va hech kim
+// ro'yxatdan o'ta olmaydi.
+//
+// Yechim: server `BOT_TOKEN` orqali Telegram API ga `getMe` so'rovi
+// yuborib nomni o'zi aniqlaydi (javob 1 soatga keshlanadi).
+// =============================================================================
+
+let botUsernameCache: { value: string; at: number } | null = null;
+
+async function resolveBotUsername(): Promise<string> {
+  // 1) kesh (1 soat)
+  if (botUsernameCache && Date.now() - botUsernameCache.at < 3_600_000
+      && botUsernameCache.value) {
+    return botUsernameCache.value;
+  }
+  // 2) aniq ENV (qo'lda berilgan bo'lsa)
+  const fromEnv = (process.env.BOT_USERNAME || '').trim().replace(/^@/, '');
+  if (fromEnv) {
+    botUsernameCache = { value: fromEnv, at: Date.now() };
+    return fromEnv;
+  }
+  // 3) 🔗 BAZADAN — bot.py o'z nomini `getMe` orqali olib
+  //    yozadi (`settings.bot_username`). Bu eng ishonchli manba:
+  //    nom allaqachon tekshirilgan va bot ishga tushganda mavjud bo'ladi.
+  //    Aks holda mijoz Login Widget tugmasini umuman KO'RMASDI.
+  const fromDb = String(
+    (store.settings as any)?.bot_username || ""
+  ).trim().replace(/^@/, "");
+  if (fromDb) {
+    botUsernameCache = { value: fromDb, at: Date.now() };
+    return fromDb;
+  }
+  // 4) Telegram API — `getMe`
+  const token = (process.env.BOT_TOKEN || '').trim();
+  if (token) {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      const j: any = await r.json();
+      const uname = String(j?.result?.username || '').replace(/^@/, '');
+      if (j?.ok && uname) {
+        botUsernameCache = { value: uname, at: Date.now() };
+        return uname;
+      }
+    } catch {
+      /* tarmoq yo'q — quyidagiga qaytamiz */
+    }
+  }
+  return "";
+}
+
+/**
+ * 🔗 Ommaviy sozlama — Telegram ichida ham, brauzerda ham
+ * kerak (Login Widget bot nomini oladi).
+ */
+app.get("/api/config", async (_req: Request, res: Response) => {
+  try {
+    const username = await resolveBotUsername();
+    res.json({
+      ok: true,
+      bot_username: username,
+      support_username: (process.env.SUPPORT_USERNAME || "").replace(/^@/, ""),
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String((e as Error)?.message || e) });
+  }
+});
 
 /**
  * NFT ijaraga olish buyurtmasi.

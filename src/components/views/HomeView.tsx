@@ -41,7 +41,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   };
 
   return (
-    <div className="space-y-4 max-w-md mx-auto pb-28">
+    <div className="space-y-4 max-w-md md:max-w-none md:px-6 xl:px-10 mx-auto pb-28 md:pb-10">
       {/* 1. Ultra-Minimalist Apple VisionOS Liquid Glass Hero Banner */}
       <div
         ref={heroRef}
@@ -95,8 +95,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </button>
       </div>
 
-      {/* 2. Apple Minimalist Liquid Glass Service Cards */}
-      <div className="space-y-2.5">
+      {/* 2. Apple Minimalist Liquid Glass Service Cards
+
+          🌐 DESKTOP: 2 ustun. Telefonda pastda ketma-ket
+          (hozirgi ko'rinish saqlanadi). Bitta ustunda 4 ta karta
+          ekranning yarmini band qilardi — kompyuterda bu
+          "телефон ko'rinishi" bo'lib qolardi. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5 xl:gap-4">
         {/* Telegram Stars Card */}
         <div
           onClick={() => onGoToBuy('stars')}
