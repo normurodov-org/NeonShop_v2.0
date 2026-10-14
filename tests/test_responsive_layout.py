@@ -38,6 +38,7 @@ TOPUP = read("src/components/views/TopupView.tsx")
 PROF = read("src/components/views/ProfileView.tsx")
 RANK = read("src/components/views/RankingView.tsx")
 LOGIN = read("src/components/TelegramLogin.tsx")
+LOGIN_CODE = strip_code(LOGIN)
 AUTH = read("src/lib/tgAuth.ts")
 
 ok = True
@@ -106,8 +107,24 @@ section("5) \U0001F4F1 TELEFON KO\u0027RINISHI O\u0027ZGARMAGAN")
 for name, src in (("App", APP), ("Bosh sahifa", HOME), ("Xarid", BUY),
                   ("To\u0027ldirish", TOPUP), ("Profil", PROF), ("NFT", NFT)):
     check("max-w-md" in src, f"{name}: `max-w-md` (telefon) saqlangan")
-check("fixed bottom-4 left-4 right-4" in NAV,
-      "\U0001F4F1 pastki panel saqlangan")
+# 🔴🔴 AVVAL: tashqi `fixed bottom-4 …` + ichki `<nav>` ham
+#    `fixed-pos` (position:fixed). Telegram WebView da ichki `fixed`
+#    panelni ekran pastidan «kesib» qo'yardi — mijoz rasmida shu.
+# ✅ ENDI: tashqi div — faqat JOY (inset + safe-area), ichki nav —
+#    `relative` + `mx-auto` (markazlangan).
+check("fixed bottom-0 left-0 right-0" in NAV,
+      "📱 panel joyi `fixed inset-x-0 bottom-0`")
+check("env(safe-area-inset-bottom)" in NAV,
+      "📱 iPhone/Home indicator ostida ham toʸgʸri")
+check("relative liquid-glass-nav mx-auto max-w-md" in NAV,
+      "📱📱 ichki panel `relative` + markazlangan")
+# 📜 FAQAT telefon qismi (desktop rail da `fixed-pos` toʸgʸri —
+#    u yerda `fixed` qaytarish SHART)
+_phone = NAV[NAV.index('TELEFON'):] if 'TELEFON' in NAV else NAV
+check("fixed-pos liquid-glass-nav" not in _phone,
+      "🔴 telefon panelida `fixed-pos` YOʸQ")
+check("fixed-pos" in NAV[:NAV.index('TELEFON')] if 'TELEFON' in NAV else True,
+      "📜 desktop rail da `fixed-pos` bor (u yerda SHART)")
 check("md:pb-10" in APP, "pastda bo'sh joy faqat telefonda (desktopda lopol emas)")
 
 # =============================================================================
@@ -135,27 +152,22 @@ section("7) 🔐 📖 WEBSITE KIRISH — Telegram rasmiy OAuth")
 #   tasdiqlagach `return_to#tgAuthResult=...` ga qaytaradi, qaytishni
 #   TUGINKI o'zimiz qaytaramiz.
 check("telegramAuthUrl" in LOGIN, "🌐 rasmiy OAuth URL quruvchisi")
-# 📖 Telegram 🌟️ YANGI OYNADA ochiladi.
-#    🔴 sababi: `location.href = oauth...` bilan ASL TAB Telegram'ga
-#    ketar, mijoz esa telefon/SMS orqali qaytishi kerak bo'lardi —
-#    tab «yopilib qaytmay qolgan» degan taassurot paydo bo'lardi.
-check("window.open(" in LOGIN, "📖 Telegram YANGI OYNADA ochiladi")
-check("width=560,height=640" in LOGIN, "📖 oyna o'lchami beriladi")
-check("pollRef" in LOGIN and "setInterval" in LOGIN,
-      "📖 asl tab localStorage ni kutib turadi")
-check("sessionToken()" in LOGIN, "📖 oyna yopilgani ham tekshiriladi")
-check("window.close()" in LOGIN, "📖 qaytgan oyna o'zini yopadi")
-check("window.location.href = url" in LOGIN,
-      "📖 popup bloklansa — asl tabga qaytish (zaxira)")
-check("bot_id:" in LOGIN, "🔒 `bot_id` — raqamli id (nomi emas)")
-check("readTelegramAuthResult" in LOGIN, "📖 qaytishni o'zimiz o'qitamiz")
-check("parts.join('&')" in LOGIN,
-      "🔴🔴 QUERY STRING yig'iladi (server `parseInitData` kutadi)")
-check("setSessionToken" in LOGIN, "sessiya saqlanadi")
-check("addEventListener('message'" in LOGIN,
-      "📖 Telegram skriptining `postMessage` orqali zaxira yo'l")
-check("data-testid=\"tg-login\"" in LOGIN, "📖 tugma testlanadi")
+check("https://oauth.telegram.org/auth?" in LOGIN, "🔴🔴 RASMIY manzil")
+# 🔴 Ikkinchi tab umuman ochilmaydi
+check("window.open(" not in LOGIN_CODE,
+      "🔴🔴 `window.open` KODDA YOʸQ (tab ochilib yopilmasin)")
+check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
+      "📖 asl tab oʸzi Telegramʼaga boradi")
+check("?tg=1" in LOGIN, "📖 `return_to` da `?tg=1` marker")
+check("cameBack" in LOGIN, "📖 «qaytib keldi» aniqlanadi")
+check("Telegram tasdiqlamadi" in LOGIN,
+      "🔴🔴 tasdiqlamasa xabar beriladi")
+check("readTelegramAuthResult" in LOGIN, "📖 qaytishni oʸzimiz oʸqitamiz")
+check("parts.join('&')" in LOGIN, "🔴🔴 QUERY STRING (server kutadi)")
+check("M9.78 18.65" in LOGIN, "📖 rasmiy Telegram icon")
+check('data-testid="tg-login"' in LOGIN, "📖 tugma testlanadi")
 
+check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
 check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
 check("inBrowser" in APP, "brauzer alohida ko'rib chiqiladi")
 check("X-Session-Token" in AUTH, "sessiya header'i bor")
@@ -215,10 +227,9 @@ check("href={BOT_WEBAPP_URL}" not in APP and "href=\"https://t.me/" not in APP,
 
 section("9) 🔐 KIRISH TUGMASI VA XATO HOLATLARI")
 # =============================================================================
-check("setBusy(true)" in LOGIN, "📢 qayta yuborish bloklanadi (double-submit)")
-check("setErr(" in LOGIN, "🔔 xato holati bor — jimgina qolmaydi")
-check("unauthorized" in LOGIN, "🔔 Telegram ruxsat bermasa ko'rsatiladi")
-
+check("setBusy(true)" in LOGIN, "📢 qayta yuborish bloklanadi")
+check("setErr(" in LOGIN, "🔔 xato holati bor")
+check('data-testid="tg-login-retry"' in LOGIN, "🔄 xatodan keyin qayta urinish")
 check("bot_username" in read("server.ts"), "server bot nomini qaytaradi")
 
 

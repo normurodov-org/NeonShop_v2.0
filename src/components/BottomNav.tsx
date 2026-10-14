@@ -110,10 +110,22 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // 📱 TELEFON — pastki panel (dizayn o'zgarmadi)
   // =======================================================================
   return (
-    <div className="fixed bottom-4 left-4 right-4 max-w-md mx-auto z-40 pointer-events-none">
+    <div className="fixed bottom-0 left-0 right-0 z-40 pointer-events-none
+                    pb-[max(1rem,env(safe-area-inset-bottom))]">
       {/* 🍎 `liquid-glass-nav` — pastki panel ham funksional qatlam.
-          `fixed-pos` — yuqoridagi sabab bo'yicha. */}
-      <nav className="pointer-events-auto relative liquid-glass-nav fixed-pos rounded-full px-2.5 py-1.5 flex items-center justify-between">
+
+          🔴🔴 AVVALGI BUZILISH: ichki `<nav>` ham `position: fixed`
+          (`fixed-pos`) bo'lib, `top/left` yo'q holatda statik
+          pozitsiyada turar edi. Telegram WebView da bu kombinatsiya
+          panelni ekranning pastidan «kesib» qo'yadi — mijoz rasmidagi
+          holat shu edi.
+
+          ✅ Endi: TASHQI div — faqat JOY (inset, safe-area bilan),
+          ichki nav — oddiy oqim (`relative`) va `mx-auto` bilan
+          markazlangan. Panel hech qachon ekrandan tashqariga
+          chiqmaydi, iPhone/Home indicator ostida ham to'g'ri turadi. */}
+      <nav className="pointer-events-auto relative liquid-glass-nav mx-auto max-w-md
+                      rounded-full px-2.5 py-1.5 flex items-center justify-between">
         {TABS.map(({ id, icon: Icon }) => {
           const active = currentTab === id;
           const isCenter = id === 'buy';
