@@ -37,7 +37,7 @@ BUY = read("src/components/views/BuyView.tsx")
 TOPUP = read("src/components/views/TopupView.tsx")
 PROF = read("src/components/views/ProfileView.tsx")
 RANK = read("src/components/views/RankingView.tsx")
-LOGIN = read("src/components/TelegramLogin.tsx")
+LOGIN = read("src/components/TelegramDeepLogin.tsx")
 AUTH = read("src/lib/tgAuth.ts")
 
 ok = True
@@ -118,14 +118,19 @@ check('aria-label="Asosiy menyu"' in NAV, "\u00abAsosiy menyu\u00bb (kirish uchu
 check("aria-current" in NAV, "faol tab belgilangan")
 
 # =============================================================================
-section("7) \U0001F310 \U0001F4D6 WEBSITE KIRISH — Telegram Login Widget")
+section("7) \U0001F510 \U0001F4D6 WEBSITE KIRISH — DEEP LINK (popup'siz)")
 # =============================================================================
-check("telegram-widget.js" in LOGIN, "Telegram'ning rasmiy skripti")
-check("data-telegram-login" in LOGIN, "bot nomi beriladi")
-check("data-request-access" in LOGIN, "\u00abwrite\u00bb so\u0027ralgan (bot xabar yubora oladi)")
-check("onTelegramAuth" in LOGIN, "Telegram callback'iga ulangan")
-check("/api/auth/telegram" in LOGIN, "serverga imzo yuboriladi")
+# \U0001F534 Eski Telegram Login Widget popup oqimi ISHONCHSIZ bo'lib chiqdi:
+#    /auth/get → {"error":"NOT_AUTHORIZED"} → {event:'unauthorized'}
+#    → ota tomonda `onUnauth && onUnauth()` — bizda `data-onunauth`
+#    YO'Q EDI → hech narsa bo'lmasdi, sahifa o'z-o'zidan qolardi.
+#    Endi popup umuman yo'q: `t.me/<bot>?start=<kod>` orqali.
+check("/api/auth/telegram/start" in LOGIN, "\U0001F310 kod so'raladi (`/start`)")
+check("/api/auth/telegram/status" in LOGIN, "javob kutiladi (`/status`)")
 check("setSessionToken" in LOGIN, "sessiya saqlanadi")
+check("window.open" in LOGIN, "Telegram oynasi ochiladi")
+check("POLL_MS" in LOGIN, "javob muntazam tekshiriladi (polling)")
+check("MAX_WAIT_MS" in LOGIN, "kutish vaqti cheklangan (5 daqiqa)")
 
 check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
 check("inBrowser" in APP, "brauzer alohida ko\u0027rib chiqiladi")
@@ -160,7 +165,7 @@ check("Yoki Telegram ilovasi orqali oching" not in APP,
 check("href={BOT_WEBAPP_URL}" not in APP and "href=\"https://t.me/" not in APP,
       "kirish ekranida bot havolasi yo'q")
 
-section("9) 🌐 WIDGET DOIM CHIQADI (bot nomi bo'sh bo'lsa ham)")
+section("9) 🌐 KIRISH TUGMASI VA XATO HOLATLARI")
 # =============================================================================
 # Mijoz rasmda BO'SH joy ko'rdi — widget chiqmagan edi. Sabab:
 # bot nomi `/api/config` dan keladi; u javob bermasa — bo'sh.
@@ -171,36 +176,15 @@ check("botUsername || BUILD_BOT_USERNAME || FALLBACK_BOT_USERNAME" in APP,
 check("BotNameWait" not in APP,
       "📖 «Bot nomi yuklanmoqda» o'lik ekrani olib tashlandi")
 
-# 🔴 Widget QAYERDA chiqishi SHART: skript konteyner ICHIGA
-#    qo'shiladi, aks holda iframe kartadan TASHQARIDA chiqadi
-#    (mijoz bo'sh joy ko'rdi — bu rasmda bo'lgan muammo).
-check("box.appendChild(s)" in LOGIN,
-      "🔴 skript konteyner ichiga qo'shiladi (iframe kartada chiqadi)")
-check("document.body.appendChild(s)" not in LOGIN,
-      "📖 document.body ga qo'shish yo'q (iframe tashqarida chiqardi)")
-check("2500" in LOGIN, "iframe chiqmasa QAYTA qo'shish (2.5s)")
-check("querySelector('iframe')" in LOGIN,
-      "iframe mavjudligi tekshiriladi")
-
-# 🔴🔴 `data-onauth` — ENG MUHIM QATOR.
-#    Telegram'ning skriptida:
-#        if (el.hasAttribute('data-onauth')) {
-#            onAuthUser = __parseFunction(el.getAttribute('data-onauth'), ['user']);
-#        } else if (el.hasAttribute('data-auth-url')) { ... }
-#        // → data-onauth YO'Q bo'lsa `onAuthUser` = undefined
-#
-#    Natija: tugma bosiladi → popup ochiladi → Telegram ruxsat beradi
-#    → popup YOPILADI → … lekin HECH NARSA chaqirilmaydi.
-#    Mijoz «kirdim» deb o'ylaydi, ammo hech qanday natija bo'lmaydi.
-#
-#    Bu xato «testda ko'rinmadi» chunki test `window.onTelegramAuth`
-#    ni QO'LCHA chaqirdi — real popup oqimi sinov qilinmagan edi.
-check("data-onauth" in LOGIN,
-      "🔴🔴 `data-onauth` atributi bor (callback ISHLAB KETADI)")
-check("s.setAttribute('data-onauth', 'onTelegramAuth')" in LOGIN,
-      "📖 `data-onauth` = global funksiya nomi")
-check("window.onTelegramAuth = async (user: any) => {" in LOGIN,
-      "global `window.onTelegramAuth` mavjud")
+# 🔐 Foydalanuvchi NIMA qilishini ANIQ bilishi SHART — eski yo'lda
+#    hech narsa bo'lmagani uchun mijoz «qandaydir ekran ochildi,
+#    yopildi, lekin kirmadi» deb qoldi (rasmdagi holat).
+check("Start" in LOGIN,
+      "\U0001F510 «Start» tugmasi matnda aytiladi (nima qilish kerak)")
+check("Bekor qilish" in LOGIN, "🔒 Bekor qilish bor (hech qanday oyaga osilmaydi)")
+check("setPhase('failed')" in LOGIN or "'failed'" in LOGIN,
+      "🔔 xato holati bor — jimgina qolmaydi")
+check("Qayta urinish" in LOGIN, "🔄 qayta urinish mumkin")
 
 check("bot_username" in read("server.ts"), "server bot nomini qaytaradi")
 

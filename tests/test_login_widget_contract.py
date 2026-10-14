@@ -1,43 +1,42 @@
-"""RED TELEGRAM WIDGET `data-onauth` KONTRAKTI.
+"""Telegram orqali kirish kontrakti (deep link).
 
-XABAR: «Tugmani bosganimda bir ekran ochiladiyu yopiladi lekin kirmaydi.»
+XABAR: «tugmani bosdim, ekran ochilib 1 soniyada yopildi, lekin kirmadi —
+sahifa o'z-o'zidan qoldi».
 
-RED SABAB — Telegram'ning o'z skriptida (telegram-widget.js):
+SABAB — Telegram'ning eski Login Widget popup oqimi:
 
-    if (widgetEl.hasAttribute('data-onauth')) {
-      onInitAuthUser = onAuthUser =
-        __parseFunction(widgetEl.getAttribute('data-onauth'), ['user']);
-    } else if (widgetEl.hasAttribute('data-auth-url')) {
-      // ...fallback
-    }
-    // data-onauth YO'Q bo'lsa -> onAuthUser = undefined
+    /auth/get javobi -> {"error":"NOT_AUTHORIZED", "origin":"https://..."}
+      -> TWidgetLogin.onAuth(origin, false)
+        -> data = {event: 'unauthorized'}
+          -> PostMessage.send(data, origin)
+            -> ota tomonda: onUnauth && onUnauth()
 
-`__parseFunction(name, ['user'])` quyidagini yig'adi va `eval` qiladi:
+Bizda `data-onunauth` YO'Q EDI — ya'ni hech narsa bo'lmasdi. Shu sababli
+eski yo'l BUTUNLAY olib tashlandi va popup'siz yo'lga o'tildi.
 
-    (function(user){ <name> })(user)
-      -> window.<name>(user)
+YANGI KONTRAKT:
 
-Natija (data-onauth yo'q bo'lganda):
-  tugma bosiladi -> popup ochiladi -> Telegram ruxsat beradi
-  -> popup YOPILADI -> hech narsa chaqirilmaydi -> kirish YO'Q.
+    POST /api/auth/telegram/start -> { code: "web_<48hex>", telegram_url }
+    mijoz `t.me/<bot>?start=<kod>` ni ochadi -> Telegram'da **Start** bosadi
+    bot.py `/start <kod>` -> kodni `*_login_codes.json` ga yozadi
+    GET /api/auth/telegram/status?code=... -> { status: "ok", token }
 
-RED BU XATO TESTDAN O'TIB KETGAN EDI: test `window.onTelegramAuth` ni
-qo'lda chaqirdi (real popup oqimi emas), shuning uchun yoqish
-ko'rinmadi.
-
-Bu test skript haqiqiy mazmunini TEKSHIRADI va atribut mavjudligini
-kafolatlaydi.
+Popup, CORS va third-party cookie umuman yo'q.
 """
 import io
 import os
 import re
-import urllib.request
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from helpers import strip_code  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOGIN = open(os.path.join(ROOT, "src/components/TelegramLogin.tsx"),
-             encoding="utf-8").read()
-WIDGET_JS = "/tmp/tw.js"
-WIDGET_URL = "https://telegram.org/js/telegram-widget.js?23"
+APP = open(os.path.join(ROOT, "src/App.tsx"), encoding="utf-8").read()
+DEEP = open(os.path.join(ROOT, "src/components/TelegramDeepLogin.tsx"),
+            encoding="utf-8").read()
+SERVER = open(os.path.join(ROOT, "server.ts"), encoding="utf-8").read()
+BOT = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
 
 ok = True
 
@@ -55,118 +54,79 @@ def section(t):
     print("=" * 70)
 
 
-def fetch_widget_js():
-    """RED Telegram'ning REAL skriptini yuklab oladi.
-
-    Nima uchun lokal nusxa emas? «Atribut qo'yib qo'ydim» degani
-    yetarli emas — Telegram skripti qaysi atributni qidirishini
-    BIZNING KODIMIZ emas, TUGNING o'z KODI belgilaydi. Shu sabab
-    manbani tekshiramiz.
-
-    Internet yo'q bo'lsa test QAYTMAYDI — chunki boshqa testlar
-    o'z-o'zidan ishlayveradi.
-    """
-    if os.path.exists(WIDGET_JS) and os.path.getsize(WIDGET_JS) > 1000:
-        return io.open(WIDGET_JS, encoding="utf-8", errors="replace").read()
-    # (a) urllib
-    try:
-        with urllib.request.urlopen(WIDGET_URL, timeout=25) as r:
-            raw = r.read()
-        with open(WIDGET_JS, "wb") as f:
-            f.write(raw)
-        return raw.decode("utf-8", errors="replace")
-    except Exception:  # noqa: BLE001
-        pass
-    # (b) curl — ba'zi tarmoqlarda Python SSL sertifikatini tekshira
-    #     olmaydi (korporativ proxy), lekin curl ishlaydi
-    try:
-        import subprocess
-        subprocess.run(["curl", "-s", "--max-time", "25", WIDGET_URL,
-                        "-o", WIDGET_JS],
-                       check=True, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL)
-        if os.path.exists(WIDGET_JS) and os.path.getsize(WIDGET_JS) > 1000:
-            return io.open(WIDGET_JS, encoding="utf-8", errors="replace").read()
-    except Exception:  # noqa: BLE001
-        pass
-    print("  \u26a0\ufe0f Telegram skriptini yuklab bo'lmadi (internet yo'q?)")
-    return ""
-
+# =============================================================================
+section("1) ESKI WIDGET BUTUNLAY OLIB TASHLANDI")
+# =============================================================================
+APP_CODE = strip_code(APP)   # izohlarni olib tashlaydi (helpers.strip_code)
+check("TelegramLogin" not in APP_CODE,
+      "\U0001F534 App.tsx da eski `TelegramLogin` YO'Q (kodda)")
+check("telegram-widget.js" not in APP_CODE,
+      "\U0001F534 eski `telegram-widget.js` skripti ishlatilmaydi")
+check("Botga o'tish" not in APP_CODE,
+      "\U0001F534 «Botga o'tish» tugmasi yo'q (mijoz talabi)")
 
 # =============================================================================
-section("1) RED `data-onauth` — Telegram shu atributga QAT'IY bog'liq")
+section("2) DEEP LINK komponenti")
 # =============================================================================
-check("setAttribute('data-onauth', 'onTelegramAuth')" in LOGIN,
-      "\U0001F534\U0001F534 `data-onauth` = 'onTelegramAuth'")
-check("setAttribute('data-telegram-login', botUsername)" in LOGIN,
-      "`data-telegram-login` = bot nomi")
-check("setAttribute('data-onerror', 'onTelegramLoginError')" in LOGIN,
-      "`data-onerror` = xato uchun")
+check("TelegramDeepLogin" in APP_CODE, "App.tsx da `TelegramDeepLogin` bor")
+check("/api/auth/telegram/start" in DEEP, "kod so'raydi (`/start`)")
+check("/api/auth/telegram/status" in DEEP, "javobni kutadi (`/status`)")
+check("setSessionToken" in DEEP, "sessiya saqlanadi")
+check("window.open" in DEEP, "Telegram oynasi ochiladi")
+check("onSuccess" in DEEP, "muvaffaqiyatda `onSuccess` chaqiriladi")
+check("POLL_MS" in DEEP, "javob muntazam tekshiriladi (polling)")
+check("MAX_WAIT_MS" in DEEP, "kutish vaqti cheklangan (5 daqiqa)")
 
 # =============================================================================
-section("2) Global funksiyalar (skript ularni shu nom bilan izlaydi)")
+section("3) FOYDALANUVCHIGA NIMA QILISHNI AYTADI")
 # =============================================================================
-check("window.onTelegramAuth = async (user: any) => {" in LOGIN,
-      "`window.onTelegramAuth` \u2014 asosiy callback")
-check("window.onTelegramLoginError = (message: string) => {" in LOGIN,
-      "`window.onTelegramLoginError` \u2014 xato callback")
-
-# Funksiya nomi atribut qiymati bilan BIR XIL bo'lishi SHART
-attr = re.search(r"setAttribute\('data-onauth',\s*'([^']+)'\)", LOGIN)
-check(bool(attr), "atribut qiymati topildi")
-if attr:
-    name = attr.group(1)
-    check("window.%s =" % name in LOGIN,
-          "`window.%s` \u2014 atribut bilan bir xil nom" % name)
-    err = re.search(r"setAttribute\('data-onerror',\s*'([^']+)'\)", LOGIN)
-    if err:
-        check("window.%s =" % err.group(1) in LOGIN,
-              "`window.%s` \u2014 xato atributi bilan mos" % err.group(1))
+# Bu eng muhimi: eski yo'lda hech narsa bo'lmasdi — mijoz nima
+# qilishini bilmasdi. Endi aniq ko'rsatiladi.
+check("Start" in DEEP, "\U0001F510 «Start» tugmasi matnda aytiladi")
+check("Bekor qilish" in DEEP, "Bekor qilish bor (u hech qanday oyaga osilmaydi)")
+check("'failed'" in DEEP, "\U0001F514 xato holati bor — jimgina qolmaydi")
+check("Qayta urinish" in DEEP, "\U0001F504 qayta urinish mumkin")
 
 # =============================================================================
-section("3) RED Telegram skripti HAQIQATAN shuni talab qiladi")
+section("4) SERVER endpointlari")
 # =============================================================================
-js = fetch_widget_js()
-if not js:
-    print("  \u26a0\ufe0f Telegram skripti topilmadi \u2014 3-bo'lim o'tkazildi")
-else:
-    check(len(js) > 1000, "Telegram skripti yuklandi (%d bayt)" % len(js))
-    check("data-onauth" in js, "skriptda `data-onauth` so'ralgan")
-    check("__parseFunction" in js, "skript `__parseFunction` ishlatadi")
-    # onAuthUser FAQAT `data-onauth` bor holatda o'rnatiladi
-    m = re.search(
-        r"if\s*\(widgetEl\.hasAttribute\('data-onauth'\)\)[^;]*?"
-        r"onAuthUser\s*=\s*__parseFunction\([^;]*;", js, re.S)
-    check(bool(m),
-          "\U0001F4D6 `data-onauth` -> `onAuthUser` (faqat shu yo'l bilan)")
-    # global izlash
-    check("window.execScript ? window.execScript" in js
-          or "eval(__func)" in js,
-          "global funksiya `eval` orqali topiladi -> `window.onTelegramAuth`")
-    check("data-auth-url" not in LOGIN,
-          "\U0001F4D6 `data-auth-url` ishlatilmaydi (redirect \u2014 ishlamaydi)")
+check("app.post('/api/auth/telegram/start'" in SERVER, "`/start` route mavjud")
+check("app.get('/api/auth/telegram/status'" in SERVER, "`/status` route mavjud")
+check("await resolveBotUsername()" in SERVER,
+      "\U0001F534 `resolveBotUsername` AWAIT qilingan "
+      "(\u201c[object Promise]\u201d bo\u2018lib ketardi)")
+check("/^web_[0-9a-f]{48}$/" in SERVER,
+      "\U0001F512 kod shakli qattiq tekshiriladi (taxmin qilib bo'lmaydi)")
+check("__used_login_codes" in SERVER, "\U0001F512 kod BIR MARTA ishlatiladi")
+check("LOGIN_CODES_FILE" in SERVER, "kodlar alohida fayldan o'qiladi")
+check("store.users = new Map" in SERVER,
+      "\U0001F504 `store.users` fayldan yangilanadi "
+      "(bot.py bir necha soniya oldin yozgan bo'lishi mumkin)")
 
 # =============================================================================
-section("4) INJSIYA \u2014 skript karta ICHIDA bo'lishi SHART")
+section("5) bot.py kodni qabul qiladi")
 # =============================================================================
-# Skript `document.body` ga qo'shilsa, iframe karta tashqarisida
-# chiqib ketadi \u2014 foydalanuvchi uni ko'rmaydi.
-check("box.appendChild(s)" in LOGIN
-      or "boxRef.current.appendChild(s)" in LOGIN,
-      "\U0001F534 skript karta ichiga qo'shiladi (ko'rinadigan joyda)")
-check("document.body.appendChild(s)" not in LOGIN,
-      "\U0001F534 skript `document.body` ga qo'shilmaydi")
+check("def save_web_login_code" in BOT, "`save_web_login_code` bor")
+check("WEB_LOGIN_CODE_RE" in BOT, "kod shakli tekshiriladi")
+check("if WEB_LOGIN_CODE_RE.match(arg):" in BOT, "`/start` da kod ushlanadi")
+check("save_web_login_code(arg, db_user)" in BOT, "kod foydalanuvchiga bog'lanadi")
+check("LOGIN_CODES_PATH" in BOT, "kod fayli alohida (eskirgan nusxa yozmaydi)")
 
 # =============================================================================
-section("5) /api/auth/telegram \u2014 qabul qilinadigan maydon")
+section("6) FAYLLAR: har birining YAGINA yozuvchisi")
 # =============================================================================
-SERVER = open(os.path.join(ROOT, "server.ts"), encoding="utf-8").read()
-check("/api/auth/telegram" in SERVER, "server endpoint mavjud")
-check("verifyTelegramLoginWidget" in SERVER,
-      "\U0001F534 SHA256(bot_token) bilan tekshiriladi "
-      "(initData emas \u2014 turli kalit!)")
-check("initData" in SERVER or "init_data" in SERVER,
-      "WebApp initData alohida tekshiriladi (Telegram ichida)")
+# Muhim: `settings.__sessions` da bo'lganda bot.py har 20 soniyada
+# uni o'chirdi — mijoz «kirdim, lekin asosiy sahifa ochilmayapti»
+# degan edi. Shuning uchun sessiya VA kod alohida fayllarda.
+check(".login_codes.json" in SERVER and ".login_codes.json" in BOT,
+      "login_codes.json fayli ikkala tomon uchun bir xil")
+check(".sessions.json" in SERVER, "sessiya alohida faylda")
+# 📐 FAQAT KOD tekshiriladi (IZOH emas) — aks holda o'z
+#    «`settings.__sessions` da bo'lganda bot.py o'chirardi» izohimiz
+#    testni qizil qilardi.
+SERVER_CODE = re.sub(r"//[^\n]*", "", SERVER)
+check("__sessions" not in SERVER_CODE,
+      "\U0001F534 `settings.__sessions` ISHLATILMAYDI (bot.py o'chirardi)")
 
 print()
 print("=" * 70)

@@ -704,6 +704,141 @@ app.post("/api/auth/telegram", (req: Request, res: Response) => {
   res.json({ ok: true, token, days, user: store.users.get(uid) });
 });
 
+// =============================================================================
+// 🌐 WEB LOGIN — DEEP LINK (Telegram orqali kirish)
+// =============================================================================
+// 🔴 NIMA UCHUN BU QO'SHILDI?
+//    Telegram'ning eski **Login Widget** popup oqimi ishonchsiz:
+//      1. tugma bosiladi → `window.open` popup ochiladi
+//      2. Telegram `/auth` → natija `postMessage` YOKI `/auth/get` XHR orqali
+//      3. natija kelmasa → `{event:'unauthorized'}` → ota tomonda
+//         `onUnauth && onUnauth()` — bizda `data-onunauth` YO'Q edi
+//         → 🔴 HECH NARSA bo'lmaydi, sahifa o'zgarmaydi qoladi
+//    Mijoz xabari: «ekran ochilib 1 soniyada yopiladi, sahifa o'zgarmadi».
+//    `/auth/get` ning javobi (`{"error":"NOT_AUTHORIZED"}`) shuni tasdiqladi.
+//
+// ✅ YECHIM — popup umuman yo'q:
+//    1. server `web_<48hex>` kod beradi
+//    2. brauzer `https://t.me/<bot>?start=<kod>` ni ochadi
+//    3. mijoz Telegram'da **Start** ni bosadi
+//    4. bot.py `/start <kod>` ni oladi va `*_login_codes.json` ga yozadi
+//    5. brauzer `GET /api/auth/telegram/status` bilan kutadi
+//    6. server sessiya yaratadi
+//
+//    Bu yo'l ishonchli: popup yo'q, CORS yo'q, third-party cookie yo'q.
+//    Kompyuterdagi Telegram ham, telefon ham bir xil ishlaydi.
+//
+// 📁 FAYLLAR (har birining YAGINA yozuvchisi bor — chunki avval
+//    `settings.__sessions` da bo'lganda bot.py 20 soniyada o'chirdi):
+//    * `*_login_codes.json`  → YAZADI: bot.py, O'QIYDI: server.ts
+//    * `*_sessions.json`     → YAZADI: server.ts, O'QIYDI: server.ts
+// =============================================================================
+
+const LOGIN_CODES_FILE = DB_FILE.replace(/\.json$/, '') + '.login_codes.json';
+
+/** `code` → `{ user_id, username, first_name, photo_url, at }` (bot.py yozadi) */
+function readLoginCodes(): Record<string, any> {
+  try {
+    if (!fs.existsSync(LOGIN_CODES_FILE)) return {};
+    const parsed = JSON.parse(fs.readFileSync(LOGIN_CODES_FILE, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    console.warn("Login kodlar fayli o'qilamadi:", (e as Error)?.message);
+    return {};
+  }
+}
+
+/** Kod shakli: `web_` + 48 hex. Telegram start param faqat A-Za-z0-9_- qabul qiladi. */
+const LOGIN_CODE_RE = /^web_[0-9a-f]{48}$/;
+
+/**
+ * 🌐 `POST /api/auth/telegram/start` — bitta martalik kod beradi.
+ *
+ * Javobda `telegram_url` qaytadi — brauzer shuni ochadi, mijoz
+ * Telegram'da Start bosadi.
+ */
+app.post('/api/auth/telegram/start', async (_req: Request, res: Response) => {
+  // 🔴 `resolveBotUsername` ASYNC — `await` siz `Promise` qaytarardi
+  //    va havola `t.me/[object Promise]` bo'lib ketardi.
+  const bot = await resolveBotUsername();
+  if (!bot) {
+    return res.status(503).json({ ok: false, error: 'Bot nomi hali aniqlanmadi' });
+  }
+  // 48 hex = 192 bit — taxmin qilish mumkin emas
+  const code = 'web_' + crypto.randomBytes(24).toString('hex');
+  return res.json({
+    ok: true,
+    code,
+    telegram_url: 'https://t.me/' + bot + '?start=' + code,
+  });
+});
+
+/**
+ * 🔍 `GET /api/auth/telegram/status?code=...` — mijoz tasdiqladimi?
+ *
+ * `pending` → Telegram'da Start hali bosilmagan
+ * `ok`      → tasdiqlandi, `token` qaytariladi
+ */
+app.get('/api/auth/telegram/status', (req: Request, res: Response) => {
+  const code = String(req.query.code || '');
+  if (!LOGIN_CODE_RE.test(code)) {
+    return res.status(400).json({ ok: false, status: 'error', error: "Kod noto'g'ri" });
+  }
+
+  // 🔴 BIR MARTA ishlatiladi — aks holda kimdir boshqaning kodini
+  //    qayta ishlatib sessiya olishi mumkin.
+  if (sessionStore.__used_login_codes?.[code]) {
+    return res.json({ ok: true, status: 'error', error: 'Kod allaqachon ishlatilgan' });
+  }
+
+  const rec = readLoginCodes()[code];
+  if (!rec) return res.json({ ok: true, status: 'pending' });
+
+  // 🔐 KOD ESKIRISHI — 10 daqiqadan keyin ishlamaydi
+  const age = Date.now() - Date.parse(rec.at || 0);
+  if (!rec.at || age > 10 * 60 * 1000) {
+    return res.json({ ok: true, status: 'error', error: 'Kod muddati tugagan' });
+  }
+
+  const uid = Number(rec.user_id);
+  // 🔄️ `loadDatabase()` faqat MA’LUMOT QAYTARADI — `store.users` ni
+  //    yangilamaydi. Bot.py foydalanuvchini bir necha soniya oldin
+  //    yozgan bo'lishi mumkin, shuning uchun haqiqiy o'qish kerak.
+  //    Aks holda endi token BERILMASDI (404) — ya’ni mijoz Telegram’da
+  //    Start bosgan bo'lsa ham, saytda «xato» chiqardi.
+  try {
+    const fresh = loadDatabase();
+    store.users = new Map<number, any>(
+      Object.values(fresh.users).map((u: any) => [Number(u.id), u])
+    );
+  } catch { /* bo'sh */ }
+  const user = store.users.get(uid);
+  if (!user) {
+    // Bot foydalanuvchini bazaga yozmagan bo'lishi mumkin
+    return res.status(404).json({ ok: false, status: 'error', error: 'Foydalanuvchi topilmadi' });
+  }
+
+  // Mijozni Telegram ma'lumotlari bilan yangilaymiz
+  if (rec.username) user.username = rec.username;
+  if (rec.first_name) user.first_name = rec.first_name;
+  if (rec.photo_url) user.photo_url = rec.photo_url;
+
+  const token = crypto.randomBytes(24).toString('hex');
+  const days = Number(process.env.SESSION_DAYS || 30);
+  sessionStore[token] = {
+    user_id: uid,
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + days * 86400000).toISOString(),
+    via: 'deep_link',
+  };
+  // 🔴 Ishlatilgan kodlarni eslatib qolamiz (restart'dan keyin ham)
+  sessionStore.__used_login_codes = sessionStore.__used_login_codes || {};
+  sessionStore.__used_login_codes[code] = new Date().toISOString();
+  saveSessions();
+
+  return res.json({ ok: true, status: 'ok', token });
+});
+
 /** `POST /api/auth/logout` — sessiyani o'chirish. */
 app.post("/api/auth/logout", (req: Request, res: Response) => {
   const token = (req.headers["x-session-token"] as string) || "";

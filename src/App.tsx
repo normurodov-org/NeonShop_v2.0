@@ -15,7 +15,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { CheckCircle2, ArrowLeft, PauseCircle, ShieldAlert } from 'lucide-react';
 import { useIsDesktop } from './lib/useLayout';
 import { isInsideTelegram, tgHeadersGet } from './lib/tgAuth';
-import TelegramLogin from './components/TelegramLogin';
+import TelegramDeepLogin from './components/TelegramDeepLogin';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('home');
@@ -480,23 +480,34 @@ export default function App() {
                 Telegram tomonidan tasdiqlanadi.
               </p>
 
-              {/* Telegram'ning rasmiy Login Widget — «Connect Telegram» */}
-              <div className="mt-7 min-h-[54px]">
-                {/* 🔴 Shart (`{BOT_USERNAME ? ... }`) OLIB TASHLANDI:
-                    `BOT_USERNAME` uch zaxiradan keyin HAR DOIM to'g!ri
-                    (`shop_neonbot`), shuning uchun «Bot nomi
-                    yuklanmoqda» ekrani HECH QACHON chiqmasdi — o(lik kod. */}
-                <TelegramLogin
-                  botUsername={BOT_USERNAME}
-                  isDark={isDark}
-                  onSuccess={() => {
-                    setLoginError(null);
-                    setNeedTelegram(null);
-                    window.location.reload();
-                  }}
-                  onError={(msg) => setLoginError(msg)}
-                />
-              </div>
+              {/* 🌐 TELEGRAM ORQALI KIRISH — deep link (popup umuman yo'q)
+
+                  🔴🔴 NIMA UCHUN ESKI LOGIN WIDGET OLIB TASHLANDI?
+                  Mijoz xabari: «tugmani bosdim, ekran ochilib 1 soniyada
+                  yopildi, sahifa o'zgarmadi». Telegram'ning `/auth/get`
+                  javobini tekshirish natijani ko'rsatdi:
+
+                      {"error":"NOT_AUTHORIZED", "origin":"https://..."}
+
+                  Bu `onAuth(origin, false)` → `{event:'unauthorized'}` → ota
+                  tomonda `onUnauth && onUnauth()`. Bizda `data-onunauth`
+                  YO'Q EDI — ya'ni hech narsa bo'lmasdi, sahifa jimgina
+                  o'z-o'zidan qolardi. Shu sababli eski yo'l butunlay
+                  olib tashlandi.
+
+                  ✅ YANGI YO'L: server kod beradi → biz
+                  `t.me/<bot>?start=<kod>` ni ochamiz → mijoz Telegram'da
+                  Start bosadi → bot.py kodni yozadi → biz sessiya
+                  olamiz. Popup, CORS va third-party cookie umuman yo'q. */}
+              <TelegramDeepLogin
+                isDark={isDark}
+                onSuccess={() => {
+                  setLoginError(null);
+                  setNeedTelegram(null);
+                  window.location.reload();
+                }}
+                onError={(msg) => setLoginError(msg)}
+              />
 
               {loginError && (
                 <p className="mt-3 text-[12px] text-rose-400">{loginError}</p>

@@ -441,6 +441,65 @@ def get_db_path() -> str:
 
 DB_PATH = get_db_path()
 
+# 🌐 WEB LOGIN KODLARI FAYLI
+#
+# Nima uchun alohida fayl? server.ts va bot.py bitta JSON da ishlaydi va
+# kimdir eski nusxani qayta yozsa, ma'lumot O'CHADI (shunday bug bo'ldi:
+# `settings.__sessions` bot.py ning heartbeatida har 20 soniyada
+# o'chib ketardi — mijoz «kirdim, asosiy sahifa ochilmayapti» degan edi).
+# Shu sababli har bir faylning YAGINA yozuvchisi bo'ladi:
+#   * bu fayl  → YAZADI: FAQAT bot.py,  O'QIYDI: FAQAT server.ts
+#   * sessions → YAZADI: FAQAT server.ts, O'QIYDI: FAQAT server.ts
+LOGIN_CODES_PATH = str(DB_PATH).replace(".json", "") + ".login_codes.json"
+
+# Faqat shu shakldagi kodlar qabul qilinadi (server.ts ham xuddi shuni tekshiradi)
+WEB_LOGIN_CODE_RE = re.compile(r"^web_[0-9a-f]{48}$")
+
+
+def save_web_login_code(code: str, db_user: dict) -> None:
+    """Brauzer kirish kodini Telegram foydalanuvchisiga bog'laydi.
+
+    server.ts shu faylni o'qib, mijozga sessiya beradi. Kod
+    BIR MARTA ishlatiladi (server tomonda `__used_login_codes`).
+    """
+    codes: dict[str, Any] = {}
+    try:
+        if os.path.exists(LOGIN_CODES_PATH):
+            with open(LOGIN_CODES_PATH, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                codes = loaded
+    except (OSError, ValueError) as exc:
+        log.warning("Web login kodlari o'qilmadi: %s", exc)
+
+    codes[code] = {
+        "user_id": db_user["id"],
+        "username": db_user.get("username", ""),
+        "first_name": db_user.get("first_name", ""),
+        "photo_url": db_user.get("photo_url", ""),
+        "at": now_iso(),
+    }
+
+    # 🗑️ Eskirgan kodlarni tozalash (fayl cheksiz o'smasin)
+    try:
+        cutoff = (datetime.now(TZ) - timedelta(minutes=30)).isoformat()
+        for k in list(codes.keys()):
+            if str((codes[k] or {}).get("at") or "") < cutoff:
+                codes.pop(k, None)
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(LOGIN_CODES_PATH)), exist_ok=True)
+        tmp = LOGIN_CODES_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(codes, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, LOGIN_CODES_PATH)
+    except OSError as exc:
+        log.warning("Web login kodi yozilmadi: %s", exc)
+
 # --- Narxlar va limitlar (UZS) ---
 STAR_BUY_PRICE_UZS = 200
 STAR_SELL_PRICE_UZS = 125
@@ -2656,6 +2715,28 @@ async def cmd_start(
 ):
     await state.clear()
     arg = (command.args or "").strip()
+
+    # 🌐️ WEB LOGIN — brauzerdan kelgan `?start=web_<48hex>` kod.
+    #
+    # 🔴️ NIMA UCHUN BU SHARTLI? Telegram'ning eski Login Widget popup
+    #    oqimi ishonchsiz: popup ochilib yopiladi va natija kelmaydi
+    #    (`{"error":"NOT_AUTHORIZED"}`), ota tomonda esa `onUnauth` YO'Q
+    #    edi — ya'ni hech nanga bo'lmaydi. Bu yo'l popup umuman yo'q:
+    #    mijoz shu yerga Start bosadi, bot esa uni o'z fayliga yozadi.
+    if WEB_LOGIN_CODE_RE.match(arg):
+        save_web_login_code(arg, db_user)
+        try:
+            await message.answer(
+                "✅ <b>Telegram orqali kiring — tasdiqlandi!</b>\n\n"
+                "Endi brauzerdagi sayt oynasiga qaytib, "
+                "«Davom etish» bosing.\n\n"
+                "<i>Bu oynani yopmang — sayt shu yerda sizni kutmoqda.</i>",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Web login tasdig'i yuborilmadi: %s", exc)
+        return
+
     ref_match = re.fullmatch(r"u?(\d+)", arg)
     if is_new_user and ref_match:
         ref_id = int(ref_match.group(1))
