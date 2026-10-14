@@ -227,10 +227,22 @@ try:
 
     # ---------------------------------------------------------------- 7
     section("7) 💾 SESSIYA bazada saqlanadimi? (redeploy'dan keyin)")
-    db = json.load(open(DB_PATH, encoding="utf-8"))
-    sessions = (db.get("settings") or {}).get("__sessions") or {}
+    # 🔐 SESSIYA ENDI ALOHIDA FAYLDA (`*_sessions.json`).
+    # Sabab: bot.py har 20 soniyada `users_db.json` ni O'Z ESKI
+    # xotirasidan yozadi (`update_heartbeat` → `set_runtime_status`)
+    # va `settings.__sessions` ni O'CHIRARDI — mijoz kirib,
+    # 20 sekunddan keyin yana kirish ekraniga qaytardi.
+    # Batafsil: tests/test_session_persistence.py
+    sessions_file = DB_PATH.replace(".json", "") + ".sessions.json"
+    check(os.path.exists(sessions_file),
+          "sessiya alohida faylda (bot.py tegmaydi)")
+    sessions = json.load(open(sessions_file, encoding="utf-8")) \
+        if os.path.exists(sessions_file) else {}
     check(len(sessions) >= 1,
-          f"sessiya bazaga yozildi ({len(sessions)} ta) — redeploy'da yo'qolmaydi")
+          f"sessiya saqlandi ({len(sessions)} ta) — redeploy'da yo'qolmaydi")
+    _db = json.load(open(DB_PATH, encoding="utf-8"))
+    check("__sessions" not in (_db.get("settings") or {}),
+          "🔴 `users_db.json` da sessiya yo'q (bot.py uni o'chira olmaydi)")
     if sessions:
         rec = list(sessions.values())[0]
         check(rec.get("expires_at"), "muddati bor")

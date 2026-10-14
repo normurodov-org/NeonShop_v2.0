@@ -42,6 +42,8 @@ interface Props {
 declare global {
   interface Window {
     onTelegramAuth?: (user: any) => void;
+    /** Telegram widget ichidagi xato (masalan «Bot domain invalid») */
+    onTelegramLoginError?: (message: string) => void;
   }
 }
 
@@ -76,6 +78,11 @@ export const TelegramLogin: React.FC<Props> = ({
     s.setAttribute('data-request-access', 'write');
     // 🔴 Iframe QAYERDA chiqishini hal qilish uchun marker
     s.setAttribute('data-neon-login-widget', '1');
+    // 🔴 `data-onerror` — Telegram widget ichidagi xatoni
+    // «Bot domain invalid» / «Bot not found» kabi ko'rsatadi.
+    // Bu hodisasiz mijoz XUDDI SHU YERDAGI xabarini ko'radi
+    // (rasmdagi holat) va nima qilishini bilmaydi.
+    s.setAttribute('data-onerror', 'onTelegramLoginError');
     box.appendChild(s);
   }, [botUsername]);
 
@@ -102,6 +109,24 @@ export const TelegramLogin: React.FC<Props> = ({
       } catch (e: any) {
         cbRef.current.onError?.(e?.message || 'Tarmoq xatosi');
       }
+    };
+
+    // 🔶 WIDGET XATOSI. Telegram ichida «Bot domain invalid»
+    //    chiqsa — sabab: @BotFather da bu domen ro'yxatga
+    //    olINGAN EMAS (`/setdomain`). Bu holatda foydalanuvchi
+    //    hech nima qilolmaydi, shuning uchun biz aniq xabar
+    //    ko'rsatamiz.
+    window.onTelegramLoginError = (message: string) => {
+      const m = String(message || '').toLowerCase();
+      let hint = 'Telegram bilan bog‘lanishda xatolik yuz berdi.';
+      if (m.includes('domain')) {
+        hint =
+          '«Bot domain invalid» — Telegram shu saytga ruxsat berilmagan.\n'
+          + 'BotFather → /setdomain → domenni kiritish kerak.';
+      } else if (m.includes('not found') || m.includes('unavailable')) {
+        hint = 'Bot topilmadi — bot nomi noto‘g‘ri.';
+      }
+      cbRef.current.onError?.(hint);
     };
 
     // ---------------------------------------------------------- 2) yuklash

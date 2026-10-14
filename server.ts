@@ -572,19 +572,80 @@ export function verifyTelegramLoginWidget(data: string): { ok: boolean; user?: a
   };
 }
 
-/** `X-Session-Token` → foydalanuvchi (brauzer uchun). */
+// =============================================================================
+// \U0001F510\u2006BRAUZER SESSIYALARI \u2014 ALOHIDA FAYLDA
+// =============================================================================
+// \U0001F534\u2006NIMA UCHUN BUNDAY?
+// \U0001F534\u2006Sessiya avval `users_db.json` ning `settings.__sessions` da
+// saqlanardi. LEKIN bot.py har 20 soniyada `db.save()` qiladi
+// (`update_heartbeat` \u2192 `set_runtime_status`) va u O\u0026Z XOTIRASIDAN
+// yozadi \u2014 `reload_if_changed()` chaqirmasdan. Bot qo\u0027lda ishga
+// tushganda olgan nusxa eskirgan, unda `__sessions` YO\u0027Q.
+//
+// Natija: brauzerda mijoz kirdi \u2192 server sessiyani yozdi \u2192 20
+// soniyadan keyin bot.py o\u0027z eski nusxasini yozdi va sessiyani
+// O\u0027CHIRDI \u2192 mijoz qayta kirish ekraniga qaytdi. Xuddi shunday
+// holat: \u00abTelegram bilan uladim, lekin asosiy sahifa ochilmayapti\u00bb.
+//
+// \U0001F4D4\u2006YECHIM: sessiyalar alohida faylda (`web_sessions.json`).
+// Uni FAQAT server.ts ochadi \u2014 bot.py umuman tegmaydi, shuning uchun
+// hech qanday eskirgan nusxa uni o\u0027chira olmaydi.
+// Railway\u0027da `/data` bir xil volume\u2014 saqlanib qoladi.
+// =============================================================================
+
+
+// 🔐 `DB_FILE` allaqachon `./src/db` dan IMPORT qilingan — qayta
+// e'lon qilish TypeScript xatosi beradi.
+const SESSIONS_FILE = DB_FILE.replace(/\.json$/, '') + '.sessions.json';
+
+/** token \u2192 { user_id, created_at, expires_at, via } */
+let sessionStore: Record<string, any> = {};
+
+function loadSessions(): void {
+  try {
+    if (!fs.existsSync(SESSIONS_FILE)) return;
+    const raw = fs.readFileSync(SESSIONS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") sessionStore = parsed;
+  } catch (e) {
+    console.warn("Sessiya fayli o\\u0027qilamadi:", (e as Error)?.message);
+  }
+}
+
+function saveSessions(): void {
+  try {
+    fs.mkdirSync(path.dirname(SESSIONS_FILE), { recursive: true });
+    const tmp = SESSIONS_FILE + ".tmp";
+    // \U0001F510 MUDDATI \U0007/O\\u0027GAN sessiyalarni tozalash \u2014 fayl
+    //   cheksiz o\\u0027sib ketmasin.
+    const nowMs = Date.now();
+    for (const [t, r] of Object.entries(sessionStore)) {
+      if (r?.expires_at && Date.parse(r.expires_at) < nowMs) {
+        delete sessionStore[t];
+      }
+    }
+    fs.writeFileSync(tmp, JSON.stringify(sessionStore, null, 2), "utf8");
+    fs.renameSync(tmp, SESSIONS_FILE);
+  } catch (e) {
+    console.error("Sessiya fayliga yozib bo\\u0027lmadi:", (e as Error)?.message);
+  }
+}
+
+loadSessions();
+
+/** `X-Session-Token` \u2192 foydalanuvchi (brauzer uchun). */
 function sessionUser(req: Request): any | null {
   const token =
     (req.headers["x-session-token"] as string) ||
     (req.headers["authorization"] as string)?.replace(/^Bearer\s+/i, "") ||
     "";
   if (!token) return null;
-  const sessions: any = (store.settings as any).__sessions || {};
-  const rec = sessions[token];
+  const rec = sessionStore[token];
   if (!rec) return null;
   // 🔴 Muddati o'tgan sessiya — tozalanadi
   if (rec.expires_at && Date.parse(rec.expires_at) < Date.now()) {
-    delete sessions[token];
+    delete sessionStore[token];
+    saveSessions();
     return null;
   }
   const user = store.users.get(Number(rec.user_id));
@@ -631,21 +692,14 @@ app.post("/api/auth/telegram", (req: Request, res: Response) => {
 
   const token = crypto.randomBytes(24).toString("hex");
   const days = Number(process.env.SESSION_DAYS || 30);
-  const settings: any = store.settings;
-  settings.__sessions = settings.__sessions || {};
-  settings.__sessions[token] = {
+  sessionStore[token] = {
     user_id: uid,
     created_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + days * 86400000).toISOString(),
     via: "login_widget",
   };
-
-  // 🧹 Eskirgan sessiyalarni tozalaymiz
-  const nowMs = Date.now();
-  for (const [t, r] of Object.entries(settings.__sessions) as [string, any][]) {
-    if (r?.expires_at && Date.parse(r.expires_at) < nowMs) delete settings.__sessions[t];
-  }
-  syncAndSaveDb();
+  // 🔐 «BOTGA» ALMAYDI — sessiya alohida faylda
+  saveSessions();
 
   res.json({ ok: true, token, days, user: store.users.get(uid) });
 });
@@ -653,10 +707,9 @@ app.post("/api/auth/telegram", (req: Request, res: Response) => {
 /** `POST /api/auth/logout` — sessiyani o'chirish. */
 app.post("/api/auth/logout", (req: Request, res: Response) => {
   const token = (req.headers["x-session-token"] as string) || "";
-  const settings: any = store.settings;
-  if (token && settings.__sessions) {
-    delete settings.__sessions[token];
-    syncAndSaveDb();
+  if (token && sessionStore[token]) {
+    delete sessionStore[token];
+    saveSessions();
   }
   res.json({ ok: true });
 });
