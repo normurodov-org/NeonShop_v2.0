@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { LogOut, EyeOff } from 'lucide-react';
+import { logout as doLogout } from '../../lib/tgAuth';
 import { User, StoreSettings, Order } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { Shield, Plus, Users, Globe, Headphones, Settings, Copy, Check, ChevronRight, Sparkles, Star, Sun, Moon } from 'lucide-react';
@@ -15,6 +17,11 @@ interface ProfileViewProps {
   onGoToTopup: () => void;
   onOpenAdmin: () => void;
   isAdmin: boolean;
+  /** 🔴 Mijoz so'rovi: profil bo'limida «Log out» tugmasi bo'lsin */
+  onLoggedOut: () => void;
+  /** 🍎 Apple: «increased contrast option» — shaffoflikni kamaytirish */
+  reduceTransparency: boolean;
+  onToggleTransparency: () => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -28,6 +35,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onGoToTopup,
   onOpenAdmin,
   isAdmin,
+  onLoggedOut,
+  reduceTransparency,
+  onToggleTransparency,
 }) => {
   const t = translations[lang];
   const [copiedRef, setCopiedRef] = useState<boolean>(false);
@@ -356,6 +366,59 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
           <ChevronRight className="w-3.5 h-3.5 opacity-50" />
         </a>
+
+        {/* 🏖️ 🔒 SHAFFOFLIKNI KAMAYTIRISH
+
+            🍌 APPLE: «people can ... turn on accessibility settings that
+            reduce transparency ... Ensure you test your app's CUSTOM elements
+            with different configurations of these settings.»
+
+            Bu ilova barcha glass effektlari CUSTOM (SwiftUI/UIKit emas),
+            demak moslashishni o'zimiz qilishimiz SHART. Yoqilganda
+            `backdrop-filter` butunlay o'chadi va material qattiq bo'ladi —
+            matn har doim o'qiladi. Tanlov `localStorage` da saqlanadi. */}
+        <button
+          type="button"
+          onClick={onToggleTransparency}
+          aria-pressed={reduceTransparency}
+          className="w-full flex items-center justify-between p-3 rounded-[16px] transition-colors cursor-pointer mt-0.5 apple-spring hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          <div className="flex items-center gap-2.5 text-xs font-semibold">
+            <EyeOff className="w-4 h-4 opacity-70" />
+            <span className={isDark ? 'text-white' : 'text-neutral-900'}>
+              Shaffoflikni kamaytirish
+            </span>
+          </div>
+          {/* Apple holati: o'chirilgan / yoqilgan */}
+          <span
+            className={`text-[10px] font-bold px-2 py-1 rounded-full ${
+              reduceTransparency
+                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                : 'bg-black/5 dark:bg-white/10 text-neutral-500 dark:text-neutral-400'
+            }`}
+          >
+            {reduceTransparency ? 'YOQILGAN' : 'O‘CHIQ'}
+          </span>
+        </button>
+
+        {/* 🛑️ LOG OUT — mijoz so'rovi
+
+            🔴 Serverdagi sessiya ham o'chadi (`POST /api/auth/logout`),
+            aks holda token `*_sessions.json` da qolib qolardi va
+            boshqa qurilmadan foydalanib turish mumkin bo'lardi. */}
+        <button
+          type="button"
+          onClick={async () => {
+            await doLogout();
+            onLoggedOut();
+          }}
+          className="w-full flex items-center justify-between p-3 rounded-[16px] transition-colors cursor-pointer mt-0.5 apple-spring text-rose-500 hover:bg-rose-500/10"
+        >
+          <div className="flex items-center gap-2.5 text-xs font-bold">
+            <LogOut className="w-4 h-4" />
+            <span>Chiqish (Log out)</span>
+          </div>
+        </button>
 
         {/* Secret Admin panel entrance (ONLY FOR ADMIN) */}
         {isAdmin && (

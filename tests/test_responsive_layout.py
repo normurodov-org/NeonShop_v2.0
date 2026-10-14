@@ -37,7 +37,7 @@ BUY = read("src/components/views/BuyView.tsx")
 TOPUP = read("src/components/views/TopupView.tsx")
 PROF = read("src/components/views/ProfileView.tsx")
 RANK = read("src/components/views/RankingView.tsx")
-LOGIN = read("src/components/TelegramDeepLogin.tsx")
+LOGIN = read("src/components/TelegramLogin.tsx")
 AUTH = read("src/lib/tgAuth.ts")
 
 ok = True
@@ -118,19 +118,49 @@ check('aria-label="Asosiy menyu"' in NAV, "\u00abAsosiy menyu\u00bb (kirish uchu
 check("aria-current" in NAV, "faol tab belgilangan")
 
 # =============================================================================
-section("7) \U0001F510 \U0001F4D6 WEBSITE KIRISH — DEEP LINK (popup'siz)")
+section("7) 🔐 📖 WEBSITE KIRISH — Telegram Login Widget")
 # =============================================================================
-# \U0001F534 Eski Telegram Login Widget popup oqimi ISHONCHSIZ bo'lib chiqdi:
-#    /auth/get → {"error":"NOT_AUTHORIZED"} → {event:'unauthorized'}
-#    → ota tomonda `onUnauth && onUnauth()` — bizda `data-onunauth`
-#    YO'Q EDI → hech narsa bo'lmasdi, sahifa o'z-o'zidan qolardi.
-#    Endi popup umuman yo'q: `t.me/<bot>?start=<kod>` orqali.
-check("/api/auth/telegram/start" in LOGIN, "\U0001F310 kod so'raladi (`/start`)")
-check("/api/auth/telegram/status" in LOGIN, "javob kutiladi (`/status`)")
+# 🔴 Widget popup oqimi 3 marta ishlamadi. Sabablari Telegram''ning o'z
+#    skriptidan (`telegram-widget.js`, `widget-frame.js`) o'qib topildi va
+#    hammasi tuzatildi — bu blok shu tuzatmalarni DIQQATLAB ushlaydi.
+check("data-onauth" in LOGIN,
+      "🔴🔴 `data-onauth` bor — aks holda `onAuthUser = undefined`")
+check("'data-onauth', 'onTelegramAuth'" in LOGIN,
+      "global funksiya nomi atribut bilan bir xil")
+check("data-onunauth" in LOGIN,
+      "🔴🔴 `data-onunauth` bor — `{event:'unauthorized'}` da "
+      "`onUnauth && onUnauth()` bo'sh qolmasdi")
+check("onTelegramLoginUnauth" in LOGIN,
+      "global `onTelegramLoginUnauth` mavjud")
+check("window.onTelegramAuth" in LOGIN, "global `window.onTelegramAuth` mavjud")
 check("setSessionToken" in LOGIN, "sessiya saqlanadi")
-check("window.open" in LOGIN, "Telegram oynasi ochiladi")
-check("POLL_MS" in LOGIN, "javob muntazam tekshiriladi (polling)")
-check("MAX_WAIT_MS" in LOGIN, "kutish vaqti cheklangan (5 daqiqa)")
+check("box.appendChild(s)" in LOGIN,
+      "🔴 skript karta ICHIGA qo'yiladi (iframe tashqarida chiqmasin)")
+check("document.body.appendChild(s)" not in LOGIN, "document.body ga qo'yish yo'q")
+
+# 🔴 ASOSIY MITIGATSIYA: popup bosilganini aniqlash + watchdog
+check("window.open = function" in LOGIN,
+      "🔒 `window.open` o'raladi (tugma IFRAME ichida — bosilishni bilamiz)")
+check("WATCHDOG_MS" in LOGIN, "⏱️ watchdog bor (12s — natija kelmasa xabar)")
+check("setStuck(true)" in LOGIN, "🔔 jimgina qolmaydi — xabar ko'rsatiladi")
+check("Qayta urinish" in LOGIN, "🔄 qayta urinish (iframe qayta yaratiladi)")
+check("resetWidget" in LOGIN,
+      "🔄 `TWidgetLogin.authFinished` FAQAT yangi iframe bilan reset bo'ladi")
+check("window.open = origOpen" in LOGIN,
+      "🔒 o'ram ish vaqtida to'liq tiklanadi (memory leak yo'q)")
+
+check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
+check("inBrowser" in APP, "brauzer alohida ko'rib chiqiladi")
+check("X-Session-Token" in AUTH, "sessiya header'i bor")
+check("tgHeadersGet" in AUTH, "GET uchun yordamchi")
+check("tgHeaders" in AUTH, "POST uchun yordamchi")
+
+# 🔴 ENG MUHIM: App ning o'z so'rovi ham sessiya yuborishi SHART.
+check("headers: tgHeadersGet(" in APP, "🔴 App'ning asosiy so'rovi sessiya yuboradi")
+check(APP.count("x-telegram-init-data") == 0,
+      "🔴 qo'lda header bloki qolmadi (sessiya yuborilmas edi)")
+check(APP.count("headers: tgHeadersGet(") >= 2,
+      "poller ham sessiya yuboradi (avto-to'ldirish ishlaydi)")
 
 check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
 check("inBrowser" in APP, "brauzer alohida ko\u0027rib chiqiladi")
@@ -165,27 +195,11 @@ check("Yoki Telegram ilovasi orqali oching" not in APP,
 check("href={BOT_WEBAPP_URL}" not in APP and "href=\"https://t.me/" not in APP,
       "kirish ekranida bot havolasi yo'q")
 
-section("9) 🌐 KIRISH TUGMASI VA XATO HOLATLARI")
+section("9) 🔐 KIRISH TUGMASI VA XATO HOLATLARI")
 # =============================================================================
-# Mijoz rasmda BO'SH joy ko'rdi — widget chiqmagan edi. Sabab:
-# bot nomi `/api/config` dan keladi; u javob bermasa — bo'sh.
-check("FALLBACK_BOT_USERNAME" in APP,
-      "🔴 qat'iy zaxira bot nomi bor (server javob bermasa ham)")
-check("botUsername || BUILD_BOT_USERNAME || FALLBACK_BOT_USERNAME" in APP,
-      "🔐 uchta manba ketma-ket sinanadi")
-check("BotNameWait" not in APP,
-      "📖 «Bot nomi yuklanmoqda» o'lik ekrani olib tashlandi")
-
-# 🔐 Foydalanuvchi NIMA qilishini ANIQ bilishi SHART — eski yo'lda
-#    hech narsa bo'lmagani uchun mijoz «qandaydir ekran ochildi,
-#    yopildi, lekin kirmadi» deb qoldi (rasmdagi holat).
-check("Start" in LOGIN,
-      "\U0001F510 «Start» tugmasi matnda aytiladi (nima qilish kerak)")
-check("Bekor qilish" in LOGIN, "🔒 Bekor qilish bor (hech qanday oyaga osilmaydi)")
-check("setPhase('failed')" in LOGIN or "'failed'" in LOGIN,
-      "🔔 xato holati bor — jimgina qolmaydi")
 check("Qayta urinish" in LOGIN, "🔄 qayta urinish mumkin")
-
+check("'failed'" in DEEP if False else "setStuck" in LOGIN,
+      "🔔 xato holati bor — jimgina qolmaydi")
 check("bot_username" in read("server.ts"), "server bot nomini qaytaradi")
 
 

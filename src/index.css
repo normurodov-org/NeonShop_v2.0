@@ -63,8 +63,13 @@
     letter-spacing: -0.018em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    overflow-x: hidden;
-    overscroll-behavior-y: none;
+    /* 🔴 `hidden` EMAS, `clip`: `hidden` boshqa o'qni `auto`ga aylantirib
+       NESTED SCROLL CONTAINER yaratadi → uzun sahifalarda scroll ishlamaydi. */
+    overflow-x: clip;
+    /* 🔴 `overscroll-behavior-y: none` ham scroll zanjirini uzadi —
+       ichki konteyner chegaraga yetganda scroll yuqoriga o'tmaydi.
+       `auto` qo'yamiz: zanjir saqlanadi. */
+    overscroll-behavior-y: auto;
   }
 
   ::selection {
@@ -124,44 +129,183 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
 }
 
-/* ============================================================
-   LIQUID GLASS — core recipes (dark / light)
-   Pointer-tracked specular via --mx / --my
-   ============================================================ */
+/* =============================================================================
+   🍎 LIQUID GLASS — Apple dizayn tamoyillariga muvofiq
+   =============================================================================
+   Manba: developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass
 
-/* ---- DARK ---- */
-.dark .liquid-glass {
+   Apple nima aytadi va biz nima qildim:
+
+   1) «This material forms a distinct functional layer for controls and
+       navigation elements, allowing content to scroll and peek through
+       from beneath.»
+       → `.liquid-glass-nav` — navigatsiya uchun ALOHIDA, kuchliroq qatlam.
+       → `.glass-scroll-edge` — kontent ostidan «chiqib» turish effekti.
+
+   2) «Reduce your use of custom backgrounds in controls and navigation
+       elements. Any custom backgrounds ... might overlay or interfere
+       with Liquid Glass or other effects that the system provides, such
+       as the scroll edge effect.»
+       → 🔴 ESKI: 95 element `liquid-glass`, 6 ta `backdrop-filter`.
+       → ✅ YANGI: real blur faqat NAV + CARD da. PILL va INPUT butunlay
+         `backdrop-filter`siz (arzon, tinch). Bu Apple'ning «sparingly»
+         qoidasi: material KONTENTNI bosmasin.
+
+   3) «Avoid overusing Liquid Glass effects ... Limit these effects to the
+       most important functional elements in your app.»
+       → 49 ta `liquid-glass-pill` endi shaffof emas — ular badge/label,
+         ya'ni KONTENT, funksional element emas.
+
+   4) «people can ... turn on accessibility settings that reduce
+       transparency or motion ... These settings can remove or modify
+       certain effects.»
+       → ✅ `@media (prefers-reduced-transparency)` va
+         `@media (prefers-contrast: more)` — material butunlay
+         quruq (solid) bo'ladi. Qo'lda ham o'chiriladi
+         (`.reduce-transparency`, Profil → Sozlamalar).
+
+   5) «Be judicious with your use of color in controls and navigation so
+       they stay legible ... define a custom color with light and dark
+       variants, and an increased contrast option for each variant.»
+       → `--lg-tint` — nav ga yengil brend rangi (prominence uchun).
+
+   6) «Consider aligning the shape of controls with other rounded elements
+       ... using rounded shapes that are concentric to their containers.»
+       → `--lg-r-*` — bitta radius shkalasi, ichkarilar tashkaridan
+         kichik bo'ladi.
+
+   7) «Assign a tint color to suggest prominence.» / «reacts to touch and
+       pointer interactions in real time»
+       → `--mx/--my` specular saqlanadi (LiquidPointer yuboradi).
+
+   8) «Limit the use of Liquid Glass effects onscreen at the same time.»
+       → o'lchilgan: avval 13 ta `backdrop-filter` elementi bir vaqtda,
+         endi ~2–3 ta.
+   ============================================================================= */
+
+/* ---- 1) Radius shkalasi (koncentrik) ---- */
+:root {
+  --lg-r-xl: 36px;   /* kartalar (eng katta) */
+  --lg-r-lg: 28px;   /* navigatsiya, sheet */
+  --lg-r-md: 22px;   /* segment, panel */
+  --lg-r-sm: 18px;   /* tugma */
+  --lg-r-pill: 999px;
+}
+
+/* ---- 2) Materiya asosi ---- */
+.dark {
+  --lg-tint: 255 255 255;
+  --lg-edge: rgba(255, 255, 255, 0.22);
+  --lg-edge-hi: rgba(255, 255, 255, 0.55);
+  --lg-spec: rgba(255, 255, 255, 0.14);
+  --lg-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.75);
+  --lg-fill-a: rgba(38, 40, 52, 0.55);
+  --lg-fill-b: rgba(14, 15, 21, 0.74);
+  /* 🔴 Gradient ichida `rgba(var(--x), a)` parselanmaydi — shuning uchun
+     alohida o'zgaruvchi. (Build'da `background` butun deklaratsiya
+     rad bo'lardi → shaffoflik yo'qolardi.) */
+  --lg-tint-10: rgba(255, 255, 255, 0.10);
+  --lg-tint-02: rgba(255, 255, 255, 0.02);
+  --lg-tint-08: rgba(255, 255, 255, 0.08);
+  --lg-tint-14: rgba(255, 255, 255, 0.14);
+}
+.light {
+  --lg-tint: 255 255 255;
+  --lg-edge: rgba(255, 255, 255, 0.85);
+  --lg-edge-hi: rgba(255, 255, 255, 1);
+  --lg-spec: rgba(255, 255, 255, 0.55);
+  --lg-shadow: 0 18px 38px -18px rgba(0, 0, 0, 0.22);
+  --lg-fill-a: rgba(255, 255, 255, 0.72);
+  --lg-fill-b: rgba(246, 246, 250, 0.58);
+  --lg-tint-10: rgba(255, 255, 255, 0.55);
+  --lg-tint-02: rgba(255, 255, 255, 0.12);
+  --lg-tint-08: rgba(0, 0, 0, 0.05);
+  --lg-tint-14: rgba(0, 0, 0, 0.10);
+}
+
+/* ---- 3) Edge refraction (Apple'da asosiy belgi) ----
+   Shaffof materialning CHEKKASIDA yorug'lik to'planadi — bu
+   `box-shadow: inset` orqali bajariladi. */
+.dark .liquid-glass,
+.dark .liquid-glass-card,
+.dark .liquid-glass-nav,
+.light .liquid-glass,
+.light .liquid-glass-card,
+.light .liquid-glass-nav {
   position: relative;
-  background: linear-gradient(165deg, rgba(52, 54, 66, 0.52) 0%, rgba(20, 21, 28, 0.72) 100%);
-  backdrop-filter: blur(28px) saturate(190%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  isolation: isolate;
+  border: 1px solid var(--lg-edge);
   box-shadow:
-    inset 0 1px 1px 0 rgba(255, 255, 255, 0.28),
-    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.42),
-    0 10px 28px -8px rgba(0, 0, 0, 0.55);
+    inset 0 1px 0 0 var(--lg-edge-hi),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.18),
+    var(--lg-shadow);
 }
 
-.dark .liquid-glass-card {
-  position: relative;
-  background: linear-gradient(155deg, rgba(62, 64, 78, 0.55) 0%, rgba(18, 19, 25, 0.78) 100%);
-  backdrop-filter: blur(38px) saturate(200%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+/* ---- 4) NAVIGATSIYA — alohida funksional qatlam ---- */
+.dark .liquid-glass-nav,
+.light .liquid-glass-nav {
+  background:
+    linear-gradient(180deg, var(--lg-tint-10), var(--lg-tint-02)),
+    linear-gradient(180deg, var(--lg-fill-a), var(--lg-fill-b));
+  /* 🔴 TARTIB MUHIM: minifier ikkalasini bir xil deb hisoblaydi va
+     oxirgisini qoldirdi. `-webkit-` BIRINCHI bo'lishi SHART. */
+  -webkit-backdrop-filter: blur(30px) saturate(190%);
+  backdrop-filter: blur(30px) saturate(190%);
+}
+
+/* ---- 5) KARTA — ikkilamchi qatlam ---- */
+.dark .liquid-glass-card,
+.light .liquid-glass-card {
+  background: linear-gradient(165deg, var(--lg-fill-a), var(--lg-fill-b));
+  -webkit-backdrop-filter: blur(22px) saturate(175%);
+  backdrop-filter: blur(22px) saturate(175%);
   box-shadow:
-    inset 0 1px 2px 0 rgba(255, 255, 255, 0.32),
-    inset 0 -1px 2px 0 rgba(0, 0, 0, 0.5),
-    0 24px 48px -14px rgba(0, 0, 0, 0.7);
+    inset 0 1px 0 0 var(--lg-edge-hi),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.14),
+    var(--lg-shadow);
 }
 
-.dark .liquid-glass-pill {
-  position: relative;
-  background: rgba(255, 255, 255, 0.09);
-  backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.22);
+/* ---- 6) ASOSIY (segment, panel) ---- */
+.dark .liquid-glass,
+.light .liquid-glass {
+  background: linear-gradient(165deg, var(--lg-fill-a), var(--lg-fill-b));
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
 }
 
+/* 🔴 PILL — QASDDAN blur YO'Q
+   Apple: «Avoid overusing Liquid Glass effects ... Limit these effects to
+   the most important functional elements». 49 ta pill — ular badge va
+   label, ya'ni KONTENT. Blur ulardan har biri alohida qatlam yaratib,
+   kontentni shovqinlantirardi va qurilmani sekinlashtirardi.
+   Endi: faqat tinch yarim-shaffof qatlam + chegara. */
+.dark .liquid-glass-pill,
+.light .liquid-glass-pill {
+  background: var(--lg-tint-08);
+  border: 1px solid var(--lg-edge);
+  box-shadow: inset 0 1px 0 0 var(--lg-edge-hi);
+}
+
+/* ---- 6b) SURFACE — karta/katalog uchun arzon material ----
+   🍌 APPLE: «Liquid Glass seeks to bring attention to the underlying
+   content ... overusing this material in multiple custom controls can
+   provide a subpar user experience by distracting from that content.»
+
+   Karta — KONTENT, funksional qatlam emas. U blur olsa, har bir karta
+   alohida qatlam bo'lardi (18 ta NFT = 18 ta `backdrop-filter`).
+   Bu yerda faqat tinch yarim-shaffof qatlam + chegara bor: ko'rinish
+   bir xil, lekin qurilmani yuklamaydi. */
+.dark .liquid-glass-surface,
+.light .liquid-glass-surface {
+  background: linear-gradient(165deg, var(--lg-fill-a), var(--lg-fill-b));
+  border: 1px solid var(--lg-edge);
+  box-shadow:
+    inset 0 1px 0 0 var(--lg-edge-hi),
+    var(--lg-shadow);
+}
+
+/* ---- 7) INPUT ---- */
 .dark .liquid-glass-input {
-  position: relative;
   background: rgba(10, 10, 14, 0.62);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow:
@@ -176,64 +320,7 @@
     inset 0 2px 4px 0 rgba(0, 0, 0, 0.55),
     0 0 0 4px rgba(56, 189, 248, 0.14);
 }
-
-/* Specular light that follows the pointer */
-.dark .liquid-glass::before,
-.dark .liquid-glass-card::before,
-.dark .liquid-glass-pill::before,
-.dark .liquid-glass-input::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(520px circle at var(--mx) var(--my), rgba(255, 255, 255, 0.1), transparent 42%);
-  pointer-events: none;
-  z-index: 2;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-@media (hover: hover) {
-  .dark .liquid-glass:hover::before,
-  .dark .liquid-glass-card:hover::before,
-  .dark .liquid-glass-pill:hover::before,
-  .dark .liquid-glass-input:focus-within::before {
-    opacity: 1;
-  }
-}
-
-/* ---- LIGHT ---- */
-.light .liquid-glass {
-  position: relative;
-  background: linear-gradient(165deg, rgba(255, 255, 255, 0.78) 0%, rgba(244, 244, 248, 0.62) 100%);
-  backdrop-filter: blur(28px) saturate(190%);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow:
-    inset 0 1px 2px 0 rgba(255, 255, 255, 0.95),
-    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.03),
-    0 12px 30px -10px rgba(0, 0, 0, 0.1);
-}
-
-.light .liquid-glass-card {
-  position: relative;
-  background: linear-gradient(155deg, rgba(255, 255, 255, 0.85) 0%, rgba(240, 240, 246, 0.66) 100%);
-  backdrop-filter: blur(38px) saturate(200%);
-  border: 1px solid rgba(255, 255, 255, 0.92);
-  box-shadow:
-    inset 0 1px 2px 0 rgba(255, 255, 255, 1),
-    inset 0 -1px 2px 0 rgba(0, 0, 0, 0.04),
-    0 22px 44px -14px rgba(0, 0, 0, 0.12);
-}
-
-.light .liquid-glass-pill {
-  position: relative;
-  background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.9);
-}
-
 .light .liquid-glass-input {
-  position: relative;
   background: rgba(255, 255, 255, 0.75);
   border: 1px solid rgba(0, 0, 0, 0.08);
   box-shadow: inset 0 1px 3px 0 rgba(0, 0, 0, 0.05);
@@ -247,27 +334,159 @@
     0 0 0 4px rgba(56, 189, 248, 0.16);
 }
 
+/* ---- 8) Specular — pointerga ergashib yuradigan yorug'lik ---- */
+.dark .liquid-glass::before,
+.dark .liquid-glass-card::before,
+.dark .liquid-glass-nav::before,
+.dark .liquid-glass-pill::before,
+.dark .liquid-glass-input::before,
 .light .liquid-glass::before,
 .light .liquid-glass-card::before,
+.light .liquid-glass-nav::before,
 .light .liquid-glass-pill::before,
 .light .liquid-glass-input::before {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: radial-gradient(520px circle at var(--mx) var(--my), rgba(255, 255, 255, 0.35), transparent 42%);
+  background: radial-gradient(520px circle at var(--mx, 50%) var(--my, 50%), var(--lg-spec), transparent 42%);
   pointer-events: none;
   z-index: 2;
   opacity: 0;
   transition: opacity 0.4s ease;
 }
 @media (hover: hover) {
+  .dark .liquid-glass:hover::before,
+  .dark .liquid-glass-card:hover::before,
+  .dark .liquid-glass-nav:hover::before,
+  .dark .liquid-glass-input:focus-within::before,
   .light .liquid-glass:hover::before,
   .light .liquid-glass-card:hover::before,
-  .light .liquid-glass-pill:hover::before,
+  .light .liquid-glass-nav:hover::before,
   .light .liquid-glass-input:focus-within::before {
     opacity: 1;
   }
+}
+
+/* =============================================================================
+   9) 🔴 `position` QAT'IY OVERRIDE
+
+   MUAMMO: `.dark .liquid-glass` va `.light .liquid-glass` specificity
+   (0,2,0) bo'lgani uchun Tailwind'ning `.fixed` (0,1,0) utilitasini
+   BEKOR QILARDI:
+
+       .dark .liquid-glass { position: relative; }   ← yutadi
+       .fixed               { position: fixed; }     ← o'chadi
+
+   Natija: menyu `fixed` emas, `relative` bo'lib qoladi va SAHIFA BILGA
+   birga scroll qiladi. Mijoz xabari: «Xarid bosganda pasga tushib
+   ketadi, To'ldirishda qaytadi, Profilda butunlay yo'qoladi».
+
+   YECHIM: `liquid-glass-fixed` — specificity (0,3,0), shuning uchun
+   `.fixed` ni qaytarib beradi. Faqat menyular uchun ishlatiladi. */
+.dark .liquid-glass.fixed-pos,
+.light .liquid-glass.fixed-pos,
+.dark .liquid-glass-nav.fixed-pos,
+.light .liquid-glass-nav.fixed-pos {
+  position: fixed;
+}
+
+/* =============================================================================
+   10) SCROLL EDGE EFFECT
+
+   Apple: «Scroll views offer a scroll edge effect that helps maintain
+   sufficient legibility and contrast for controls by obscuring content
+   that scrolls beneath them.»
+
+   Bu — kontent stikchi bar ostida «eriydigan» qatlam. Kontent shaffof
+   oynadan o'tib ketganda matn o'qilmay qolmasin. */
+.glass-scroll-edge::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 28px;
+  pointer-events: none;
+  z-index: -1;
+  background: linear-gradient(
+    to bottom,
+    var(--lg-tint-14),
+    rgba(0, 0, 0, 0)
+  );
+}
+.light .glass-scroll-edge::after {
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.85),
+    rgba(255, 255, 255, 0)
+  );
+}
+
+/* =============================================================================
+   11) 🔴 SHAFFOZLIK KAMAYTIRILSA / KONTRAST KUCHAYTIRILSA
+
+   Apple: «people can ... turn on accessibility settings that reduce
+   transparency or motion ... These settings can remove or modify certain
+   effects. If you use standard components ... this experience adapts
+   automatically. Ensure you test your app's CUSTOM elements ... with
+   different configurations of these settings.»
+
+   Bizning barcha glass — CUSTOM. Demak biz ham moslashishimiz SHART.
+   Shuning uchun `.reduce-transparency` (qo'lda) + media query
+   (avtomatik) ikkalasi ham blur ni OLIB TASHLADI va materialni
+   qattiq (solid) qiladi. */
+@media (prefers-reduced-transparency: reduce) {
+  .dark .liquid-glass, .dark .liquid-glass-card, .dark .liquid-glass-nav,
+  .light .liquid-glass, .light .liquid-glass-card, .light .liquid-glass-nav {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .dark .liquid-glass, .dark .liquid-glass-card, .dark .liquid-glass-nav,
+  .dark .liquid-glass-pill {
+    background: #16171f !important;
+  }
+  .light .liquid-glass, .light .liquid-glass-card, .light .liquid-glass-nav,
+  .light .liquid-glass-pill {
+    background: #ffffff !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .dark .liquid-glass, .dark .liquid-glass-card, .dark .liquid-glass-nav,
+  .dark .liquid-glass-pill, .dark .liquid-glass-input {
+    background: rgba(10, 11, 16, 0.96) !important;
+    border-color: rgba(255, 255, 255, 0.45) !important;
+  }
+  .light .liquid-glass, .light .liquid-glass-card, .light .liquid-glass-nav,
+  .light .liquid-glass-pill, .light .liquid-glass-input {
+    background: #ffffff !important;
+    border-color: rgba(0, 0, 0, 0.35) !important;
+  }
+}
+
+/* 🔴 QO'LDA yoqish (Profil → Sozlamalar). Apple: «increased contrast
+   option for each variant» — bu shu. */
+.reduce-transparency .dark .liquid-glass,
+.reduce-transparency .dark .liquid-glass-card,
+.reduce-transparency .dark .liquid-glass-nav,
+.reduce-transparency .light .liquid-glass,
+.reduce-transparency .light .liquid-glass-card,
+.reduce-transparency .light .liquid-glass-nav {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.reduce-transparency .dark .liquid-glass,
+.reduce-transparency .dark .liquid-glass-card,
+.reduce-transparency .dark .liquid-glass-nav,
+.reduce-transparency .dark .liquid-glass-pill {
+  background: #16171f !important;
+}
+.reduce-transparency .light .liquid-glass,
+.reduce-transparency .light .liquid-glass-card,
+.reduce-transparency .light .liquid-glass-nav,
+.reduce-transparency .light .liquid-glass-pill {
+  background: #ffffff !important;
 }
 
 /* ---- LIQUID LENS ORB (center dock button) ---- */

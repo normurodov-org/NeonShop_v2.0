@@ -55,7 +55,16 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     return (
       <nav
         aria-label="Asosiy menyu"
-        className="fixed left-4 top-1/2 -translate-y-1/2 z-40 w-[92px] rounded-[28px] liquid-glass p-2 flex flex-col gap-1.5 shadow-[0_20px_50px_rgba(0,0,0,0.35)]"
+        /* 🍎 APPLE: navigatsiya — KONTEKST DAN AJRATILGAN funksional qatlam.
+           `liquid-glass-nav` — alohida material (karta emas).
+           `fixed-pos` — 🔴 `.dark .liquid-glass` specificity (0,2,0) bilan
+           Tailwind `.fixed` (0,1,0) ni bekor qilardi → menyu `relative`
+           bo'lib, sahifa bilan birga scroll qilardi («Xarid bosganda pasga
+           tushib ketadi»).
+           `max-h` — 🔴 pastki ekranda (700px) 377px balandlikdagi menyu
+           796px da tugab, «Profil» butunlay ko'rinmasdi. Endi sigadi va
+           kerak bo'lsa o'z ichida siljiydi. */
+        className="fixed-pos liquid-glass-nav fixed left-4 top-1/2 -translate-y-1/2 z-40 w-[92px] rounded-[28px] p-2 flex flex-col gap-1.5 max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain"
       >
         {TABS.map(({ id, icon: Icon }) => {
           const active = currentTab === id;
@@ -102,7 +111,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // =======================================================================
   return (
     <div className="fixed bottom-4 left-4 right-4 max-w-md mx-auto z-40 pointer-events-none">
-      <nav className="pointer-events-auto relative liquid-glass rounded-full px-2.5 py-1.5 flex items-center justify-between shadow-[0_20px_50px_rgba(0,0,0,0.45)]">
+      {/* 🍎 `liquid-glass-nav` — pastki panel ham funksional qatlam.
+          `fixed-pos` — yuqoridagi sabab bo'yicha. */}
+      <nav className="pointer-events-auto relative liquid-glass-nav fixed-pos rounded-full px-2.5 py-1.5 flex items-center justify-between">
         {TABS.map(({ id, icon: Icon }) => {
           const active = currentTab === id;
           const isCenter = id === 'buy';

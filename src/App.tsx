@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, StoreSettings, Topup, Order, Contest } from './types';
 import { Lang } from './i18n';
 import { Header } from './components/Header';
@@ -15,7 +15,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { CheckCircle2, ArrowLeft, PauseCircle, ShieldAlert } from 'lucide-react';
 import { useIsDesktop } from './lib/useLayout';
 import { isInsideTelegram, tgHeadersGet } from './lib/tgAuth';
-import TelegramDeepLogin from './components/TelegramDeepLogin';
+import TelegramLogin from './components/TelegramLogin';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('home');
@@ -98,6 +98,43 @@ export default function App() {
   // 📖 Login Widget xatosi alohida — `needTelegram` esa
   // «kirish kerak» holatini bildiradi (401 dan keladi)
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // 🍎 APPLE: «increased contrast option for each variant».
+  //    Shaffoflik kamaytirilganda `backdrop-filter` butunlay o'chadi
+  //    (`.reduce-transparency` — index.css). Tanlov saqlanadi.
+  const [reduceTransparency, setReduceTransparency] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('neon_reduce_transparency') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  // 🔴 `<html>` ga sinf qo'yamiz — CSS `.reduce-transparency` shu yerdan
+  //    ishlaydi. Sahifa bo'ylab barcha shaffof effektlar birdan o'chadi.
+  useEffect(() => {
+    const el = document.documentElement;
+    el.classList.toggle('reduce-transparency', reduceTransparency);
+    try {
+      if (reduceTransparency) window.localStorage.setItem('neon_reduce_transparency', '1');
+      else window.localStorage.removeItem('neon_reduce_transparency');
+    } catch { /* private mode */ }
+  }, [reduceTransparency]);
+
+  const handleToggleTransparency = useCallback(() => {
+    setReduceTransparency((v) => !v);
+  }, []);
+
+  /** 🛑️ Log out — serverdagi sessiya ham o'chganidan keyin
+   *    kirish ekraniga qaytamiz. */
+  const handleLoggedOut = useCallback(() => {
+    setUser(null);
+    setSettings(null);
+    setHistory([]);
+    setActiveTopup(null);
+    setNeedTelegram('Chiqdingiz. Qayta kiring.');
+    window.location.reload();
+  }, []);
 
   // 🔶 Telegram ICHIDA yoki BRAUZERDAmi? Brauzerda Login
   //  Widget kerak; Telegram ichida — hech narsa ko'rsatilmaydi
@@ -499,14 +536,40 @@ export default function App() {
                   `t.me/<bot>?start=<kod>` ni ochamiz → mijoz Telegram'da
                   Start bosadi → bot.py kodni yozadi → biz sessiya
                   olamiz. Popup, CORS va third-party cookie umuman yo'q. */}
-              <TelegramDeepLogin
+              {/* 🔐 TELEGRAM LOGIN WIDGET — Telegram'ning rasmiy
+                  kirish tugmasi (popup oqimi).
+
+                  🔴🔴 BU YO'L 3 MARTA ISHLAMADI, SHUNING UCHUN HAR BIR
+                  NUQTA QAYTA KO'RILDI (barchasi Telegram'ning o'z
+                  skriptlaridan `telegram-widget.js` / `widget-frame.js`
+                  o'qib olingan):
+
+                  1) `data-onauth` — yo'q bo'lsa `onAuthUser = undefined`
+                     → popup ochiladi, yopiladi, HECH NARSA chaqirilmaydi.
+                  2) `data-onunauth` — natija kelmasa
+                     `{event:'unauthorized'}` → `onUnauth && onUnauth()`
+                     → eski kodda bu handler YO'Q EDI → sahifa jimgina
+                     o'z-o'zidan qolardi.
+                  3) `window.open` kuzatuvchisi — tugma IFRAME ichida,
+                     lekin `window.open` bizning oynamiz orqali o'tadi
+                     → 12 soniyada natija kelmasa aniq xabar beriladi
+                     (jimgina qolmaydi).
+                  4) «Qayta urinish» iframe'ni QAYTA YARATADI —
+                     `TWidgetLogin.authFinished` faqat shunda sifirlanadi. */}
+              <TelegramLogin
+                botUsername={BOT_USERNAME}
                 isDark={isDark}
                 onSuccess={() => {
                   setLoginError(null);
                   setNeedTelegram(null);
                   window.location.reload();
                 }}
-                onError={(msg) => setLoginError(msg)}
+                onError={(msg) => {
+                  // 🔔 Bo'sh satr — bu xatoni tozalash (watchdog
+                  // ishga tushganda yuboradi)
+                  if (msg) setLoginError(msg);
+                  else setLoginError(null);
+                }}
               />
 
               {loginError && (
@@ -577,7 +640,7 @@ export default function App() {
   }
 
   return (
-    <div className={`${theme} min-h-screen ${isDark ? 'bg-[#000000] text-neutral-100' : 'bg-[#f2f2f7] text-neutral-900'} relative overflow-x-hidden transition-colors duration-300 font-sans`}>
+    <div className={`${theme} min-h-screen ${isDark ? 'bg-[#000000] text-neutral-100' : 'bg-[#f2f2f7] text-neutral-900'} relative overflow-x-clip transition-colors duration-300 font-sans`}>
       {/* LiquidPointer — glass specular yorug'i + aurora parallaks */}
       <LiquidPointer />
 
@@ -719,6 +782,9 @@ export default function App() {
             onGoToTopup={() => setCurrentTab('topup')}
             onOpenAdmin={() => setCurrentTab('admin')}
             isAdmin={isAdmin}
+            onLoggedOut={handleLoggedOut}
+            reduceTransparency={reduceTransparency}
+            onToggleTransparency={handleToggleTransparency}
           />
         )}
         </ErrorBoundary>

@@ -714,13 +714,23 @@ export const NftRentView: React.FC<NftProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5 gap-3">
+                  {/* 🍌 APPLE: «Liquid Glass seeks to bring attention to the
+                      underlying content ... overusing this material in multiple
+                      custom controls can provide a subpar user experience by
+                      distracting from that content.»
+
+                      🔴 AVVAL har bir karta `liquid-glass` = 18 ta alohida
+                      `backdrop-filter` qatlami, faqat karta uchun. Karta —
+                      KONTENT, funksional qatlam emas. Endi
+                      `liquid-glass-surface` (blur yo'q): ko'rinish bir xil,
+                      qurilma yuklanmaydi, karta o'z rasmiga fokuslanadi. */}
               {shown.map((n, idx) => (
                 <button
                   key={n.id}
                   onClick={() => open(n)}
                   style={{ ['--i' as string]: Math.min(idx, 8) }}
-                  className={`text-left rounded-[24px] overflow-hidden liquid-glass apple-spring
-                              nft-card-in cursor-pointer group`}
+                  className={`text-left rounded-[24px] overflow-hidden liquid-glass-surface apple-spring
+                    nft-card-in cursor-pointer group`}
                 >
                   <div className="relative aspect-square overflow-hidden">
                     <NftImage
@@ -736,9 +746,21 @@ export const NftRentView: React.FC<NftProps> = ({
                         e.stopPropagation();
                         toggleFav(n.id);
                       }}
+                      /* 🍎 APPLE: «Avoid overusing Liquid Glass effects ...
+                         Limit these effects to the most important functional
+                         elements in your app.»
+
+                         🔴 AVVAL `backdrop-blur-md` — 18 ta karta = 18 ta
+                         alohida blur qatlami. Ekran 42 ta `backdrop-filter`
+                         elementiga chiqqan edi.
+
+                         Endi `blur` yo'q, lekin oqimlik YETARLI (55%),
+                         shuning uchun istalgan rasm ustida o'qiladi.
+                         (Apple: «Limit the use of Liquid Glass effects
+                         onscreen at the same time».) */
                       className={`absolute top-2 right-2 w-8 h-8 rounded-full flex items-center
-                                  justify-center backdrop-blur-md apple-spring cursor-pointer
-                                  ${fav[n.id] ? 'bg-[var(--accent)]' : 'bg-black/45 text-white'}`}
+                                  justify-center apple-spring cursor-pointer
+                                  ${fav[n.id] ? 'bg-[var(--accent)]' : 'bg-black/55 text-white'}`}
                       aria-label="Tanlangan"
                     >
                       <Heart className={`w-4 h-4 ${fav[n.id] ? 'fill-white' : ''}`} />

@@ -287,7 +287,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
   };
 
   return (
-    <div className="space-y-4 max-w-md md:max-w-3xl md:px-6 mx-auto pb-28 md:pb-10 apple-view-animate">
+    <div className="space-y-4 max-w-md md:max-w-none lg:px-6 xl:px-10 mx-auto pb-28 md:pb-10 apple-view-animate">
       {/* Title & Exchange rate header */}
       <div className="flex items-center justify-between">
         <h2 className={`text-xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>{t.buy}</h2>
@@ -496,6 +496,12 @@ export const BuyView: React.FC<BuyViewProps> = ({
       </div>
 
       {/* Stars Amount Selection */}
+      {/* 📐 FORM bo'limlari (Stars / Premium / Gift) o'qish uchun TOR
+          qoladi — butun ekran keng bo'lishi mumkin emas. Faqat NFT
+          (katalog — rasm va filtrlar) to'liq kenglikda yoyiladi.
+          Mijozning so'rovi: «desktopda qizil bilan belgilangan bo'limni
+          yanada kengaytir». */}
+      <div className={`md:max-w-3xl mx-auto w-full ${subTab === 'nft' ? 'hidden' : ''}`}>
       {subTab === 'stars' && (
         <div className="rounded-[26px] liquid-glass-card p-4 space-y-3">
           <div className="flex items-center justify-between text-xs">
@@ -712,16 +718,6 @@ export const BuyView: React.FC<BuyViewProps> = ({
         </div>
       )}
 
-      {/* NFT RENT — ro'yxat, muddat tanlash va hisob (2-rasmdagi dizayn) */}
-      {subTab === 'nft' && (
-        <NftRentView
-          isDark={isDark}
-          userId={user?.id}
-          balance={user?.balance || 0}
-          onGoToTopup={onGoToTopup}
-          onRented={onRented}
-        />
-      )}
 
       {/* Error display */}
       {error && (
@@ -762,6 +758,17 @@ export const BuyView: React.FC<BuyViewProps> = ({
               : 'Gift yuborish'}
         </span>
       </button>
+      )}
+      </div>
+
+      {subTab === 'nft' && (
+        <NftRentView
+          isDark={isDark}
+          userId={user?.id}
+          balance={user?.balance || 0}
+          onGoToTopup={onGoToTopup}
+          onRented={onRented}
+        />
       )}
     </div>
   );

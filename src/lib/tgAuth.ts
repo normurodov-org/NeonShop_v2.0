@@ -67,6 +67,30 @@ export function setSessionToken(token: string): void {
   }
 }
 
+/**
+ * 🛑️ Chiqish (Log out).
+ *
+ * 🔴 NIMA UCHUN `setSessionToken('')` EMAS? Chunki u shunchaki
+ *    `localStorage` dan o'chiredi. Sessiya serverda (`*_sessions.json`)
+ *    ham qoladi — token o'g'irlangan bo'lsa, odam boshqa qurilmadan
+ *    foydalanib tura olardi. Shuning uchun avval serverga xabar
+ *    beramiz, keyin o'chiramiz.
+ */
+export async function logout(): Promise<void> {
+  const token = sessionToken();
+  try {
+    if (token) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      });
+    }
+  } catch {
+    /* tarmoq yo'q — mahalliy tozalash baribir ishlaydi */
+  }
+  setSessionToken('');
+}
+
 /** Faqat `initData` + sessiya header'lar (GET uchun). */
 export function tgHeadersGet(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = {
