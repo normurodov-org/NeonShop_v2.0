@@ -59,25 +59,70 @@ APP_CODE = strip_code(APP)
 LOGIN_CODE = strip_code(LOGIN)
 
 # =============================================================================
-section("1) 🔴🔴 BIR TAB — ikkinchi tab OCHILMAYDI")
+section("1) 🔴🔴🔴 JAMOI TAB HEQ QACHON KOʼCHMAYDI / YOPILMAYDI")
 # =============================================================================
-# 📜 Asosiy yoʴl BIR TABDA; `window.open` faqat ZAXIRA yoʴlda
-#    (Telegram ilovasini ochish uchun) — bu toʸgʸri.
-check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
-      "📜 asosiy tugma bir tabda (OAuth sahifasi)")
-check("/api/auth/telegram/start" in LOGIN, "🌐 zaxira yoʴl: kod soʸraladi")
-check("/api/auth/telegram/status" in LOGIN, "🌐 zaxira yoʴl: javob kutiladi")
-check('data-testid="tg-login-deep"' in LOGIN, "🌐 zaxira tugmasi bor")
-check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
-      "📖 asl tab o'zi Telegram'ga boradi")
-check("pollRef" not in LOGIN_CODE,
-      "🔴 polling kerak emas (bir tabda tabiiy ravishda qaytamiz)")
+# 📜📜📜 ASOSIY TUGMA — Telegram ILOVASI orqali (deep link).
+#    🔴 `oauth.telegram.org/auth` brauzerda TAB ichida ochilganda Telegram
+#    uni oʼzini yopadi → shuning uchun bu zaxira yoʽl, asosiy emas.
+check('data-testid="tg-login"' in LOGIN, "📜 asosiy tugma bormi")
+check("onClick={deepStart}" in LOGIN,
+      "📜📜 ASOSIY tugma deep link ga ulangan (Telegram ilovasi)")
+check("/api/auth/telegram/start" in LOGIN, "📜 kod soʸraladi (`/start`)")
+check("telegram_url" in LOGIN, "📜 Telegram ilova havolasi")
 
-# =============================================================================
+# 🔴🔴🔴 MIJOZGA QOʸLDA: «bosdim → tab yopildi»
+#    — BU BOʸLMAYDI. Jamiy tab hech qachon `location` ga yozilmaydi.
+check("window.location.href = telegramAuthUrl" not in LOGIN,
+      "🔴🔴🔴 jamiy tab Telegram ga KOʼCHMAYDI")
+check("location.assign" not in LOGIN and "location.replace(" not in LOGIN,
+      "🔴🔴🔴 jamiy tab boshqa manzilga YUBORILMAYDI")
+check("window.open('', '_blank')" in LOGIN,
+      "🔴🔴🔴 Telegram YANGI oynada ochiladi (boʸsh oyna avval)")
+
+# 🔴 Popup bloklanmasligi uchun `window.open` `await` DAN OLDIN
+check(LOGIN.index("const w = openBlank();")
+      < LOGIN.index("await fetch('/api/auth/telegram/start'"),
+      "🔴🔴 oyna `await` dan OLDIN ochiladi (popup bloklanmasin)")
+
+# 🔴 Natija `localStorage` orqali uzatiladi (postMessage/COOP yoʸq)
+check("waitForResult" in LOGIN, "🔴 natija kutiladi")
+check("sessionToken()" in LOGIN, "🔴🔴 `localStorage` orqali sezish")
+check("postMessage" not in LOGIN_CODE,
+      "🔴🔴🔴 `postMessage` yoʸq (COOP/COEP muammosi boʸlmaydi)")
+check("w.location.href = url" in LOGIN, "🔴 yangi oyna Telegram ga yuboriladi")
+# 🔴🔴🔴 DEEP LINK UCHUN `/status` POLLI SHART.
+#    `t.me` oynasi saytimizga QAYTMAGANI uchun token faqat server orqali
+#    keladi — bu yoʸl boʸlmasa deep link umuman ishlamaydi.
+check("/api/auth/telegram/status?code=" in LOGIN,
+      "🔴🔴🔴 deep link natijasi server dan olinadi (`/status`)")
+check("waitForResult(j.code)" in LOGIN,
+      "🔴🔴🔴 kod poller ga uzatiladi")
+check("setSessionToken(j.token)" in LOGIN,
+      "🔴🔴🔴 token `localStorage` ga yoziladi")
+check("sessionToken()" in LOGIN,
+      "🔴🔴🔴 OAuth uchun `localStorage` ham tekshiriladi")
+
+# 🔴 Popup bloklanganda — havola koʸrsatiladi, jamiy tab qoladi
+check("setFallbackUrl" in LOGIN, "🔴 bloklanganda havola koʸrsatiladi")
+check('data-testid="tg-login-fallback"' in LOGIN, "🔴 zaxira havola testlanadi")
+
+# 🟡 ZAXIRA — Telegram web (oauth.telegram.org)
+check('data-testid="tg-login-oauth"' in LOGIN, "🟡 zaxira tugmasi (web) bor")
+check("oauthStart" in LOGIN, "🟡 zaxira OAuth funksiyasi bor")
+check("pointWindow(w, url)" in LOGIN and "telegramAuthUrl(botId)" in LOGIN,
+      "🟡 zaxira OAuth HAM yangi oynada ochiladi")
+
+# 🔴 Qaytishni oʸzimiz oʸqitamiz
+check("readTelegramAuthResult" in LOGIN, "📖 qaytishni oʸzimiz oʸqitamiz")
+check("Telegram tasdiqlamadi" in LOGIN,
+      "🔴🔴 tasdiqlamasa xabar beriladi (jimgina qolmaydi)")
+check("parts.join('&')" in LOGIN, "🔴🔴 QUERY STRING (server kutadi)")
+check("M9.78 18.65" in LOGIN, "📖 rasmiy Telegram icon")
 section("2) 🔴 RASMIY OAUTH URL")
 # =============================================================================
 check("telegramAuthUrl" in LOGIN, "URL quruvchi funksiya bor")
-check("https://oauth.telegram.org/auth?" in LOGIN, "🔴 RASMIY manzil")
+check("TG_AUTH_ORIGIN = 'https://oauth.telegram.org'" in LOGIN
+      and "/auth?" in LOGIN, "🔴 RASMIY manzil")
 check("bot_id:" in LOGIN, "🔴 `bot_id` (nomi emas, RAQAM)")
 check("origin," in LOGIN, "🔴 `origin` — sayt manzili")
 check("return_to:" in LOGIN, "🔴 `return_to` — qaytish manzili")
@@ -123,10 +168,11 @@ check('createHash("sha256").update(token' in SERVER,
 # =============================================================================
 section("6) 🧹 TOZA LIK va UX")
 # =============================================================================
-check("setBusy(true)" in LOGIN, "📢 qayta yuborish bloklanadi")
+check("{wait ? (" in LOGIN, "📢 qayta bosish bloklanadi (kutish holati)")
 check("setSessionToken" in LOGIN, "sessiya saqlanadi")
 check("Bekor qilish" in LOGIN, "🛑️ bekor qilish (orqaga qaytish)")
-check("history.back()" in LOGIN, "📖 bekor qilish — orqaga qaytadi")
+check("onClick={stopWaiting}" in LOGIN,
+      "📖 bekor qilish — kutishni toʸxtatadi (orqaga QAYTMAYDI)")
 check('data-testid="tg-login"' in LOGIN, "📌 tugma testlanadi")
 check('data-testid="tg-login-retry"' in LOGIN, "📌 qayta urinish testlanadi")
 

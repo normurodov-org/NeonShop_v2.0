@@ -152,73 +152,54 @@ section("7) 🔐 📖 WEBSITE KIRISH — Telegram rasmiy OAuth")
 #   tasdiqlagach `return_to#tgAuthResult=...` ga qaytaradi, qaytishni
 #   TUGINKI o'zimiz qaytaramiz.
 check("telegramAuthUrl" in LOGIN, "🌐 rasmiy OAuth URL quruvchisi")
-check("https://oauth.telegram.org/auth?" in LOGIN, "🔴🔴 RASMIY manzil")
-# 🔴 Ikkinchi tab umuman ochilmaydi
-# 📜 ASOSIY tugma — BIR TABDA (ikkinchi tab ochilmaydi).
-#    🔶 `window.open` ZAXIRA yoʸlda (Telegram ILOVASINI ochish uchun)
-#    ishlatiladi — bu toʸgʸri, shuning uchun YOʸQLIGI tekshirilmaydi.
-check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
-      "📜📜 asosiy tugma bir tabda (OAuth sahifasi)")
+check("TG_AUTH_ORIGIN = 'https://oauth.telegram.org'" in LOGIN
+      and "/auth?" in LOGIN, "🔴🔴 RASMIY manzil")
 
-# 🌐 ZAXIRA YOʸL — Telegram ilovasi orqali. Bu domen
-#    roʼyxatidan qatʴ nazar — shuning uchun mijoz hech qachon
-#    saytga kira olmay qolmaydi.
-check("/api/auth/telegram/start" in LOGIN, "🌐 zaxira: kod soʸraladi")
-check("/api/auth/telegram/status" in LOGIN, "🌐 zaxira: javob kutiladi")
-check('data-testid="tg-login-deep"' in LOGIN, "🌐 zaxira tugmasi testlanadi")
-check("window.location.href = telegramAuthUrl(botId)" in LOGIN,
-      "📖 asl tab oʸzi Telegramʼaga boradi")
-check("?tg=1" in LOGIN, "📖 `return_to` da `?tg=1` marker")
-check("cameBack" in LOGIN, "📖 «qaytib keldi» aniqlanadi")
-check("Telegram tasdiqlamadi" in LOGIN,
-      "🔴🔴 tasdiqlamasa xabar beriladi")
+# 📜📜📜 ASOSIY TUGMA — Telegram ILOVASI orqali (deep link).
+#    🔴 `oauth.telegram.org/auth` brauzerda TAB ichida ochilganda Telegram
+#    uni oʼzini yopadi → shuning uchun bu zaxira yoʽl, asosiy emas.
+check('data-testid="tg-login"' in LOGIN, "📜 asosiy tugma bormi")
+check("onClick={deepStart}" in LOGIN,
+      "📜📜 ASOSIY tugma deep link ga ulangan (Telegram ilovasi)")
+check("/api/auth/telegram/start" in LOGIN, "📜 kod soʸraladi (`/start`)")
+check("telegram_url" in LOGIN, "📜 Telegram ilova havolasi")
+
+# 🟡 ZAXIRA — Telegram web (oauth.telegram.org)
+check('data-testid="tg-login-oauth"' in LOGIN, "🟡 zaxira tugmasi (web) bor")
+check("oauthStart" in LOGIN, "🟡 zaxira OAuth funksiyasi bor")
+
+# 🔴🔴🔴 JAMOI TAB HEQ QACHON KOʼCHMAYDI/YOPILMAYDI
+check("window.location.href = telegramAuthUrl" not in LOGIN,
+      "🔴🔴🔴 jamiy tab Telegram ga KOʼCHMAYDI")
+check("location.assign" not in LOGIN and "location.replace(" not in LOGIN,
+      "🔴🔴🔴 jamiy tab YUBORILMAYDI")
+check("window.open('', '_blank')" in LOGIN,
+      "🔴🔴🔴 Telegram YANGI oynada ochiladi")
+check(LOGIN.index("const w = openBlank();")
+      < LOGIN.index("await fetch('/api/auth/telegram/start'"),
+      "🔴🔴 oyna `await` dan OLDIN ochiladi (popup bloklanmasin)")
+check("sessionToken()" in LOGIN, "🔴🔴 natija `localStorage` orqali")
+check("postMessage" not in LOGIN_CODE, "🔴🔴🔴 `postMessage` yoʸq (COOP xavfsiz)")
+check("w.location.href = url" in LOGIN, "🔴 yangi oyna Telegram ga yuboriladi")
+# 🔴🔴🔴 DEEP LINK UCHUN `/status` POLLI SHART.
+#    `t.me` oynasi saytimizga QAYTMAGANI uchun token faqat server orqali
+#    keladi — bu yoʸl boʸlmasa deep link umuman ishlamaydi.
+check("/api/auth/telegram/status?code=" in LOGIN,
+      "🔴🔴🔴 deep link natijasi server dan olinadi (`/status`)")
+check("waitForResult(j.code)" in LOGIN,
+      "🔴🔴🔴 kod poller ga uzatiladi")
+check("setSessionToken(j.token)" in LOGIN,
+      "🔴🔴🔴 token `localStorage` ga yoziladi")
+check("sessionToken()" in LOGIN,
+      "🔴🔴🔴 OAuth uchun `localStorage` ham tekshiriladi")
+check("setFallbackUrl" in LOGIN, "🔴 popup bloklanganda havola koʸrsatiladi")
+
+# 🔴 Qaytishni oʸzimiz oʸqitamiz
 check("readTelegramAuthResult" in LOGIN, "📖 qaytishni oʸzimiz oʸqitamiz")
+check("Telegram tasdiqlamadi" in LOGIN,
+      "🔴🔴 tasdiqlamasa xabar beriladi (jimgina qolmaydi)")
 check("parts.join('&')" in LOGIN, "🔴🔴 QUERY STRING (server kutadi)")
 check("M9.78 18.65" in LOGIN, "📖 rasmiy Telegram icon")
-check('data-testid="tg-login"' in LOGIN, "📖 tugma testlanadi")
-
-check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
-check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
-check("inBrowser" in APP, "brauzer alohida ko'rib chiqiladi")
-check("X-Session-Token" in AUTH, "sessiya header'i bor")
-check("tgHeadersGet" in AUTH, "GET uchun yordamchi")
-check("tgHeaders" in AUTH, "POST uchun yordamchi")
-check("headers: tgHeadersGet(" in APP, "🔴 App'ning asosiy so'rovi sessiya yuboradi")
-check(APP.count("x-telegram-init-data") == 0,
-      "🔴 qo'lda header bloki qolmadi (sessiya yuborilmas edi)")
-check(APP.count("headers: tgHeadersGet(") >= 2,
-      "poller ham sessiya yuboradi (avto-to'ldirish ishlaydi)")
-
-check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
-check("inBrowser" in APP, "brauzer alohida ko'rib chiqiladi")
-check("X-Session-Token" in AUTH, "sessiya header'i bor")
-check("tgHeadersGet" in AUTH, "GET uchun yordamchi")
-check("tgHeaders" in AUTH, "POST uchun yordamchi")
-
-# 🔴 ENG MUHIM: App ning o'z so'rovi ham sessiya yuborishi SHART.
-check("headers: tgHeadersGet(" in APP, "🔴 App'ning asosiy so'rovi sessiya yuboradi")
-check(APP.count("x-telegram-init-data") == 0,
-      "🔴 qo'lda header bloki qolmadi (sessiya yuborilmas edi)")
-check(APP.count("headers: tgHeadersGet(") >= 2,
-      "poller ham sessiya yuboradi (avto-to'ldirish ishlaydi)")
-
-check("isInsideTelegram()" in APP, "Telegram ichimi aniqlanadi")
-check("inBrowser" in APP, "brauzer alohida ko\u0027rib chiqiladi")
-check("X-Session-Token" in AUTH, "sessiya header'i bor")
-check("tgHeadersGet" in AUTH, "GET uchun yordamchi")
-check("tgHeaders" in AUTH, "POST uchun yordamchi")
-
-# 🔴 ENG MUHIM: App ning o\u002z so\u002rovi ham sessiya yuborishi SHART.
-#    Aks holda brauzerda kirgandan keyin ham \u00abTelegram orqali kiring\u00bb
-#    ekranida qolardi (brauzerda aniqlandi: `/api/me` -> 200, lekin UI
-#    kirish ekranida qolgan edi).
-check("headers: tgHeadersGet(" in APP, "\U0001F534 App\u0021ng asosiy so\u0027rovi sessiya yuboradi")
-check(APP.count("x-telegram-init-data") == 0,
-      "\U0001F534 qo\u0027lda header bloki qolmadi (sessiya yuborilmas edi)")
-check(APP.count("headers: tgHeadersGet(") >= 2,
-      "poller ham sessiya yuboradi (avto-to\u0027ldirish ishlaydi)")
-
-# =============================================================================
 section("8) 🔐 «BOTGA O'TISH» TUGMASI BO'LMASIN")
 # =============================================================================
 # Mijozning so'rovi: "bu tugma umuman kerakmas ... Botga o'tishi
@@ -237,7 +218,7 @@ check("href={BOT_WEBAPP_URL}" not in APP and "href=\"https://t.me/" not in APP,
 
 section("9) 🔐 KIRISH TUGMASI VA XATO HOLATLARI")
 # =============================================================================
-check("setBusy(true)" in LOGIN, "📢 qayta yuborish bloklanadi")
+check("{wait ? (" in LOGIN, "📢 qayta bosish bloklanadi (kutish holati)")
 check("setErr(" in LOGIN, "🔔 xato holati bor")
 check('data-testid="tg-login-retry"' in LOGIN, "🔄 xatodan keyin qayta urinish")
 check("bot_username" in read("server.ts"), "server bot nomini qaytaradi")
