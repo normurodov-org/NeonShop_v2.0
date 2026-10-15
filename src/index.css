@@ -192,6 +192,54 @@
   --lg-r-pill: 999px;
 }
 
+/* ---- 1b) 🔴🔴 CHAP MENYU (desktop rail) O'LCHAMLARI ----
+ *
+ *  Bu uchta son BOTTOM NAV va KONTENT oralig'ini bog'laydi. Avval
+ *  `92px` raqam `BottomNav.tsx` da, `124px` esa `App.tsx`/`Header.tsx`
+ *  da alohida yozilgan edi — biri o'zgarsa ikkinchisi ortda qoladi.
+ *  Endi bitta manba: `index.css`.
+ */
+:root {
+  --rail-w: 92px;        /* menyuning o'z kengligi */
+  --rail-inset: 16px;    /* `left-4` — ekrandan chekka */
+  --rail-gap: 16px;      /* menyu bilan kontent orasidagi bo'shliq */
+  /* 16 + 92 + 16 = 124px — kontent shundan keyin boshlanadi */
+  --rail-clear: calc(var(--rail-w) + var(--rail-inset) + var(--rail-gap));
+}
+
+/* 🔴🔴🔴 ASOSIY TUZATISH — «Navigatsiya paneli yozuvlar ustiga chiqib
+ *    qoldi».
+ *
+ *    NIMA BO'LGAN EDI:
+ *      <main className="px-4 md:px-6 md:pl-[124px] xl:px-10 …">
+ *      <header className="md:px-6 md:pl-[124px] xl:px-10 …">
+ *
+ *      Tailwind bitta faylda shunday tartibda chiqaradi:
+ *        .md\:px-6   { padding-inline: 1.5rem }   ← 1
+ *        .md\:pl-[124px] { padding-left: 124px }   ← 2
+ *        .xl\:px-10  { padding-inline: 2.5rem }    ← 3  🔴
+ *
+ *      `xl:px-10` `padding-inline` ORQALI chap tomonni ham qayta
+ *      yozadi va CSS da KEYIN turadi → ≥1280px da chap bo'shliq
+ *      124px emas, 40px bo'lib qoladi. Natijada 92px kenglikdagi
+ *      menyu (16…108px) kontent ustiga 68px CHIQIB KETADI.
+ *      O'lchangan: 1400px ekranda `main` padding-left = 40px,
+ *      menyu o'ng chetig'i = 108px → qoplanish 68px.
+ *
+ *    ✅ YECHIM:
+ *      1) Bu qoida klass ichida EMAS, shu faylda — va
+ *      2) `html body .rail-clear` → specificity (0,1,2), ya'ni
+ *         `.xl\:px-10` ning (0,1,0) dan USTUN. Shuning uchun
+ *         klass TARTIBI qancha bo'lsa ham yengmaydi.
+ *
+ *    📌 Telefonda (≤767px) ishlamaydi — u yerda menyu pastda.
+ */
+@media (min-width: 768px) {
+  html body .rail-clear {
+    padding-left: var(--rail-clear);
+  }
+}
+
 /* ---- 2) Materiya asosi ---- */
 .dark {
   --lg-tint: 255 255 255;

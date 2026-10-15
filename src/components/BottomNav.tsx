@@ -63,8 +63,14 @@ export const BottomNav: React.FC<BottomNavProps> = ({
            tushib ketadi»).
            `max-h` — 🔴 pastki ekranda (700px) 377px balandlikdagi menyu
            796px da tugab, «Profil» butunlay ko'rinmasdi. Endi sigadi va
-           kerak bo'lsa o'z ichida siljiydi. */
-        className="fixed-pos liquid-glass-nav fixed left-4 top-1/2 -translate-y-1/2 z-40 w-[92px] rounded-[28px] p-2 flex flex-col gap-1.5 max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain"
+         kerak bo'lsa o'z ichida siljiydi.
+
+         🍎 `w-[var(--rail-w)]` va `left-[var(--rail-inset)]` —
+         o'lchamlar `index.css` dagi tokenlardan olinadi. Kontentning
+         chap bo'shlig'i ham `--rail-clear` (bitta manba) — shuning
+         uchun menyu kengaytirilsa, kontent ham o'zi siljiydi
+         (avval ikki raqam alohida yozilgan edi). */
+        className="fixed-pos liquid-glass-nav fixed left-[var(--rail-inset)] top-1/2 -translate-y-1/2 z-40 w-[var(--rail-w)] rounded-[28px] p-2 flex flex-col gap-1.5 max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain"
       >
         {TABS.map(({ id, icon: Icon }) => {
           const active = currentTab === id;

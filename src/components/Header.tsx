@@ -53,10 +53,16 @@ export const Header: React.FC<HeaderProps> = ({
        maintain sufficient legibility and contrast for controls by
        obscuring content that scrolls beneath them.»
        `glass-scroll-edge` — kontent sarlavha ostida eriydi, matn
-       o'qilmay qolmaydi. Avval oddiy `backdrop-blur-2xl` edi. */
+       o'qilmay qolmaydi. Avval oddiy `backdrop-blur-2xl` edi.
+
+       🔴 `rail-clear` — chap menyu bilan qoplanmasligi uchun.
+       Avval `md:pl-[124px]` edi, lekin `xl:px-10` undan KEYIN
+       chiqib, `padding-inline` bilan chapni qayta yozardi
+       (≥1280px da 124px → 40px) va sarlavha menyu ustiga
+       chiqib qolardi. Endi `html body .rail-clear` (0,1,2). */
     <header className="glass-scroll-edge liquid-glass-nav sticky top-0 z-30 px-4 pt-3 pb-2.5 border-b transition-colors duration-300 border-white/[0.08]">
       <div
-        className="max-w-md md:max-w-none md:px-6 md:pl-[124px] xl:px-10 mx-auto flex items-center justify-between gap-2.5"
+        className="max-w-md md:max-w-none md:px-6 xl:px-10 rail-clear mx-auto flex items-center justify-between gap-2.5"
       >
         {/* User Avatar + Greeting */}
         <div className="flex items-center gap-2.5">

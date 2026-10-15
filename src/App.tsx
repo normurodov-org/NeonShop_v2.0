@@ -714,16 +714,26 @@ export default function App() {
       </ErrorBoundary>
 
       {/* Main View Area */}
-      {/* 🔒️ `md:pl-[124px]` — chap menyu uchun xavfsizlik oralig'i.
-        🔴️ AVVAL shartli yozilgan edi: `isDesktop ? 'md:pl-[124px]' : ''`
-        Tailwind v4 skaneri klassni `qo'shtirnoq` ICHIDA topa olmaydi —
-        faqat `pl-[124px]` ni (prefiksiz!) topadi. Natijada build'da
-        `md:pl-[124px]` UMUMAN yo'q edi va kontent chap menyuning
-        ustiga chiqib qolardi.
+      {/* 🔒 `rail-clear` — chap menyu uchun xavfsizlik oralig'i.
 
-        Endi shart kerak emas: `md` breakpoint (768px) bilan
-        `useIsDesktop` breakpoint'i bir xil — `md:` o'zi yetarli. */}
-      <main className="flex-1 max-w-md md:max-w-none w-full mx-auto px-4 md:px-6 md:pl-[124px] xl:px-10 pt-3.5 relative z-10">
+        🔴🔴🔴 NIMA UCHUN ENDI `md:pl-[124px]` EMAS?
+        1) Tailwind v4 skaneri klassni `qo'shtirnoq` ICHIDA topa olmaydi —
+           `isDesktop ? 'md:pl-[124px]' : ''` yozilgan edi, build'da
+           `md:pl-[124px]` UMUMAN yo'q edi → kontent menyu ustiga
+           chiqib qolardi.
+        2) Keyinroq `md:pl-[124px]` statik satrga ko'chirildi va ishladi —
+           LEKIN `xl:px-10` CSS da undan KEYIN chiqadi hamda
+           `padding-inline` orqali chapni qayta yozadi. ≥1280px da
+           chap bo'shliq 40px ga tushib, 92px kenglikdagi menyu
+           kontent ustiga 68px chiqib ketdi (o'lchangan: 1400px
+           ekranda `main` padding-left = 40px, menyu o'ng chetig'i
+           = 108px → qoplanish 68px).
+
+        ✅ Endi `rail-clear` — `src/index.css` dagi
+           `html body .rail-clear` (specificity 0,1,2 > 0,1,0).
+           Klass TARTIBidan qat'i nazar yengmaydi. O'lchamlar
+           `--rail-clear` tokenida (BottomNav bilan bir manba). */}
+      <main className="flex-1 max-w-md md:max-w-none w-full mx-auto px-4 md:px-6 xl:px-10 rail-clear pt-3.5 relative z-10">
         <ErrorBoundary label="Bosh sahifa">
         {currentTab === 'home' && (
           <HomeView

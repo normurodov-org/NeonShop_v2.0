@@ -29,6 +29,7 @@ def read(rel):
 
 APP = read("src/App.tsx")
 NAV = read("src/components/BottomNav.tsx")
+CSS = read("src/index.css")
 HEAD = read("src/components/Header.tsx")
 LAY = read("src/lib/useLayout.ts")
 HOME = read("src/components/views/HomeView.tsx")
@@ -130,7 +131,8 @@ check("md:pb-10" in APP, "pastda bo'sh joy faqat telefonda (desktopda lopol emas
 # =============================================================================
 section("6) \U0001F5A5\uFE0F CHAP MENYU")
 # =============================================================================
-check("fixed left-4 top-1/2" in NAV, "chapga, vertikal markazda")
+check("fixed left-[var(--rail-inset)] top-1/2" in NAV,
+      "chapga, vertikal markazda (token orqali)")
 check('aria-label="Asosiy menyu"' in NAV, "\u00abAsosiy menyu\u00bb (kirish uchun)")
 check("aria-current" in NAV, "faol tab belgilangan")
 
@@ -200,6 +202,65 @@ check("Telegram tasdiqlamadi" in LOGIN,
       "🔴🔴 tasdiqlamasa xabar beriladi (jimgina qolmaydi)")
 check("parts.join('&')" in LOGIN, "🔴🔴 QUERY STRING (server kutadi)")
 check("M9.78 18.65" in LOGIN, "📖 rasmiy Telegram icon")
+
+# =============================================================================
+section("7b) 🔴🔴🔴 NAVIGATSIYA KONTENT USTIGA CHIQMAYDI")
+# =============================================================================
+# Mijoz shikoyati: «Navigatsiya paneli yozuvlar ustiga chiqib qoldi».
+#
+# 🔴🔴 SABA B (o'lchangan, 1400px ekran):
+#     <main   className="px-4 md:px-6 md:pl-[124px] xl:px-10 ...">
+#     <header className="md:px-6 md:pl-[124px] xl:px-10 ...">
+#
+#     Tailwind CSS da shunday chiqaradi:
+#       .md\:px-6       { padding-inline: 1.5rem }   <- 1
+#       .md\:pl-[124px] { padding-left: 124px }       <- 2
+#       .xl\:px-10      { padding-inline: 2.5rem }    <- 3  🔴
+#
+#     `xl:px-10` `padding-inline` ORQALI chap tomonni ham qayta
+#     yozadi va CSS da KEYIN turadi → >=1280px da chap bo'shliq
+#     124px emas, 40px bo'lib qoladi. 92px kenglikdagi menyu
+#     (16…108px) kontent ustiga 68px CHIQIB KETARDI.
+#     O'lchangan: main padding-left = 40px, menyu o'ng chetig'i
+#     = 108px → qoplanish 68px; birinchi karta chap chegarasi 80px.
+#
+# 📌 Buni matn tekshiruvi bilan EMAS, o'lchov bilan tekshiramiz —
+#    chunki muammo FAQAT build'dagi CSS tartibida ko'rinadi.
+
+# 🔐 BIRINCHI QO'LDA: `md:pl-[124px]` yana qaytmaganini tekshiramiz.
+#    📌 FAQAT KOD: izohlarda bu so'zni yozib qo'yish mumkin
+#       (sababni hujjatlashtirish uchun) — `strip_code` ishlatiladi.
+check("md:pl-[124px]" not in strip_code(APP),
+      "🔴🔴 App: eskirgan `md:pl-[124px]` yo'q (kodda)")
+check("md:pl-[124px]" not in strip_code(read("src/components/Header.tsx")),
+      "🔴🔴 Header: eskirgan `md:pl-[124px]` yo'q (kodda)")
+
+# 📐 Bitta manba — uch o'lcham tokeni (index.css)
+check("--rail-w:" in CSS, "📐 `--rail-w` (menyu kengligi)")
+check("--rail-inset:" in CSS, "📐 `--rail-inset` (ekrandan chekka)")
+check("--rail-gap:" in CSS, "📐 `--rail-gap` (menyu-kontent orasi)")
+check("calc(var(--rail-w) + var(--rail-inset) + var(--rail-gap))" in CSS,
+      "📐 `--rail-clear` = 16+92+16 = 124px (HISOBLANADI)")
+
+# 🔴🔴 Qoida klass ichida EMAS, shu faylda — va SPECIFICITY ustun
+check("html body .rail-clear" in CSS,
+      "🔴🔴🔴 qoida `html body .rail-clear` (0,1,2) — .xl:px-10 dan (0,1,0) ustun")
+check("padding-left: var(--rail-clear)" in CSS,
+      "🔴🔴 chap bo'shliq token orqali beriladi")
+check("@media (min-width: 768px)" in CSS,
+      "📐 faqat desktopda (telefonda pastki panel)")
+
+# 🔴🔴 Menyu ham xuddi shu tokenlardan o'lchov oladi (ikki manba yo'q)
+check("w-[var(--rail-w)]" in NAV, "🔴🔴 menyu kengligi `--rail-w` dan")
+check("left-[var(--rail-inset)]" in NAV, "🔴🔴 menyu chekkasi `--rail-inset` dan")
+check("w-[92px]" not in NAV, "🔴🔴🔴 `w-[92px]` qo'lda qolib ketmagan")
+check("left-4" not in NAV, "🔴🔴🔴 `left-4` qo'lda qolib ketmagan")
+
+# 🍎 Klass ikkala joyda ham ishlatiladi
+check("rail-clear" in strip_code(APP), "🍎 App `rail-clear` ishlatadi")
+check("rail-clear" in strip_code(read("src/components/Header.tsx")),
+      "🍎 Header `rail-clear` ishlatadi")
+
 section("8) 🔐 «BOTGA O'TISH» TUGMASI BO'LMASIN")
 # =============================================================================
 # Mijozning so'rovi: "bu tugma umuman kerakmas ... Botga o'tishi
