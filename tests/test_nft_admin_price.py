@@ -92,12 +92,51 @@ if m:
 
 # nft_start da WebApp tugmasi BIRINCHI bo'lishi kerak
 nft_start = BOT.split("async def nft_start", 1)[1][:2500].split("\n\n@router", 1)[0]
+notice = BOT[BOT.index("def nft_notice("):BOT.index("def nft_webapp_url(")]
 check("nft_webapp_url()" in nft_start, "🔴🔴🔴 `nft_start` WebApp tugmasidan foydalanadi")
 check("web_app=WebAppInfo" in nft_start, "🔴🔴🔴 `WebAppInfo` — haqiqiy Web App tugmasi")
 check("NFT ijaraga olish (Web App)" in nft_start, "🔴 tugma matni")
-check("https://t.me/" in nft_start, "🟡 kanal tugmasi ZAXIRADA saqlangan")
-check(nft_start.index("nft_webapp_url()") < nft_start.index("NFT_CHANNEL"),
-      "🔴🔴🔴 WebApp tugmasi birinchi (kanal — ikkinchi)")
+# 🔴🔴🔴 2026-10-16 (mijoz so'ragan): NFT xizmatidan «Rasmiy kanal»
+#    butunlay olib tashlandi — ham tugma, ham xabar matni.
+#
+# 📌 DIQQAT: tekshiruv IZOHLARGA tegilmasligi kerak — aks holda
+#    «bu nima uchun olib tashlandi» izohi «hali bor» deb o'qiladi.
+#    Shuning uchun koddan `#` qatorlari va `"""..."""` bloklari olib
+#    tashlanadi, faqat HAQIQIY kod qoladi.
+def _code_only(src: str) -> str:
+    out, in_doc = [], False
+    for ln in src.split("\n"):
+        t = ln.strip()
+        if t.startswith('"""') or t.startswith('r"""'):
+            if t.count('"""') == 1:
+                in_doc = not in_doc
+            continue
+        if in_doc or t.startswith("#"):
+            continue
+        out.append(re.sub(r'#.*$', '', ln))
+    return "\n".join(out)
+
+NFT_CODE = _code_only(nft_start)
+NOTICE_CODE = _code_only(notice)
+
+check("NFT_CHANNEL" not in NFT_CODE,
+      "🔴🔴🔴 `NFT_CHANNEL` butunlay yo'q (o'zgaruvchi ham, tugma ham)")
+check("kanalini ochish" not in NFT_CODE,
+      "🔴🔴🔴 «🔗 ... kanalini ochish» tugmasi olib tashlandi")
+check("https://t.me/" not in NFT_CODE,
+      "🔴🔴🔴 NFT ekranida tashqi kanal havolasi QOLMADI")
+
+# 🔴🔴🔴 «🎁 Rasmiy kanal: ...» matni ham kadrda bo'lmasin
+check("Rasmiy kanal" not in NOTICE_CODE,
+      "🔴🔴🔴 «🎁 Rasmiy kanal» matni olib tashlandi")
+check("NFT_CHANNEL" not in NOTICE_CODE, "🔴🔴🔴 ogohlantirishda kanal yo'q")
+# 📌 Menedjer ogohlantirishi QOLADI — tasdiqlash uchun kerak
+check("NFT_MANAGER" in NOTICE_CODE,
+      "📌📌📌 menejer ogohlantirishi saqlanib qolgan")
+
+# WebApp tugmasi BIRINCHI bo'lishi kerak
+check(NFT_CODE.index("nft_webapp_url()") < NFT_CODE.index('callback_data="m:buy"'),
+      "🔴🔴🔴 WebApp tugmasi birinchi, «Orqaga» ikkinchi")
 
 # =============================================================================
 section("3) 🌐 ILOVA: NFT BO'LIMIGA YO'L QORQALI KIRISH")

@@ -9165,22 +9165,34 @@ async def _reply(event, text: str) -> None:
 # =============================================================================
 # 15c. NFT GIFT IJARASI (boshqa menejer boshqaradi)
 # -----------------------------------------------------------------------------
-# Bu xizmat NEON STORE da emas — uni @saidovManajer boshqaradi.
-# Mijoz tanlaganda biz uni rasmiy @rentnftlarr kanaliga yo'naltiramiz.
+# 🔴🔴🔴 MIJOZ SO'RADI (2026-10-16): «Rasmiy kanal» haqidagi ikkala
+#     narsa ham olib tashlindi:
+#       1) «🔗 @rentnftlarr kanalini ochish» tugmasi
+#       2) «🎁 Rasmiy kanal: @rentnftlarr» matni
+#
+#     Sabab: mijoz bot ichida «NFT Gift Ijarasi» bosganda tashqi
+#     kanalga chiqib ketardi, boshqaruv/narx/holat esa biror joyda
+#     emasdi. Endi butun xizmat — Web App ichida (`/nft`), kanal
+#     havolasi esa umuman yo'q.
+#
+# 📌 `NFT_MANAGER` QOLADI — buyurtma tasdiqlanishi uchun hali ham
+#    kerak (mijoz so'raganda faqat KANAL olib tashlandi).
 # =============================================================================
 
-NFT_CHANNEL = os.getenv("NFT_CHANNEL", "@rentnftlarr")
 NFT_MANAGER = os.getenv("NFT_MANAGER", "@saidovManajer")
 
 
 def nft_notice() -> str:
-    """NFT xizmati haqidagi professional ogohlantirish matni."""
+    """NFT xizmati haqidagi professional ogohlantirish matni.
+
+    🔴 ICHIDAN «🎁 Rasmiy kanal: …» qatori olib tashlangan (yuqoriga
+       qarang). Faqat menejer haqidagi ogohlantirish qoladi.
+    """
     return (
         "⚠️ <b>Xizmat haqida</b>\n\n"
         f"🔹 Bu xizmat <b>{esc(NFT_MANAGER)}</b> ga tegishli.\n"
         "🔹 Bu xizmat bo'yicha biror muammo yuz bersa, "
-        f"<b>{esc(NFT_MANAGER)}</b> bilan bog'laning.\n\n"
-        f"🎁 Rasmiy kanal: <b>{esc(NFT_CHANNEL)}</b>"
+        f"<b>{esc(NFT_MANAGER)}</b> bilan bog'laning."
     )
 
 
@@ -9276,15 +9288,15 @@ async def nft_start(message: Message, state: FSMContext) -> None:
     🔴 NIMA UCHUN O'ZGARTI?
         Avval bu yerda faqat `@rentnftlarr` kanalining tugmasi bor edi
         (`url=`). Mijoz bot ichida «NFT Gift ijarasi» bosganida
-        NEON STORE'ni tashib ketib, tashqi kanalga yuborilardi —
+        NeonShop'ni tashib ketib, tashqi kanalga yuborilardi —
         boshqaruv, narx va holat biror joyda emas edi.
 
-        Endi birinchi tugma — WEB APP (`?tab=buy&sub=nft`), ya'ni mijoz
+        Endi birinchi tugma — WEB APP (`/nft`), ya'ni mijoz
         to'g'ridan-to'g'ri «Xarid → NFT ijaraga olish» bo'limiga
         tushadi: ro'yxat, narx, muddat va buyurtma BIZNING ilovamizda.
 
-        📌 Deep link App.tsx dagi `?tab=…&sub=…` o'quvchi bilan
-           ishlaydi (qarang: `CHUQUR HAVOLA` izohi).
+        📌 `nft_webapp_url()` eski `?tab=buy&sub=nft` shaklini yozadi —
+           ilova uni o'zi `/nft` ga kanoniklashtiradi (moslashuvchan).
     """
     await state.clear()
     rows = [
@@ -9293,10 +9305,9 @@ async def nft_start(message: Message, state: FSMContext) -> None:
             web_app=WebAppInfo(url=nft_webapp_url()),
             style="primary",
         )],
-        [InlineKeyboardButton(
-            text=f"🔗 {NFT_CHANNEL} kanalini ochish",
-            url=f"https://t.me/{NFT_CHANNEL.lstrip('@')}",
-        )],
+        # 🔴🔴🔴 2026-10-16: «🔗 @rentnftlarr kanalini ochish» tugmasi
+        #    OLIB TASHLANDI (mijoz so'ragan). Xizmat endi faqat Web App
+        #    ichida — tashqi kanalga chiqish kerak emas.
         [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:buy", style="danger")],
     ]
     await message.answer(
