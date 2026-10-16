@@ -10,6 +10,7 @@ import { RankingView } from './components/views/RankingView';
 import { ProfileView } from './components/views/ProfileView';
 import { AdminPanel } from './components/AdminPanel';
 import { LiquidPointer } from './components/LiquidPointer';
+import { GridBackdrop } from './components/GridBackdrop';
 import { toastText } from './lib/telegramText';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CheckCircle2, ArrowLeft, PauseCircle, ShieldAlert } from 'lucide-react';
@@ -641,8 +642,8 @@ export default function App() {
           isDark ? 'bg-[#000000] text-white' : 'bg-[#f2f2f7] text-neutral-900'
         }`}
       >
-        <div className="aurora-blob aurora-1 -top-24 -left-20 w-96 h-96" />
-        <div className="aurora-blob aurora-2 -bottom-24 -right-20 w-96 h-96" />
+        {/* 🟢️ grid fon — bosh sahifada ham bir xil koʻrinishi kerak */}
+        <GridBackdrop isDark={isDark} />
         <div className="noise-overlay" />
 
         <div className="relative z-10 liquid-glass-card rounded-[36px] p-7 sm:p-9 w-full max-w-sm sm:max-w-md sheet-in">
@@ -778,8 +779,8 @@ export default function App() {
   if (settings && settings.bot_active === false) {
     return (
       <div className={`${theme} min-h-screen flex flex-col items-center justify-center text-center p-8 relative overflow-hidden ${isDark ? 'bg-[#000000] text-white' : 'bg-[#f2f2f7] text-neutral-900'}`}>
-        <div className="aurora-blob aurora-1 -top-24 -left-20 w-96 h-96" />
-        <div className="aurora-blob aurora-2 -bottom-24 -right-20 w-96 h-96" />
+        {/* 🟢️ grid fon — bosh sahifada ham bir xil koʻrinishi kerak */}
+        <GridBackdrop isDark={isDark} />
         <div className="noise-overlay" />
         <div className="relative z-10 liquid-glass-card rounded-[36px] p-8 max-w-xs w-full sheet-in">
           <div className={`w-16 h-16 mx-auto rounded-[22px] liquid-glass-pill flex items-center justify-center mb-5 ${isDark ? 'text-amber-300' : 'text-amber-600'}`}>
@@ -805,13 +806,15 @@ export default function App() {
       {/* LiquidPointer — glass specular yorug'i + aurora parallaks */}
       <LiquidPointer />
 
-      {/* Neon Aurora backdrop — glass uchun rangli refraksiya */}
-      <div className="fixed inset-0 pointer-events-none z-0" aria-hidden style={{ transform: 'translate(var(--ax), var(--ay))' }}>
-        <div className="aurora-blob aurora-1 -top-32 -left-24 w-[420px] h-[420px]" />
-        <div className="aurora-blob aurora-2 top-1/4 -right-28 w-[380px] h-[380px]" />
-        <div className="aurora-blob aurora-3 -bottom-28 left-1/3 w-[360px] h-[360px]" />
-        <div className="aurora-blob aurora-4 top-2/3 -left-1/4 w-[300px] h-[300px]" />
-      </div>
+      {/* 🟢️ GRID FON — bot dizayiga mos qora + yashil to'r.
+
+          🔴 AVAL: turli rangli AURORA blob (havorang/siyohrang/pushti/
+          sariq) — bot brendiga butunlay mos kelmasdi.
+          📝 ENDI: canvas tor; kursor ostida nuqtalar SURILADI,
+          chiziqlar egiladi, tezlikka bog'liq tolqin chiqadi
+          (rasmdagi effekt). Qurilma kuchiga moslashadi:
+          `prefers-reduced-motion`, yashirin tab, 2x DPR. */}
+      <GridBackdrop isDark={isDark} />
       <div className="noise-overlay" />
 
       {/* Apple Minimalist Toast */}
