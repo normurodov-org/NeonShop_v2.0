@@ -4753,9 +4753,9 @@ async def send_captcha(message: Message, db_user: dict) -> None:
 # =============================================================================
 
 # To'lov qatori belgilari (yuqori ustuvorlik)
-PAY_MARKERS = ("➖", "➕", "➗", "➤")
+PAY_MARKERS = ("➖", "➕", "➗", "➤", "+", "-", "💸", "💵", "✅")
 # Qoldiq balans belgilari — BU QATORLAR SUMMA EMAS
-BALANCE_MARKERS = ("💰", "🏦", "💳💰", "balance", "balans", "qoldiq", "остаток", "kirim")
+BALANCE_MARKERS = ("💰", "🏦", "💳💰", "balance", "balans", "qoldiq", "остаток")
 CURRENCY_WORDS = r"(?:UZS|uzs|so'?m|som|soʻm|сум|сумма|tinyin)"
 
 HUMO_CARD_RX = re.compile(r"HUMOCARD\s*\*(\d+)")
@@ -4884,21 +4884,41 @@ def _extract_card(text: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def get_humo_chat_filter():
+    source = str(os.getenv("TOPUP_SOURCE_CHAT", "@humocardbot")).strip()
+    clean = source.lstrip("@").lower()
+    chats = list({source, f"@{clean}", clean, "humocardbot", "@humocardbot"})
+    if clean.lstrip("-").isdigit():
+        chats.append(int(clean))
+    return ub_filters.chat(chats)
+
+
+def get_topup_amounts(t: dict) -> tuple[int, int]:
+    """Topup so'rovidan so'ralgan summa va kartaga yuborilishi kerak bo'lgan summani oladi.
+
+    Qaytaradi: (requested_amount, amount_to_send)
+    """
+    req = int(num(t.get("amount", 0)))
+    seq = int(num(t.get("seq", 0)))
+    to_send = int(num(t.get("amount_to_send", 0)))
+    if to_send <= 0 and seq > 0 and req > 0:
+        to_send = req + seq
+    elif to_send <= 0:
+        to_send = req
+    return req, to_send
+
+
 async def on_humo_message(client: UserbotClient, message) -> None:
     try:
-        text = message.text or ""
-        # AVVAL: faqat "➕" belgisi bo'lsa qayta ishlanardi. Haqiqiy HUMO
-        # xabarida esa "➖" (to'lov) va "💰" (qoldiq balans) ishlatiladi —
-        # ya'ni eski filtr xabarni BUTUNLAY tashlab yuborardi.
-        # Endi: to'lov belgisi, karta yoki "to'lov" so'zi bo'lsa yetarli.
-        has_marker = any(m in text for m in PAY_MARKERS + ("💸", "💵"))
-        has_word = bool(re.search(r"to'lov|tolov|to‘lov|qabul|payme|оплата|сумма",
-                                  text, re.IGNORECASE))
-        has_card = bool(re.search(r"HUMOCARD", text, re.IGNORECASE))
+        text = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+        # To'lov belgisi, karta yoki to'lov/to'ldirish so'zi bo'lsa yetarli
+        has_marker = any(m in text for m in PAY_MARKERS + ("💸", "💵", "🎉"))
+        has_word = bool(re.search(
+            r"to'lov|tolov|to‘lov|to'ldirish|toldirish|to‘ldirish|qabul|payme|kirim|tushum|оплата|сумма|пополнение",
+            text, re.IGNORECASE
+        ))
+        has_card = bool(re.search(r"HUMOCARD|HUMO", text, re.IGNORECASE))
         if not has_marker and not has_word and not has_card:
-            return
-        # Balansga qo'shishni bildirmaydigan xabarlarni tashlab yuboramiz
-        if re.search(r"xarajat|chiqarish|withdraw|pullash|soldi", text, re.IGNORECASE):
             return
         # Balansga qo'shishni bildirmaydigan xabarlarni tashlab yuboramiz
         if re.search(r"xarajat|chiqarish|withdraw|pullash|soldi", text, re.IGNORECASE):
@@ -4910,72 +4930,73 @@ async def on_humo_message(client: UserbotClient, message) -> None:
             )
             return
         amount, card = parsed
-        msg_id = f"{message.chat.id}_{message.id}"
+        chat_id = getattr(getattr(message, "chat", None), "id", 0)
+        msg_id_val = getattr(message, "id", 0)
+        msg_id = f"{chat_id}_{msg_id_val}"
 
-        # 🔴🔴 TARTIB: `reload_if_changed()` `self.data = fresh`
-        # qilib, butun KONTEYNERNI ALMASHTIRADI. Eski kodda belgi
-        # `reload` dan OLDIN append qilindi → keyin reload kelganda u
-        # YO'QOLARDI va hech qachon saqlanmasdi. Natijada Telegram
-        # qayta yuborgan xabar (odatiy hodisa) BOSHQA TO'LOV
-        # sifatida qayta ishlab, balansni IKKINCHI MARTA to'ldirardi.
         now = now_ms()
-        # WebApp'dan yaratilgan to'lovlar ham ko'rinishi uchun bazani
-        # yangilaymiz — LEKIN avval belgini tekshiramiz (chunki reload
-        # undan keyin keladi).
         db.reload_if_changed()
+        try:
+            fresh = db._load()
+            if fresh and isinstance(fresh.get("topups"), dict):
+                with db._file_lock:
+                    db.data.setdefault("topups", {}).update(fresh["topups"])
+                    if "settings" in fresh:
+                        db.data.setdefault("settings", {}).update(fresh["settings"])
+        except Exception as e:
+            log.warning("Topups reload xatosi: %s", e)
 
         if msg_id in db.data["processed_bank_msgs"]:
             return
         db.data["processed_bank_msgs"].append(msg_id)
 
-        # Muddati o'tgan so'rovlarni tozalaymiz.
-        # DIQQAT: expires_at BIRLIGI — millisekund (server.ts bilan bir xil).
-        # Eski sekund qiymatlari to_ms() orqali avtomatik konvert qilinadi.
-        for t in db.data["topups"].values():
-            if t.get("status") == "pending" and to_ms(t.get("expires_at"), now) < now:
-                t["status"] = "expired"
+        # Muddati 2 soatdan ortiq o'tib ketgan eskirgan so'rovlarni expired qilamiz
+        for t in list(db.data.get("topups", {}).values()):
+            if t.get("status") == "pending":
+                exp = to_ms(t.get("expires_at"), 0)
+                if exp > 0 and (now - exp) > 2 * 3600 * 1000:
+                    t["status"] = "expired"
 
-        # Faol so'rovlar: mijoz aynan shu summani to'lashini kutamiz
+        # Faol so'rovlar: pending bo'lgan barcha topuplar
         pending = [
-            t for t in db.data["topups"].values()
-            if t.get("status") == "pending" and to_ms(t.get("expires_at"), now) > now
+            t for t in db.data.get("topups", {}).values()
+            if t.get("status") == "pending"
         ]
 
         # Karta tekshiruvi: o'z kartamizdan tushgan to'lovni tasdiqlaymiz
         our_digits = "".join(ch for ch in str(CARD_NUMBER) if ch.isdigit())
+        settings_card = str(db.data.get("settings", {}).get("card_number") or "")
+        settings_digits = "".join(ch for ch in settings_card if ch.isdigit())
+
         card_ok = True
-        if card and our_digits:
-            card_ok = card in our_digits or our_digits.endswith(card)
+        if card:
+            candidates = [d for d in (our_digits, settings_digits) if d]
+            for pt in pending:
+                cd = "".join(ch for ch in str(pt.get("card", "")) if ch.isdigit())
+                if cd and cd not in candidates:
+                    candidates.append(cd)
+            if candidates:
+                card_ok = any(card in d or d.endswith(card) for d in candidates)
+            else:
+                card_ok = True
 
         # Aniq moslik. DIQQAT: mijoz kartaga `amount_to_send`
-        # (so'ralgan summa + ketma-ket raqam) yuboradi, shuning uchun
-        # IKKALA qiymat ham tekshiriladi:
-        #   1) amount_to_send == kelgan summa  (eng ishonchli)
-        #   2) amount == kelgan summa           (eskiroq usul / qo'lda
-        #                                        to'lov yuborgan bo'lsa)
-        matches_exact = [
+        # (so'ralgan summa + ketma-ket buyurtma raqami) yuboradi:
+        #   1) amount_to_send == kelgan summa (buyurtma raqami qo'shilgan)
+        #   2) amount == kelgan summa (qo'lda sof summa yuborilgan)
+        matches_exact_to_send = [
             t for t in pending
-            if t.get("amount_to_send") and int(t["amount_to_send"]) == amount
-            and (card_ok or not card)
+            if (card_ok or not card) and get_topup_amounts(t)[1] == amount
         ]
         matches_plain = [
             t for t in pending
-            if (not t.get("amount_to_send"))
-            and int(t.get("amount", 0)) == amount
-            and (card_ok or not card)
+            if (card_ok or not card) and get_topup_amounts(t)[0] == amount
         ]
-        matches = matches_exact or matches_plain
+        matches = matches_exact_to_send or matches_plain
 
         # Aniq moslik topilmasa: kartamizga kelgan to'lov bo'lsa va
         # faqat BITTA kutilayotgan so'rov bo'lsa — mijoz to'lagan
         # HAQIQIY summani to'ldiramiz (qisman to'ldirish).
-        # Masalan: mijoz 10 000 so'rov qilgan, 5 000 yuborgan.
-        # Bunday holda balansga 5 000 qo'shiladi — mijoz pulini
-        # yo'qotmaydi, xato tuzatiladi.
-        # Bank xabaridan to'lovni yuborgan shaxsni aniqlab bo'lmaydi
-        # (faqat summa + karta ma'lum). Shuning uchun to'lov faqat BITTA
-        # kutilayotgan so'rov bo'lganda avtomatik bog'lanadi — aks
-        # holda chalkashlikni oldi olish uchun admin hal qiladi.
         partial = False
         if not matches and card_ok and len(pending) == 1:
             matches = pending
@@ -4988,14 +5009,19 @@ async def on_humo_message(client: UserbotClient, message) -> None:
             t["completed_at"] = now_iso()
             t["auto_verified"] = True
             t["payment_method"] = "humocard"
-            # Balansga MIJOZ TO'LAGAN haqiqiy summa qo'shiladi
-            # (qisman to'ldirishda so'ralgan summa emas).
-            # To'liq moslik: mijoz kartaga amount_to_send yuborgan
-            # (qo'shimcha biz qo'shgan edik) — balansga esa SO'RALGAN
-            # summa qo'shiladi. Qisman moslikda — HAQIQIY yuborilgan.
-            credit = amount if partial else int(t["amount"])
-            t["requested_amount"] = int(t.get("amount", 0))
+
+            req_amt, to_send_amt = get_topup_amounts(t)
+            if partial:
+                credit = amount
+            elif amount == to_send_amt and req_amt > 0:
+                # Mijoz buyurtma raqami qo'shilgan summani to'lagan -> balansga so'ralgan sof summa qo'shiladi!
+                credit = req_amt
+            else:
+                credit = req_amt if req_amt > 0 else amount
+
+            t["requested_amount"] = req_amt
             t["amount"] = credit
+            t["paid_amount"] = amount
             t["partial"] = partial
 
             u = db.data["users"].get(str(t["user_id"]))
@@ -5007,16 +5033,6 @@ async def on_humo_message(client: UserbotClient, message) -> None:
                     note += f" (qisman: so'ralgan {fmt(t['requested_amount'])} so'm)"
                 db.add_history(u, "topup", credit, note)
 
-                # 🔴🔴 PUL SAQLANADIGAN JOY — MIJOZ XABARIGA
-                # QADAM. Eski kodda `await bot.send_message(...)` (tarmoq
-                # chaqiruvi, 100-500 ms) `db.save()` dan OLDIN kelardi.
-                # Shu orada `reload_if_changed()` ishlasa (server.ts yoki
-                # boshqa worker yozsa), `self.data` butunlay
-                # ALMASHTIRILARDI va bizning xotiradagi balans
-                # o'zgarishi YO'QOLARDI. Natijada: mijoz kartaga pul
-                # yuboradi, biz "to'ldirildi" deb xabar yuboramiz,
-                # lekin balans BASEGA YOZILMAYDI — ya'ni **mijozning
-                # puli yo'qoladi** va tarixda iz ham qolmaydi.
                 db.data["settings"]["total_volume_uzs"] = (
                     int(db.data["settings"].get("total_volume_uzs", 0))
                     + int(t["amount"])
@@ -5043,9 +5059,6 @@ async def on_humo_message(client: UserbotClient, message) -> None:
                     await bot.send_message(u["id"], txt)
                 except Exception:  # noqa: BLE001
                     pass
-            # 🔴 `db.save()` yuqoridagi `if u:` blokida ALMASHGAN
-            # qilindi. Bu yerda faqat `u` topilmagan holat uchun kerak
-            # (topup yopilishi ham saqlanishi SHART).
             if not u:
                 db.save()
             await notify_admins(
@@ -5777,7 +5790,7 @@ def maybe_start_userbot() -> None:
             )
             await ub.start()
             ub.add_handler(
-                UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
+                UbMessageHandler(on_humo_message, get_humo_chat_filter())
             )
             # NFT xabari userbot orqali yuboriladi — demak tugmalar ham
             # userbotning. Faqat o'sha akkaunt bosishi kerak.
@@ -8647,7 +8660,7 @@ async def ub_finish_login(client, admin_msg: Message, state: FSMContext) -> None
             log.error("Eski userbot to'xtatilmadi: %s", exc)
     userbot = client
     await client.add_handler(
-        UbMessageHandler(on_humo_message, ub_filters.chat(TOPUP_SOURCE_CHAT))
+        UbMessageHandler(on_humo_message, get_humo_chat_filter())
     )
     # 🔴🔴 `UbCallbackQueryHandler(ub_cb_nft_action)` QO'SHILMAGAN
     # EDI. Uni faqat `maybe_start_userbot()` qo'shadi (SESSION_STRING orqali
