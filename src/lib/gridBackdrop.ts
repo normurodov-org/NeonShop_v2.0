@@ -4,13 +4,18 @@
  * 🔴 NIMA UCHUN AJRATILGAN?
  *   `GridBackdrop.tsx` ichida hammasi bo'lsa, chizish/harakat mantiqini
  *   sinab bo'lmaydi — `requestAnimationFrame` headless muhitda ishlamaydi
- *   va `canvas` yo'q. Bu modul esa DOM va rAF talab qilmaydi, shuning
- *   uchun Node'da to'g'ridan-to'g'ri sinovlanadi (test_grid_backdrop.py).
+ *   (o'lchangan: `rAFIshlayapti: false`) va `canvas` yo'q. Bu modul esa
+ *   DOM va rAF talab qilmaydi, shuning uchun Node'da to'g'ridan-to'g'ri
+ *   sinanadi (tests/test_grid_backdrop.py).
  *
- * 📌 XALQARO PARAMETRL:
- *   • ta'sir radiusi — kursor atrofidagi hudud
- *   • surish kuchaytiruvchisi (quyidagi kvadrat tengligi)
- *   • qaytish tezligi (`lerp`) — spring emas, suvsimon oqim
+ * 📌 MIJOZ SO'RAYOTGAN QARORLAR (2026-10-16):
+ *   1. 🎨 Rang — OQ-QORA (bot dizayida aksent rangi yo'q)
+ *   2. 🚫 Kursor ostidagi YORUG'LIK — butunlay olib tashlandi
+ *   3. 🚫 Kursor qisilganda chiqadigan DOIRA (tolqin) — olib tashlandi
+ *   4. 🚫 Nuqtalar orasidagi CHIZIQLAR — olib tashlandi (faqat nuqta)
+ *      ⚠️ Gorizontal va vertikal chiziq kodi saqlanib qoldi
+ *         (`showLines = true` bersangiz qayta paydo bo'ladi) — kelajakda
+ *         kerak bo'lsa, bitta o'zgaruvchaning qiymatini o'zgartirish kifoya.
  */
 
 export interface GridNode {
@@ -22,43 +27,27 @@ export interface GridNode {
   oy: number;
 }
 
-/** Ranglar (bot brendidan: qora + yashil). */
+/** Ranglar — oq-qora (bot brendidan). */
 export interface GridPalette {
   bg: string;
   line: string;
   dot: string;
   dotHot: string;
-  glow: string;
-  wave: string;
 }
 
 export const PALETTE_DARK: GridPalette = {
   bg: '#000000',
-  line: 'rgba(23, 64, 30, 0.55)',
-  dot: 'rgba(45, 139, 58, 0.85)',
-  dotHot: 'rgba(120, 220, 130, 1)',
-  glow: 'rgba(60, 200, 80, 0.10)',
-  wave: 'rgba(90, 210, 110,',
+  line: 'rgba(255, 255, 255, 0.10)', // 🔴 saqlangan, lekin HOZIR chizilmaydi
+  dot: 'rgba(255, 255, 255, 0.34)',
+  dotHot: 'rgba(255, 255, 255, 1)',
 };
 
 export const PALETTE_LIGHT: GridPalette = {
-  bg: '#f7faf7',
-  line: 'rgba(28, 110, 44, 0.16)',
-  dot: 'rgba(34, 139, 56, 0.45)',
-  dotHot: 'rgba(22, 120, 40, 0.85)',
-  glow: 'rgba(60, 200, 80, 0.08)',
-  wave: 'rgba(40, 150, 60,',
+  bg: '#ffffff',
+  line: 'rgba(0, 0, 0, 0.10)',
+  dot: 'rgba(0, 0, 0, 0.30)',
+  dotHot: 'rgba(0, 0, 0, 0.85)',
 };
-
-/** Tolqin halqasi. */
-export interface Wave {
-  x: number;
-  y: number;
-  /** Joriy radius. */
-  r: number;
-  /** Oxirgi radius — shundan keyin yo'qoladi. */
-  max: number;
-}
 
 /** Nuqtalar to'rini quradi (chiziq kesishgan joylar). */
 export function buildGrid(W: number, H: number, cell: number): GridNode[] {
@@ -84,12 +73,12 @@ export function buildGrid(W: number, H: number, cell: number): GridNode[] {
  * 🔬 QO'LLANMA (rasmdagi effekt):
  *   • Kursordan yaqin nuqta radial yo'nalishda SURILADI
  *   • Surish kuchaytiruvchisi `(1 - d/R)²` — chetda deyarli
- *     harakatsiz, markizda eng kuchli (chiziqlar «cho'ziladi»)
- *   • 🔴 SURISH va QAYTISH turlicha: qaytish `lerp` bilan YUMSHAQ,
- *     aks holda to'r «spring» bo'lib sakrab ketadi (rasmda yo'q)
+ *     harakatsiz, markizda eng kuchli
+ *   • 🔴 SURISH va QAYTISH turlicha: qaytish `lerp` bilan YUMSHOQ,
+ *     aks holda nuqta «spring» bo'lib sakrab ketadi (rasmda yo'q)
  *
- * @param push surish kuchaytiruvchisi (ko'pincha `cell * 0.42`)
- * @param pull qaytish tezligi (0..1) — kichikroq = sekinroq
+ * @param push surish kuchaytiruvchisi (`0` = tugma ustidagi tinch holat)
+ * @param pull qaytish tezligi (0..1)
  */
 export function stepNodes(
   nodes: GridNode[],
@@ -104,7 +93,7 @@ export function stepNodes(
     const dx = n.x - cx;
     const dy = n.y - cy;
     const d2 = dx * dx + dy * dy;
-    if (d2 < R2 && d2 > 1e-6) {
+    if (push > 0 && d2 < R2 && d2 > 1e-6) {
       const d = Math.sqrt(d2);
       const f = (1 - d / radius) ** 2 * push;
       n.x = n.ox + (dx / d) * f;
@@ -116,21 +105,13 @@ export function stepNodes(
   }
 }
 
-/** Tolqinlarni kengaytiradi va o'lgilarini olib tashlaydi. */
-export function stepWaves(waves: Wave[], speed: number): Wave[] {
-  const out: Wave[] = [];
-  for (const w of waves) {
-    w.r += speed;
-    if (w.r < w.max) out.push(w);
-  }
-  return out;
-}
-
 /**
  * 🔴 Nuqtaning «qizarganligi» 0..1 — kursor yaqinligi.
  * Kvadrat bilan ko'tariladi: chetlar yumshoq, markiz to'liq.
  */
-export function heatOf(x: number, y: number, cx: number, cy: number, radius: number): number {
+export function heatOf(
+  x: number, y: number, cx: number, cy: number, radius: number,
+): number {
   const dx = x - cx;
   const dy = y - cy;
   const d2 = dx * dx + dy * dy;
@@ -151,12 +132,14 @@ export interface Ctx2D {
   stroke(): void;
   fill(): void;
   arc(x: number, y: number, r: number, s: number, e: number): void;
-  createRadialGradient(x: number, y: number, r0: number, x1: number, y1: number, r1: number): {
-    addColorStop(o: number, c: string): void;
-  };
 }
 
-/** Butun kadrni chizadi (fon + yorug'lik + tolqin + tor + nuqtalar). */
+/**
+ * 🖼 Butun kadrni chizadi (fon + nuqtalar [+ ixtiyoriy chiziqlar]).
+ *
+ * @param showLines `false` (sukut bo'yicha) — faqat nuqtalar.
+ *   `true` bo'lsa gorizontal VA vertikal chiziqlar ham chiziladi.
+ */
 export function drawFrame(
   ctx: Ctx2D,
   W: number,
@@ -165,62 +148,50 @@ export function drawFrame(
   nodes: GridNode[],
   cx: number,
   cy: number,
-  active: boolean,
-  waves: Wave[],
   radius: number,
   dotBase: number,
   dotMax: number,
+  showLines = false,
 ): void {
   ctx.fillStyle = P.bg;
   ctx.fillRect(0, 0, W, H);
 
-  // 1) Kursor atrofidagi yumshoq yorug'lik
-  if (active) {
-    const r3 = radius * 1.2;
-    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r3);
-    g.addColorStop(0, P.glow);
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(cx - r3, cy - r3, r3 * 2, r3 * 2);
-  }
+  // 🔴🔴🔴 BU YERDA AVVAL IKKI NARSA BOR EDI, MIJOZ OLIB TASHLASHNI SO'RADI:
+  //   1) Kursor ostidagi YUMASHOQ YORUG'LIK (radial gradient)
+  //   2) Kursor tezligiga bog'liq TOLQIN DOIRALARI
+  //   Endi fon faqat nuqtalardan iborat — toza va tinch.
 
-  // 2) Tolqin halqalari
-  ctx.lineWidth = 1;
-  for (const w of waves) {
-    const t = w.r / w.max;
+  // 📐 Ixtiyoriy chiziqlar (hozir o'chirilgan)
+  if (showLines) {
+    ctx.strokeStyle = P.line;
+    ctx.lineWidth = 1;
+    // Gorizontal
     ctx.beginPath();
-    ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
-    ctx.strokeStyle = `${P.wave}${(0.18 * (1 - t)).toFixed(3)})`;
+    let prevY = Number.NaN;
+    for (const n of nodes) {
+      if (!Number.isFinite(prevY) || Math.round(n.oy) !== prevY) {
+        ctx.moveTo(n.x, n.y);
+      } else {
+        ctx.lineTo(n.x, n.y);
+      }
+      prevY = Math.round(n.oy);
+    }
+    ctx.stroke();
+    // Vertikal
+    ctx.beginPath();
+    let prevX = Number.NaN;
+    for (const n of nodes) {
+      if (!Number.isFinite(prevX) || Math.round(n.ox) !== prevX) {
+        ctx.moveTo(n.x, n.y);
+      } else {
+        ctx.lineTo(n.x, n.y);
+      }
+      prevX = Math.round(n.ox);
+    }
     ctx.stroke();
   }
 
-  // 3) Grid chiziqlari — nuqtalarning SILJIGAN joyidan
-  ctx.strokeStyle = P.line;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  let prevY = Number.NaN;
-  for (const n of nodes) {
-    if (!Number.isFinite(prevY) || Math.round(n.oy) !== prevY) {
-      ctx.moveTo(n.x, n.y);
-    } else {
-      ctx.lineTo(n.x, n.y);
-    }
-    prevY = Math.round(n.oy);
-  }
-  ctx.stroke();
-  ctx.beginPath();
-  let prevX = Number.NaN;
-  for (const n of nodes) {
-    if (!Number.isFinite(prevX) || Math.round(n.ox) !== prevX) {
-      ctx.moveTo(n.x, n.y);
-    } else {
-      ctx.lineTo(n.x, n.y);
-    }
-    prevX = Math.round(n.ox);
-  }
-  ctx.stroke();
-
-  // 4) Nuqtalar — qizarganlik bo'yicha kattalashadi va yorishadi
+  // 🟢 Nuqtalar — qizarganlik bo'yicha kattalashadi va yorishadi
   for (const n of nodes) {
     const hot = heatOf(n.x, n.y, cx, cy, radius);
     ctx.beginPath();

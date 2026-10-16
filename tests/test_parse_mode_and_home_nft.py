@@ -144,18 +144,24 @@ print()
 print("=" * 70)
 print("3) ZANJIR ULANISHI — Asosiy → NFT bo'limi")
 print("=" * 70)
-check("useState<'stars' | 'premium' | 'gifts' | 'nft'>('stars')" in APP,
-      "App: initialBuyCategory 'nft' ni qabul qiladi")
-check("initialTab={initialBuyCategory}" in APP, "BuyView ga uzatiladi")
-check("initialTab?: 'stars' | 'premium' | 'gifts' | 'nft';" in BUY,
-      "BuyView prop'ida 'nft' bor")
-check("useState<'stars' | 'premium' | 'gifts' | 'nft'>(initialTab)" in BUY,
+# 🔴 2026-10-16: `App` endi `initialBuyCategory` state'ini TUTMAYDI —
+#    manba bitta `route` ({tab, sections[]}) bo'ldi va `/nft` ham
+#    o'z kanonik yo'li bilan keladi. Zanjir tekshiruvi yangilandi.
+check("const [route, setRoute] = useState<Route>" in APP,
+      "App: bitta `route` state (nafqat yo'llar uchun)")
+check("initialTab={buySection}" in APP, "BuyView ga uzatiladi")
+check("initialTab?: BuySub;" in BUY,
+      "BuyView prop'ida `BuySub` bor")
+check("useState<BuySub>(initialTab)" in BUY,
       "BuyView subTab 'nft' bilan boshlanadi")
 check("setSubTab(initialTab)" in BUY, "initialTab o'zgarganda sinxronlanadi")
 # NFT ichki tabi 'gifts' dan boshlanadi (ro'yxat ko'rinadi)
 NFTV = open(f"{ROOT}/src/components/views/NftRentView.tsx", encoding="utf-8").read()
-check("useState<TabId>('gifts')" in NFTV,
+check("useState<NftSub>('gifts')" in NFTV,
       "NFT bo'limida 'Gifts' ichki tabi ochiladi (ro'yxat ko'rinadi)")
+# 📌 Endi ichki tab ham o'z yo'lida: /nft/gifts
+check("['nft', 'gifts']," in open(f"{ROOT}/src/lib/routes.ts", encoding="utf-8").read(),
+      "📌 `/nft/gifts` — NFT ichidagi 'Gifts' o'z yo'li bilan")
 
 print()
 print("=" * 70)

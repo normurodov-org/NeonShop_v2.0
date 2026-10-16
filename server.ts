@@ -2080,6 +2080,11 @@ app.get("/api/config", async (_req: Request, res: Response) => {
       bot_username: username,
       bot_id: botId,
       support_username: (process.env.SUPPORT_USERNAME || "").replace(/^@/, ""),
+      // 📦 Pastdagi havolalar uchun kanal nomlari. Ilovada
+      //    «Yordam / Yangiliklar / Buyurtmalar» shu uchlardan yigʸiladi —
+      //    «ni qoʸlda yozib qoʸy» emas, ENV dan olinadi (bitta manba).
+      news_channel: (process.env.NEWS_CHANNEL || "").replace(/^@/, ""),
+      orders_channel: (process.env.ORDERS_CHANNEL || "").replace(/^@/, ""),
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: String((e as Error)?.message || e) });
@@ -3034,7 +3039,7 @@ app.post('/api/bot/chat', (req: Request, res: Response) => {
 
   if (text === '/start' || text === 'start') {
     botReply = `Assalomu alaykum, <b>@${user.username}</b>! 👋\n\n` +
-      `<b>NEON STORE</b> — Telegram Stars, Premium va Gifts avtomatlashtirilgan do'koniga xush kelibsiz!\n\n` +
+      `<b>NeonShop</b> — Telegram Raqamli Xizmatlar: Stars, Premium va Gifts avtomatlashtirilgan do'koniga xush kelibsiz!\n\n` +
       `💳 Balansingiz: <b>${user.balance.toLocaleString()} UZS</b>\n` +
       `⭐ 1 Stars narxi: <b>${store.settings.star_buy_price} UZS</b>\n\n` +
       `Quyidagi bo'limlardan birini tanlang yoki Web App mini-ilovasini oching:`;
@@ -3283,7 +3288,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 NEON STORE Server running at http://0.0.0.0:${PORT}`);
+    console.log(`🚀 NeonShop Server running at http://0.0.0.0:${PORT}`);
   });
 }
 

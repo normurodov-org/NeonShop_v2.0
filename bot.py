@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-NEON STORE BOT — Telegram Stars savdo boti (Fragment.com + TON)
+NeonShop BOT — Telegram Stars savdo boti (Fragment.com + TON)
 =================================================================
 
 TO'LOV QOIDASI:

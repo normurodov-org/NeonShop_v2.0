@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, StoreSettings, Topup, Order, Contest } from './types';
 import { Lang } from './i18n';
 import { Header } from './components/Header';
-import { BottomNav, TabType } from './components/BottomNav';
+import { BottomNav } from './components/BottomNav';
 import { HomeView } from './components/views/HomeView';
 import { TopupView } from './components/views/TopupView';
 import { BuyView } from './components/views/BuyView';
@@ -17,14 +17,35 @@ import { CheckCircle2, ArrowLeft, PauseCircle, ShieldAlert } from 'lucide-react'
 import { useIsDesktop } from './lib/useLayout';
 import { isInsideTelegram, tgHeadersGet } from './lib/tgAuth';
 import {
-  pathToRoute, queryToRoute, routeToPath, stripQuery,
-  type Route,
+  pathToRoute, queryToRoute, routeToPath, stripQuery, normalizeRoute,
+  buySectionOf, nftSectionOf, rankingPeriodOf, profileSectionOf, adminSectionOf,
+  type Route, type TabType, type BuySub, type NftSub,
+  type RankingSub, type ProfileSub, type AdminSub,
 } from './lib/routes';
 import TelegramLogin from './components/TelegramLogin';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<TabType>('home');
-  const [initialBuyCategory, setInitialBuyCategory] = useState<'stars' | 'premium' | 'gifts' | 'nft'>('stars');
+  /**
+   * 🔴🔴🔴 BITTA `route` STATE — butun navigatsiya shundan o'tadi.
+   *
+   *    MIJOZ: «har bir xizmatga alohida /yo'l bo'lsin». U shunda
+   *    `currentTab` + `initialBuyCategory` + har bir komponentning
+   *    o'z ichki state'i (NftRentView.tab, ProfileView.showRefScreen,
+   *    RankingView.timeFilter, AdminPanel bo'limlari) kerak bo'lardi —
+   *    ya'ni MANBA 5-6 ta, ular bir-biriga mos kelmaganda URL
+   *    yolg'on qolardi (oldingi muammo aynan shu edi).
+   *
+   *    ✅ Endi YAGONA manba bor: `route`.
+   *       • komponent bo'limni almashtirsa  -> `go({tab, sections})`
+   *       • URL o'zgarsa                     -> `setRoute(pathToRoute(...))`
+   */
+  const [route, setRoute] = useState<Route>(() => pathToRoute(window.location.pathname));
+  const currentTab = route.tab;
+  const buySection = buySectionOf(route);
+  const nftSection = nftSectionOf(route);
+  const rankingPeriod = rankingPeriodOf(route);
+  const profileSection = profileSectionOf(route);
+  const adminSection = adminSectionOf(route);
   const [lang, setLang] = useState<Lang>(() => {
     return (localStorage.getItem('neon_lang') as Lang) || 'uz';
   });
@@ -423,29 +444,79 @@ export default function App() {
   /** Oxirgi yozilgan kanonik yo'l (takror yozishni va tariq spamni oldi oladi). */
   const lastPath = useRef<string>(window.location.pathname);
 
-  const applyRoute = useCallback((route: Route) => {
-    if (route.tab === 'buy') {
-      setCurrentTab('buy');
-      if (route.sub) setInitialBuyCategory(route.sub);
-    } else {
-      setCurrentTab(route.tab);
-    }
+  /**
+   * 🔴 YO'L -> ILOVA. Manzilni kiritishda (`/`, `popstate`, `?tab=`) ishlatiladi.
+   *    Kanonik yo'lga o'tkazadi: alias (`/nftrent` -> `/nft`) va eski
+   *    marker (`?tab=&sub=`) tozalanadi.
+   */
+  const applyRoute = useCallback((next: Route) => {
+    // 🔴 Holat ham kanonik bo'lsin — `{tab:'buy', sections: []}` kabi
+    //    yarim yo'l hech qachon saqlanmasdi (`buySectionOf` `['stars']`
+    //    qaytarar, lekin `sections` bo'sh qolgan holda kelib chiqarish
+    //    chalkash bo'lardi).
+    const canon = normalizeRoute(next);
+    setRoute(canon);
 
-    // 🔴 Kanonik yo'lga o'tkazamiz: alias (`/nftrent` -> `/nft`) va
-    //    eski marker (`?tab=&sub=`) tozalanadi.
-    const want = routeToPath(route.tab, route.tab === 'buy' ? route.sub : null);
+    const want = routeToPath(canon);
     const url = new URL(window.location.href);
     url.pathname = want;
     url.searchParams.delete('tab');
     url.searchParams.delete('sub');
-    const next = url.pathname
+    url.searchParams.delete('s');
+    const tail = url.pathname
       + (url.searchParams.toString() ? `?${url.searchParams}` : '')
       + url.hash;
     lastPath.current = want;
-    if (next !== window.location.pathname + window.location.search + window.location.hash) {
-      window.history.replaceState({}, '', next);
+    if (tail !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState({}, '', tail);
     }
   }, []);
+
+  /**
+   * 🔴 ILOVA -> YO'L. Mijoz bo'limni almashtirganda shu chaqiriladi
+   *    (masalan: Stars -> Premium tugmasi bosilganda `/premium`).
+   *
+   * 📌 Bu YAGONA navigatsiya nuqtasi: BottomNav, bosh sahifa kartalari,
+   *    sarlavha, reyting, profil, admin — hammasi shu orqali o'tadi.
+   *    Shu sabab manzil DOIM komponent holatiga mos keladi.
+   */
+  const go = useCallback((next: Route) => applyRoute(next), [applyRoute]);
+
+  /** Bo'limga o'tish (ichki bo'limlarni tozalab). */
+  const goTab = useCallback(
+    (tab: TabType) => applyRoute({ tab, sections: [] }),
+    [applyRoute]
+  );
+
+  /** `/stars` `/premium` `/gifts` `/nft` — ichki NFT tabi qaytadan boshi bilan. */
+  const goBuy = useCallback(
+    (sub: BuySub) => applyRoute({ tab: 'buy', sections: [sub] }),
+    [applyRoute]
+  );
+
+  /** `/nft/gifts` `/nft/usernames` `/nft/mine` */
+  const goNft = useCallback(
+    (sub: NftSub) => applyRoute({ tab: 'buy', sections: ['nft', sub] }),
+    [applyRoute]
+  );
+
+  /** `/ranking/today` va h.k. */
+  const goRanking = useCallback(
+    (sub: RankingSub) => applyRoute({ tab: 'ranking', sections: sub === 'all' ? [] : [sub] }),
+    [applyRoute]
+  );
+
+  /** `/profile/history` `/profile/referral` `/profile/settings` */
+  const goProfile = useCallback(
+    (sub: ProfileSub) => applyRoute({ tab: 'profile', sections: sub === 'overview' ? [] : [sub] }),
+    [applyRoute]
+  );
+
+  /** `/admin/orders` va h.k. */
+  const goAdmin = useCallback(
+    (sub: AdminSub) => applyRoute({ tab: 'admin', sections: sub === 'stats' ? [] : [sub] }),
+    [applyRoute]
+  );
 
   // 1) Dastlabki yo'l + `popstate`
   useEffect(() => {
@@ -463,25 +534,22 @@ export default function App() {
   // 2) ILOVA -> YO'L — mijoz ichki bo'limga o'tganda manzil yangilanadi
   //
   // 🔴🔴🔴 BIRINCHI O'RINNI BUTUNLAY O'TKAZAMIZ
-  //     React effektlar birinchi render'dan KEYIN ishlaydi, lekin
-  //     `currentTab`/`initialBuyCategory` shu render'da HALI ESKI
-  //     qiymatda bo'ladi (`useState('home')`). Birinchi o'rinda
-  //     ular ishlagan bo'lardi va biz `/nft` ni darhol `/` ga
-  //     qaytarib yuborgan bo'larmiz.
-  //     Shuning uchun birinchi chaqiruv butunlay o'tkaziladi —
-  //     keyingi renderda (`applyRoute` state yangilagandan keyin)
-  //     qiymatlar to'g'ri bo'ladi va `lastPath` bilan solishtiriladi.
+  //     React effektlar birinchi render'dan KEYIN ishlaydi. Agar bu
+  //     effekt mount'da ishga tushsa, `route` hali `pathToRoute` dan
+  //     kelgan qiymat bo'lishi kerak — bunda `lastPath` bilan
+  //     solishtirilib darhol `pushState` qilinmaydi. Shuning uchun
+  //     birinchi chaqiruv butunlay o'tkaziladi.
   const skipFirstPathSync = useRef(true);
   useEffect(() => {
     if (skipFirstPathSync.current) {
       skipFirstPathSync.current = false;
       return;
     }
-    const want = routeToPath(currentTab, currentTab === 'buy' ? initialBuyCategory : null);
+    const want = routeToPath(route);
     if (want === lastPath.current) return;
     lastPath.current = want;
     window.history.pushState({}, '', want);
-  }, [currentTab, initialBuyCategory]);
+  }, [route]);
 
   const triggerHaptic = (type: 'light' | 'medium' | 'heavy' | 'success' = 'medium') => {
     try {
@@ -850,10 +918,11 @@ export default function App() {
           onChangeLang={handleLangChange}
           isDark={isDark}
           onToggleTheme={handleToggleTheme}
-          onOpenTopup={() => setCurrentTab('topup')}
-          onOpenAdmin={isAdmin ? () => setCurrentTab('admin') : undefined}
+          onOpenTopup={() => goTab('topup')}
+          onOpenAdmin={isAdmin ? () => goTab('admin') : undefined}
           isAdmin={isAdmin}
           isDesktop={isDesktop}
+          botUsername={botUsername}
         />
       </ErrorBoundary>
 
@@ -885,11 +954,8 @@ export default function App() {
             settings={settings}
             lang={lang}
             isDark={isDark}
-            onGoToBuy={(cat) => {
-              if (cat) setInitialBuyCategory(cat);
-              setCurrentTab('buy');
-            }}
-            onGoToTopup={() => setCurrentTab('topup')}
+            onGoToBuy={(cat) => goBuy((cat || 'stars') as BuySub)}
+            onGoToTopup={() => goTab('topup')}
           />
         )}
         </ErrorBoundary>
@@ -914,7 +980,7 @@ export default function App() {
               // poller ham o'z-o'zidan to'xtasin.
               setActiveTopup(null);
             }}
-            onOpenHistory={() => setCurrentTab('profile')}
+            onOpenHistory={() => goProfile('history')}
           />
         )}
         </ErrorBoundary>
@@ -927,9 +993,12 @@ export default function App() {
             settings={settings}
             lang={lang}
             isDark={isDark}
-            initialTab={initialBuyCategory}
+            initialTab={buySection}
+            onTabChange={goBuy}
+            nftTab={nftSection || 'gifts'}
+            onNftTabChange={goNft}
             onOrderSuccess={handleOrderSuccess}
-            onGoToTopup={() => setCurrentTab('topup')}
+            onGoToTopup={() => goTab('topup')}
             onRented={handleNftRented}
           />
         )}
@@ -943,7 +1012,9 @@ export default function App() {
             contest={contest}
             lang={lang}
             isDark={isDark}
-            onGoToBuy={() => setCurrentTab('buy')}
+            initialPeriod={rankingPeriod}
+            onPeriodChange={goRanking}
+            onGoToBuy={() => goBuy('stars')}
           />
         )}
         </ErrorBoundary>
@@ -959,8 +1030,10 @@ export default function App() {
             onChangeLang={handleLangChange}
             isDark={isDark}
             onToggleTheme={handleToggleTheme}
-            onGoToTopup={() => setCurrentTab('topup')}
-            onOpenAdmin={() => setCurrentTab('admin')}
+            initialSection={profileSection}
+            onSectionChange={goProfile}
+            onGoToTopup={() => goTab('topup')}
+            onOpenAdmin={() => goTab('admin')}
             isAdmin={isAdmin}
             onLoggedOut={handleLoggedOut}
             reduceTransparency={reduceTransparency}
@@ -973,7 +1046,7 @@ export default function App() {
         {currentTab === 'admin' && isAdmin && (
           <div className="space-y-4 pb-28 md:pb-10 apple-view-animate">
             <button
-              onClick={() => setCurrentTab('profile')}
+              onClick={() => goProfile('overview')}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full liquid-glass-pill text-xs font-semibold apple-spring cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
@@ -985,6 +1058,8 @@ export default function App() {
             <ErrorBoundary label="Admin">
               <AdminPanel
                 isDark={isDark}
+                initialSection={adminSection}
+                onSectionChange={goAdmin}
                 onSettingsUpdated={(newSettings) => setSettings(newSettings)}
               />
             </ErrorBoundary>
@@ -997,7 +1072,12 @@ export default function App() {
         currentTab={currentTab}
         onChangeTab={(tab) => {
           triggerHaptic('light');
-          setCurrentTab(tab);
+          // 🔴🔴🔴 AVVAL bu yerda `currentTab` state to'g'ridan-to'g'ri
+          // o'zgartirilardi va ichki bo'limga tegilinmagan edi.
+          // Shu sabab `/nft` dan BottomNav'dagi «Xarid»
+          // tugmasini bosganda NFT'da qolib ketardingiz.
+          // ✅ Endi `goTab` ichki bo'limlarni ham tozalaydi.
+          goTab(tab);
         }}
         lang={lang}
         isDark={isDark}

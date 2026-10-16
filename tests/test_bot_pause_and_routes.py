@@ -96,16 +96,17 @@ check("Bot vaqtincha to" in APP, "\U0001F516\u0001F534\U0001F534U0001F516 \u00ab
 # =============================================================================
 section("3) \U0001F5FA\u0001F534\U0001F534FE0F YO'LLAR — har bir xizmat o\u02b8z manzilida")
 # =============================================================================
-for p, tab, sub in [("/", "home", None), ("/topup", "topup", None),
-                    ("/buy", "buy", "stars"), ("/stars", "buy", "stars"),
-                    ("/premium", "buy", "premium"), ("/gifts", "buy", "gifts"),
-                    ("/nft", "buy", "nft"), ("/nftrent", "buy", "nft"),
-                    ("/ranking", "ranking", None), ("/profile", "profile", None),
-                    ("/admin", "admin", None)]:
-    check("'%s': { tab: '%s', sub: %s }" % (
-        p, tab, ("'%s'" % sub) if sub else "null"
-    ) in ROUTES, "\U0001F5FA\u0001F534\U0001F534FE0F %-10s -> %s%s" % (
-        p, tab, "/" + sub if sub else ""))
+# \U0001F534 2026-10-16: `Route` endi `{ tab, sub }` emas, `{ tab, sections[] }`
+#    (ichki bo'limlar uchun: `/nft/gifts`, `/profile/history` ...).
+#    TO'LIQ ro'yxat va round-trip tekshiruvi -> tests/test_service_routes.py
+for p in ["/", "/topup", "/stars", "/premium", "/gifts", "/nft",
+          "/nft/gifts", "/ranking", "/ranking/today", "/profile",
+          "/profile/history", "/profile/referral", "/profile/settings",
+          "/admin", "/admin/stats", "/admin/orders"]:
+    check(p in ROUTES,
+          "\U0001F5FA\U0001F534\U0001F534FE0F kanonik yol %-20s mavjud" % p)
+check("export interface Route {" in ROUTES, "\U0001F5FA `Route` turi belgilangan")
+check("sections: string[];" in ROUTES, "\U0001F5FA\U0001F534\U0001F534FE0F ichki bolimlar: `sections[]`")
 
 # 🔴 Alias'lar kanonik yo'lga qaytarilishi kerak
 check("REDIRECTS" not in ROUTES, "📌 bitta kanonik yo'l (redirect alohida emas)")

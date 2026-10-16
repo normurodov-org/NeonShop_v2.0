@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Modal from '../Modal';
 import { Boxes, Gift, Heart, ChevronDown, SlidersHorizontal, X, Minus, Plus } from 'lucide-react';
 import { tgHeaders, tgHeadersGet } from '../../lib/tgAuth';
+import type { NftSub } from '../../lib/routes';
 
 interface NftItem {
   id: string;
@@ -39,6 +40,14 @@ interface NftProps {
    *  ishlamaydi — to'langan buyurtma qayta yuklashgacha ko'rinmaydi.
    */
   onRented?: (msg: string, newBalance?: number, order?: any) => void;
+  /**
+   * 🔴🔴🔴 URL -> HOLAT. `/nft/gifts`, `/nft/usernames`, `/nft/mine`.
+   *   Mijoz har birichiga alohida manzil berdi — ular Telegram'da
+   *   saqlanib qolishi va to'g'ridan-to'g'ri ochilishi kerak.
+   */
+  initialTab?: NftSub;
+  /** Tabni almashtirganda URL'ni yangilash (`/nft/usernames`). */
+  onTabChange?: (sub: NftSub) => void;
 }
 
 const TABS = [
@@ -47,7 +56,7 @@ const TABS = [
   { id: 'mine', label: 'My rentals' },
 ] as const;
 
-type TabId = (typeof TABS)[number]['id'];
+type TabId = NftSub;  // endi `/nft/<tab>` dan keladi
 
 /**
  * Backdrop filtrlari.
@@ -317,6 +326,8 @@ export const NftRentView: React.FC<NftProps> = ({
   balance = 0,
   onGoToTopup,
   onRented,
+  initialTab = 'gifts',
+  onTabChange,
 }) => {
   const [items, setItems] = useState<NftItem[]>([]);
   // 🔴 so'rov ketma-ketligi (loadQuote uchun — eski javob keyingisining
@@ -326,7 +337,16 @@ export const NftRentView: React.FC<NftProps> = ({
   const [maxDays, setMaxDays] = useState(50);
   const [quick, setQuick] = useState<number[]>([3, 7, 14, 30]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<TabId>('gifts');
+  const [tab, setTab] = useState<NftSub>('gifts');
+
+  // 🔴 Manzil -> tab (orqaga tugmasi, havolada ochish)
+  useEffect(() => { setTab(initialTab || 'gifts'); }, [initialTab]);
+
+  // 🔴 Tab -> manzil (segmentni bosganda)
+  const switchTab = (id: NftSub) => {
+    if (onTabChange) onTabChange(id);
+    else setTab(id);
+  };
   const [sort, setSort] = useState<'cheap' | 'big' | 'new'>('cheap');
   const [backdrop, setBackdrop] = useState(ALL_BACKDROPS);
   const [collection, setCollection] = useState(ALL_COLLECTIONS);
@@ -541,7 +561,7 @@ export const NftRentView: React.FC<NftProps> = ({
         {TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => switchTab(t.id)}
             className={`flex-1 min-w-fit px-4 py-2.5 rounded-[18px] text-[13px] font-bold
                         apple-spring cursor-pointer transition-all whitespace-nowrap ${
               tab === t.id

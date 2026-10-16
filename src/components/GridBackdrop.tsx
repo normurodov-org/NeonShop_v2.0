@@ -1,8 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import {
-  buildGrid, stepNodes, stepWaves, drawFrame,
+  buildGrid, stepNodes, drawFrame,
   PALETTE_DARK, PALETTE_LIGHT,
-  type GridNode, type Wave,
+  type GridNode,
 } from '../lib/gridBackdrop';
 
 /**
@@ -30,7 +30,8 @@ import {
  *    ketmaydi. Qaytish surishdan SEKIN (spring emas).
  *
  * 🔋 BATERIYA / SIFAT:
- *   • `prefers-reduced-motion: reduce` → tolqin tug'maydi
+ *   • `prefers-reduced-motion: reduce` → surish butunlay o'chadi
+ *     (qaytish ishlaydi — nuqtalar tinch holatga keladi)
  *   • tab yashirin bo'lsa → rAF to'xtaydi
  *   • DPR 2 bilan cheklangan (Retina'da ham tekis, 4x emas)
  *   • kursor qo'ymasa → rAF o'zi to'xtaydi (bo'sh sikl yo'q)
@@ -79,16 +80,16 @@ export const GridBackdrop: React.FC<Props> = ({ isDark }) => {
 
     let geo = resize();
 
+    /* ── Harakat kamaytirilganmi? (OS sozlamasi) ─────────────────── */
+    const mqReduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const reducedMotion = () => mqReduced.matches;
+
     /* ── Kursor va tolqinlar ─────────────────────────────────────── */
     let px = geo.W / 2;
     let py = geo.H / 2;
     let cx = px;
     let cy = py;
     let active = false;
-    let waves: Wave[] = [];
-
-    const reduced = () =>
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     /* ── Kadr ────────────────────────────────────────────────────── */
     let raf = 0;
@@ -96,7 +97,7 @@ export const GridBackdrop: React.FC<Props> = ({ isDark }) => {
     const draw = () => {
       drawFrame(
         ctx as any, geo.W, geo.H, P, geo.nodes,
-        cx, cy, active, waves, geo.radius, 1.1, 3.7,
+        cx, cy, geo.radius, 1.1, 3.7,
       );
     };
 
@@ -105,19 +106,30 @@ export const GridBackdrop: React.FC<Props> = ({ isDark }) => {
       cx += (px - cx) * 0.12;
       cy += (py - cy) * 0.12;
 
-      stepNodes(
-        geo.nodes, cx, cy, geo.radius,
-        geo.cell * 0.42,   // surish
-        0.16,             // qaytish (yumshoqroq = spring yo'q)
-      );
-      waves = stepWaves(waves, geo.cell * 0.42);
+      // 🔴🔴 Tugma ustida — SURISH TO'XTAYDI, faqat qaytish ishlaydi
+      //    (nuqtalar tinch holatga QAYTADI). Shunda tugma ostidagi
+      //    fon «jim» qoladi va kontakt ochiq ko'rinadi.
+      if (overUI || reducedMotion()) {
+        // 🔴🔴 Tugma ustida SURISH TO'XTAYDI, faqat qaytish ishlaydi
+        //    (nuqtalar tinch holatga QAYTADI). Shunda tugma ostidagi
+        //    fon «jim» qoladi va kontakt ochiq ko'rinadi.
+        //
+        //    `prefers-reduced-motion` ham shu yo'lga tushadi — mijoz
+        //    harakatni yoqotmoqchi bo'lsa, surish umuman bo'lmaydi.
+        stepNodes(geo.nodes, cx, cy, geo.radius, 0, 0.16);
+      } else {
+        stepNodes(
+          geo.nodes, cx, cy, geo.radius,
+          geo.cell * 0.42,   // surish
+          0.16,             // qaytish (yumshoqroq = spring yo'q)
+        );
+      }
 
       draw();
 
       // 🔴 Qachon to'xtash? Faqat kerak bo'lganda rAF davom etadi.
       const moving =
-        active ||
-        waves.length > 0 ||
+        (active && !overUI && !reducedMotion()) ||
         Math.abs(px - cx) > 0.05 ||
         Math.abs(py - cy) > 0.05 ||
         geo.nodes.some((n) => Math.abs(n.ox - n.x) > 0.05 || Math.abs(n.oy - n.y) > 0.05);
@@ -142,12 +154,6 @@ export const GridBackdrop: React.FC<Props> = ({ isDark }) => {
         cx = px;
         cy = py;
       }
-      // 🔴 Tez silinsa — tolqin tug'iladi (rasmdagi yorishli halqalar)
-      const speed = Math.hypot(px - lastX, py - lastY);
-      if (speed > 34 && !reduced()) {
-        waves.push({ x: px, y: py, r: 4, max: geo.cell * 3.4 });
-        if (waves.length > 4) waves.shift();
-      }
       lastX = px;
       lastY = py;
       kick();
@@ -155,6 +161,31 @@ export const GridBackdrop: React.FC<Props> = ({ isDark }) => {
 
     const onLeave = () => {
       active = false;
+      overUI = false;
+      kick();
+    };
+
+    // 🔴🔴 TUGMA USTIDA FON TO'XTAYDI
+    //   Mijoz: «kursor birorta tugma ustiga borsa dinamik background
+    //   to'xtasin, va yana backgroundga o'tganda yana dinamik
+    //   harakatlansin».
+    //
+    //   📌 NIMA UCHUN?
+    //   Tugma ustida kursor QO'NADI (sukut bo'yicha) — shunda
+    //   nuqtalar surilmay qoladi va effekt «o'lgan»dek bo'ladi.
+    //   Aksincha, tugma ustida fon TINCH turadi (klassis «hover»
+    //   hissi), fonda qaytganda esa yana harakatlanadi.
+    let overUI = false;
+
+    const onOverUI = (e: PointerEvent) => {
+      const el = e.target as HTMLElement | null;
+      const hit = !!(el && el.closest(
+        'button, a, input, select, textarea, [role="button"], [role="tab"]'
+      ));
+      if (hit === overUI) return;
+      overUI = hit;
+      // 🔴 To'xtash: kursor pozitsiyasi saqlanadi, faqat
+      //    «qozgaluvchan» bayroq o'chadi.
       kick();
     };
 
@@ -181,6 +212,7 @@ export const GridBackdrop: React.FC<Props> = ({ isDark }) => {
     draw();
 
     window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('pointerover', onOverUI, { passive: true });
     window.addEventListener('pointerleave', onLeave, { passive: true });
     window.addEventListener('resize', onResize);
     document.addEventListener('visibilitychange', onVisibility);
@@ -188,6 +220,7 @@ export const GridBackdrop: React.FC<Props> = ({ isDark }) => {
     return () => {
       if (raf) cancelAnimationFrame(raf);
       window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerover', onOverUI);
       window.removeEventListener('pointerleave', onLeave);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVisibility);

@@ -1,17 +1,31 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, StoreSettings, Order, UsdtRate } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { Star, Sparkles, Gift, UserCheck, AlertCircle, RefreshCw, Edit3, Check, Wallet, Layers, ChevronRight } from 'lucide-react';
 import AEmoji from '../AEmoji';
 import NftRentView from './NftRentView';
 import { tgHeaders } from '../../lib/tgAuth';
+import type { BuySub, NftSub } from '../../lib/routes';
 
 interface BuyViewProps {
   user: User | null;
   settings: StoreSettings | null;
   lang: Lang;
   isDark: boolean;
-  initialTab?: 'stars' | 'premium' | 'gifts' | 'nft';
+  initialTab?: BuySub;
+  /**
+   * 🔴🔴🔴 URL -> HOLAT. Mijoz segment tugmasini bosganda avval
+   *   `onTabChange` chaqiriladi (manzil yangilanadi), keyin `initialTab`
+   *   orqali bu effekt orqali `subTab` yangilanadi.
+   *   AVVAL bu chaqiruv yo'q edi — segment bosilganda URL O'ZGARMAYDI,
+   *   ya'ni mijoz `/stars` da turib «Premium» ni bossa, manzil
+   *   `/stars` da qolardi. Endi har bir xizmat o'z manziliga ega.
+   */
+  onTabChange?: (sub: BuySub) => void;
+  /** `/nft/gifts` — NFT ichidagi tab (yo'l bo'lagi). */
+  nftTab?: NftSub;
+  /** `/nft/usernames` — NFT ichidagi tabni almashtirish. */
+  onNftTabChange?: (sub: NftSub) => void;
   onOrderSuccess: (order: Order, newBalance: number, msg: string) => void;
   onGoToTopup: () => void;
   /** NFT ijaraga olish yuborilganda — toast ko'rsatish uchun */
@@ -26,12 +40,15 @@ export const BuyView: React.FC<BuyViewProps> = ({
   lang,
   isDark,
   initialTab = 'stars',
+  onTabChange,
+  nftTab = 'gifts',
+  onNftTabChange,
   onOrderSuccess,
   onGoToTopup,
   onRented,
 }) => {
   const t = translations[lang];
-  const [subTab, setSubTab] = useState<'stars' | 'premium' | 'gifts' | 'nft'>(initialTab);
+  const [subTab, setSubTab] = useState<BuySub>(initialTab);
 
   // 🔴 Telegram username'i bo'lmagan akkauntlar uchun "O'zimga" ishlashmaydi.
   // `user_XXXX` kabi sun'iy qiymatni HECH QACHON ishlatmaymiz — u
@@ -42,6 +59,18 @@ export const BuyView: React.FC<BuyViewProps> = ({
   React.useEffect(() => {
     setSubTab(initialTab);
   }, [initialTab]);
+
+  /**
+   * 🔴 Segmentni almashtirish — avval URL'ni, keyin holatni.
+   *   `onTabChange` bo'lmasa (eski ishlatish) — oddiy `setSubTab`.
+   */
+  const switchTab = useCallback(
+    (next: BuySub) => {
+      if (onTabChange) onTabChange(next);
+      else setSubTab(next);
+    },
+    [onTabChange]
+  );
 
   // Form states
   const [recipient, setRecipient] = useState<string>(user?.username || '');
@@ -301,7 +330,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
       <div className="flex items-center gap-1 p-1 rounded-full liquid-glass">
         <button
           onClick={() => {
-            setSubTab('stars');
+            switchTab('stars');
             setError(null);
           }}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer apple-spring ${
@@ -318,7 +347,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
 
         <button
           onClick={() => {
-            setSubTab('premium');
+            switchTab('premium');
             setError(null);
           }}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer apple-spring ${
@@ -335,7 +364,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
 
         <button
           onClick={() => {
-            setSubTab('gifts');
+            switchTab('gifts');
             setError(null);
           }}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer apple-spring ${
@@ -352,7 +381,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
 
         <button
           onClick={() => {
-            setSubTab('nft');
+            switchTab('nft');
             setError(null);
           }}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full text-xs font-semibold transition-all cursor-pointer apple-spring ${
@@ -768,6 +797,8 @@ export const BuyView: React.FC<BuyViewProps> = ({
           balance={user?.balance || 0}
           onGoToTopup={onGoToTopup}
           onRented={onRented}
+          initialTab={nftTab}
+          onTabChange={onNftTabChange}
         />
       )}
     </div>

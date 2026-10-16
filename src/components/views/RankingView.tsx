@@ -3,6 +3,7 @@ import { User, Contest } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { Trophy, Crown, Sparkles, Clock, ShoppingBag } from 'lucide-react';
 import { telegramInitData } from '../../lib/tgAuth';
+import type { RankingSub } from '../../lib/routes';
 
 interface RankingViewProps {
   user: User | null;
@@ -10,6 +11,13 @@ interface RankingViewProps {
   lang: Lang;
   isDark: boolean;
   onGoToBuy?: () => void;
+  /**
+   * 🔴🔴🔴 `/ranking` `/ranking/today` `/ranking/3days` `/ranking/7days`
+   *   Har bir davr — alohida xizmat, alohida manzil. Avval `timeFilter`
+   *   faqat ichki state edi: manzil doim `/ranking` bo'lib qolardi.
+   */
+  initialPeriod?: RankingSub;
+  onPeriodChange?: (p: RankingSub) => void;
 }
 
 interface LeaderItem {
@@ -23,9 +31,18 @@ interface LeaderItem {
   isMe: boolean;
 }
 
-export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, isDark, onGoToBuy }) => {
+export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, isDark, onGoToBuy, initialPeriod = 'all', onPeriodChange }) => {
   const t = translations[lang];
-  const [timeFilter, setTimeFilter] = useState<'all' | 'today' | '3days' | '7days'>('all');
+  const [timeFilter, setTimeFilter] = useState<RankingSub>(initialPeriod);
+
+  // 🔴 Manzil -> davr (orqaga tugmasi, havolada ochish)
+  useEffect(() => { setTimeFilter(initialPeriod || 'all'); }, [initialPeriod]);
+
+  // 🔴 Davr -> manzil (`/ranking/3days`)
+  const switchPeriod = (p: RankingSub) => {
+    if (onPeriodChange) onPeriodChange(p);
+    else setTimeFilter(p);
+  };
 
   const [leaders, setLeaders] = useState<LeaderItem[]>([]);
   const [myRanking, setMyRanking] = useState<{
@@ -109,7 +126,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
             ].map((f) => (
               <button
                 key={f.id}
-                onClick={() => setTimeFilter(f.id as any)}
+                onClick={() => switchPeriod(f.id as RankingSub)}
                 className={`py-1 px-3.5 rounded-full text-xs font-semibold transition-all border apple-spring cursor-pointer ${
                   timeFilter === f.id
                     ? isDark ? 'bg-white text-black border-white' : 'bg-black text-white border-black'
@@ -164,7 +181,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                     {leaders[1].name}
                   </span>
                   <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{Number(leaders[1].orders) || 0} {t.orders}</span>
-                  <div className="w-full h-18 mt-2 rounded-t-[18px] liquid-glass flex items-center justify-center font-mono font-bold text-xs">
+                  <div className="w-full h-[88px] mt-2 rounded-t-[18px] liquid-glass flex items-center justify-center font-mono font-bold text-xs">
                     {((Number(leaders[1].amount) || 0) / 1000).toFixed(0)}K
                   </div>
                 </div>
@@ -174,7 +191,18 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
 
               {/* 1st Place (Tallest, Center) */}
               {leaders[0] && (
-                <div className="flex-1 flex flex-col items-center relative -top-3">
+                /* 🔴🔴🔴 BU YERDA `-top-3` BORIDI VA U CHIQARDI!
+                   `relative -top-3` butun USTUNNI (avatar + ism +
+                   summa bloki) 12px KOTARARDI. Saqlanish esa
+                   `items-end` — ya'ni pastki chekkalari tekislanadi.
+                   Natija: 1-o'rin pastda, 2 va 3-o'rin 12px pastda
+                   qolgan. O'lchildi: PASTKI_FARQ = 12px.
+
+                   ✅ Endi hech qanday `top`/`translate` yo'q —
+                   ustunlar `items-end` bilan HAQIQATAN pastki
+                   chiziqdan tekislanadi. «Birinchi balandroq»
+                  effekti faqat balandlik bilan beriladi. */
+                <div className="flex-1 flex flex-col items-center">
                   <Crown className="w-5 h-5 text-amber-400 mb-1 drop-shadow-sm" />
                   <div className="w-11 h-11 rounded-full liquid-glass flex items-center justify-center font-bold text-sm shadow-lg ring-1 ring-amber-400/40 overflow-hidden">
                     {leaders[0].photo_url ? (
@@ -187,7 +215,10 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                     {leaders[0].name}
                   </span>
                   <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{Number(leaders[0].orders) || 0} {t.orders}</span>
-                  <div className="w-full h-26 mt-2 rounded-t-[20px] liquid-glass-card flex items-center justify-center font-mono font-bold text-sm">
+                  {/* 📏 Balandliklar IZCHIL qadam bilan: 72 / 88 / 104px.
+                      Aks holda (70 / 101 / 55) tepa chiziqlar «arra» bo'lib
+                      ko'rinar edi. Endi har bir qadam aynan 16px. */}
+                  <div className="w-full h-[104px] mt-2 rounded-t-[20px] liquid-glass-card ring-1 ring-amber-400/30 flex items-center justify-center font-mono font-bold text-sm">
                     {((Number(leaders[0].amount) || 0) / 1000).toFixed(0)}K
                   </div>
                 </div>
@@ -207,7 +238,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                     {leaders[2].name}
                   </span>
                   <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{Number(leaders[2].orders) || 0} {t.orders}</span>
-                  <div className="w-full h-14 mt-2 rounded-t-[18px] liquid-glass flex items-center justify-center font-mono font-bold text-xs">
+                  <div className="w-full h-[72px] mt-2 rounded-t-[18px] liquid-glass flex items-center justify-center font-mono font-bold text-xs">
                     {(Number(leaders[2].amount) / 1000).toFixed(0)}K
                   </div>
                 </div>
@@ -227,11 +258,11 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                     item.isMe ? 'bg-amber-400/10 border border-amber-400/20' : 'hover:bg-black/5 dark:hover:bg-white/5'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <span className={`w-5 text-center text-xs font-mono font-bold ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className={`w-5 shrink-0 text-center text-xs font-mono font-bold ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
                       #{item.rank}
                     </span>
-                    <div className="w-7 h-7 rounded-full overflow-hidden liquid-glass-pill shrink-0">
+                    <div className="w-7 h-7 shrink-0 rounded-full overflow-hidden liquid-glass-pill">
                       {item.photo_url ? (
                         <img src={item.photo_url} alt="" className="w-full h-full object-cover" />
                       ) : (
@@ -240,12 +271,14 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                         </div>
                       )}
                     </div>
-                    <div>
-                      <h4 className={`text-xs font-semibold ${isDark ? 'text-white' : 'text-neutral-900'}`}>{item.name}</h4>
+                    {/* 📌 `min-w-0` + `truncate` — uzun ism summani surib
+                        yubormasdi. Pinned karta ham shu qoidada. */}
+                    <div className="min-w-0">
+                      <h4 className={`text-xs font-semibold truncate ${isDark ? 'text-white' : 'text-neutral-900'}`}>{item.name}</h4>
                       <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{item.orders} {t.orders}</span>
                     </div>
                   </div>
-                  <div className={`text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+                  <div className={`shrink-0 text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                     {(Number(item.amount) || 0).toLocaleString()}{' '}
                     <span className="text-[9px] font-normal opacity-70">UZS</span>
                   </div>
@@ -254,36 +287,57 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
             </div>
           )}
 
-          {/* User's Place Pinned Real Card */}
-          <div className="rounded-[22px] liquid-glass-card p-3.5 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-full p-[1.5px] overflow-hidden liquid-glass-pill shrink-0">
-                {user?.photo_url ? (
-                  <img
-                    src={user.photo_url}
-                    alt={user.username || 'User'}
-                    className="w-full h-full rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full rounded-full flex items-center justify-center font-bold text-xs">
-                    {user?.username ? user.username.charAt(0).toUpperCase() : 'U'}
-                  </div>
-                )}
-              </div>
-              <div>
-                <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} font-medium`}>
-                  {t.yourPlace}: <b className={isDark ? 'text-white' : 'text-neutral-900'}>
-                    {myRanking.rank ? `#${myRanking.rank}` : "Hali xarid yo'q"}
-                  </b>
+          {/* User's Place Pinned Real Card
+              🔴🔴🔴 MIJOZ: «ikkalasi bir biriga to'g'ri kelmayapti».
+
+              📐 SABAB: bu karta ro'yxat qatorlaridan BUTUNLAY boshqa
+              tuzilishda edi:
+                • tashqi kartada `p-2.5`, ichida `p-2.5`  → avatar 20px
+                • bu kartada `p-3.5`                        → avatar 14px
+                • ro'yxat avatari `w-7 h-7`, bu yerda `w-9 h-9`
+                • ro'yxatda `gap-3`, bu yerda `gap-2.5`
+              Natija: karta pastda turgan edi, lekin avatar va summa
+              qatorlarning ustki qatorlari bilan BIR CHIZIQDA turmardi.
+
+              ✅ Endi qator STRUKTURASI bit-tik nusxalangan:
+                kartaning ichi aynan `leaders.slice(3)` qatori kabi
+                quriladi (p-2.5 + p-2.5 + w-5 + w-7 + gap-3).
+                Shuning uchun avatar, ism va summa ustma-ust tushadi. */}
+          <div className="rounded-[26px] liquid-glass-card p-2.5">
+            <div className="flex items-center justify-between gap-3 p-2.5 rounded-[14px] bg-amber-400/10 border border-amber-400/20">
+              <div className="flex items-center gap-3 min-w-0">
+                {/* O'rin raqami — ro'yxatdagi `#` kabi kenglikda */}
+                <span className="w-5 shrink-0 text-center text-xs font-mono font-bold text-amber-500">
+                  {myRanking.rank ? `#${myRanking.rank}` : '—'}
+                </span>
+                <div className="w-7 h-7 shrink-0 rounded-full overflow-hidden liquid-glass-pill">
+                  {user?.photo_url ? (
+                    <img
+                      src={user.photo_url}
+                      alt={user.username || 'User'}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full rounded-full flex items-center justify-center font-bold text-[10px]">
+                      {user?.username ? user.username.charAt(0).toUpperCase() : 'U'}
+                    </div>
+                  )}
                 </div>
-                <div className="text-xs font-semibold text-amber-500">
-                  {myRanking.inTop10 ? t.top10 : `${myRanking.orders} ta xarid`}
+                {/* 📌 `min-w-0` + `truncate` — uzun ism BALANSSNI
+                    chapga surib yubormasdi (karta torayardi). */}
+                <div className="min-w-0">
+                  <h4 className={`text-xs font-semibold truncate ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+                    {t.yourPlace}
+                  </h4>
+                  <span className="text-[10px] text-amber-500">
+                    {myRanking.inTop10 ? t.top10 : `${myRanking.orders} ${t.orders}`}
+                  </span>
                 </div>
               </div>
-            </div>
-            <div className="text-right">
-              <div className={`text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                {myRanking.amount.toLocaleString()} <span className="text-[9px] font-normal opacity-70">UZS</span>
+              {/* 📌 `shrink-0` — summa hech qachon siqilmasdi */}
+              <div className={`shrink-0 text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+                {myRanking.amount.toLocaleString()}{' '}
+                <span className="text-[9px] font-normal opacity-70">UZS</span>
               </div>
             </div>
           </div>

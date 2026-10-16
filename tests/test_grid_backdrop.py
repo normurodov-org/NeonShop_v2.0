@@ -45,7 +45,7 @@ COMP = io.open(os.path.join(ROOT, "src/components/GridBackdrop.tsx"),
                encoding="utf-8").read()
 APP = io.open(os.path.join(ROOT, "src/App.tsx"), encoding="utf-8").read()
 
-for fn in ("buildGrid", "stepNodes", "stepWaves", "drawFrame"):
+for fn in ("buildGrid", "stepNodes", "drawFrame"):
     check("export function %s" % fn in SRC, "\U0001F5FA\U0001F534\U0001F534FE0F `%s` eksport qilingan" % fn)
     check(fn in COMP, "\U0001F5FA\U0001F534\U0001F534FE0F komponent `%s` dan foydalanadi" % fn)
 # heatOf chizish ichida (drawFrame) ishlatiladi — komponentdan
@@ -61,9 +61,44 @@ check("buildGrid(W, H, cell)" in COMP, "\U0001F534\U0001F534\U0001F534 to'r modu
 # 🔴 Bot brendiga mos ranglar (qora + yashil)
 check("#000000" in SRC, "\U0001F534 qora fon (#000000)")
 check("PALETTE_DARK" in SRC and "PALETTE_LIGHT" in SRC, "\U0001F5FA\U0001F534\U0001F534FE0F ikkala palitra")
+# 🌈 OQ-QORA (bot dizayni) — YASHIL QOLMADI
 dots = re.findall(r"rgba\((\d+),\s*(\d+),\s*(\d+)", SRC)
 green = [d for d in dots if int(d[1]) > int(d[0]) and int(d[1]) > int(d[2])]
-check(len(green) >= 3, "\U0001F534\U0001F534\U0001F534 nuqta/tor RANGLARI yashil (g > r, g > b): %d ta" % len(green))
+check(len(green) == 0, "🔴🔴🔴 YASHIL rang QOLMADI (%d ta)" % len(green))
+grey = [d for d in dots if d[0] == d[1] == d[2]]
+check(len(grey) >= 4, "🔴🔴 oq-qora (kulrang) ranglar: %d ta" % len(grey))
+check("dot: 'rgba(255, 255, 255, 0.34)'" in SRC, "🔴🔴🔴 nuqta oq")
+check("dotHot: 'rgba(255, 255, 255, 1)'" in SRC, "🔴🔴🔴 kursor ostidagi nuqta to'liq oq")
+check("dot: 'rgba(0, 0, 0, 0.30)'" in SRC, "🔴🔴🔴 yorug' rejimda nuqta qora")
+
+# 🔴🔴🔴 Glow (kursor ostidagi yorug'lik) va TOLQIN doirasi OLIB TASHLANGAN
+body = SRC.split("export function drawFrame", 1)[1]
+check("createRadialGradient" not in body,
+      "🔴🔴🔴 kursor ostidagi YORUG'LIK (glow) chizilmaydi")
+check("P.wave" not in body, "🔴🔴🔴 tolqin DOIRASI chizilmaydi")
+check("glow" not in SRC, "🔴🔴🔴 palitradagi glow maydoni ham olib tashlandi")
+
+# 🌐 VERTIKAL chiziq ham bor
+check("showLines" in SRC, "📄 `showLines` — chiziqlarni o'chirish mumkin")
+check("prevX = Math.round(n.ox)" in body, "📄📄 VERTIKAL chiziq chiziladi")
+check("prevY = Math.round(n.oy)" in body, "📄📄 HORIZONTAL chiziq chiziladi")
+
+# 🔴🔴🔴 Tugma ustida fon TO'XTAYDI
+check("overUI" in COMP, "🔴🔴🔴 tugma ustida to'xtatish bor")
+check("onOverUI" in COMP, "🔴🔴🔴 `pointerover` ishlovchi")
+check("button, a, input, select, textarea" in COMP,
+      "🔴🔴🔴 tugma/link/ input aniqlanadi")
+check("stepNodes(\n          geo.nodes, cx, cy, geo.radius,\n          geo.cell * 0.42" in COMP
+      or "geo.cell * 0.42,   // surish" in COMP,
+      "🔴🔴🔴 fonda surish (push = 0.42) ishlaydi")
+check("stepNodes(geo.nodes, cx, cy, geo.radius, 0, 0.16)" in COMP,
+      "🔴🔴🔴🔴 tugma ustida surish NOL (faqat qaytish)")
+check("(active && !overUI && !reducedMotion())" in COMP,
+      "🔴🔴🔴 tugma ustida animatsiya to'xtaydi")
+
+# 🔴 TDZ: `overUI` `onOverUI` dan OLDIN e'lon bo'lishi kerak
+check(COMP.index("let overUI = false;") < COMP.index("const onOverUI"),
+      "🔴🔴🔴 `overUI` `onOverUI` dan OLDIN e'lon qilingan (TDZ xatosi yo'q)")
 
 # 🔴 Aurora olib tashlangan
 check("aurora-blob" not in APP, "\U0001F534 asosiy ekranda `aurora-blob` YO'Q")

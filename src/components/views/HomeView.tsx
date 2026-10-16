@@ -1,7 +1,10 @@
 import React, { useRef } from 'react';
 import { User, StoreSettings } from '../../types';
 import { Lang, translations, fromPrice } from '../../i18n';
-import { ShoppingBag, Star, Sparkles, Gift, Boxes, ChevronRight, Zap } from 'lucide-react';
+import {
+  ShoppingBag, Star, Sparkles, Gift, Boxes, ChevronRight, Zap,
+  LifeBuoy, Megaphone, Receipt, ExternalLink,
+} from 'lucide-react';
 
 interface HomeViewProps {
   user: User | null;
@@ -105,90 +108,90 @@ export const HomeView: React.FC<HomeViewProps> = ({
         {/* Telegram Stars Card */}
         <div
           onClick={() => onGoToBuy('stars')}
-          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-2 cursor-pointer"
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex flex-col gap-3 apple-spring apple-view-animate stagger-2 cursor-pointer"
         >
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-3.5 min-w-0">
             <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${
               isDark ? 'bg-white/[0.08] text-amber-300' : 'bg-black/[0.04] text-amber-600'
             }`}>
               <Star className="w-5 h-5 fill-current drop-shadow-sm" />
             </div>
-            <div>
-              <h3 className={`text-xs font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+            <div className="min-w-0">
+              <h3 className={`text-xs font-bold truncate ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                 Telegram Stars
               </h3>
-              <p className={`text-[11px] mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
+              <p className={`text-[11px] mt-0.5 line-clamp-2 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
                 {t.starsDesc}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
+          <div className="flex items-center justify-between gap-2">
+            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill whitespace-nowrap shrink-0 ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
               1 ★ = {starPrice} UZS
             </span>
-            <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
+            <ChevronRight className="w-4 h-4 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
         </div>
 
         {/* Telegram Premium Card */}
         <div
           onClick={() => onGoToBuy('premium')}
-          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-3 cursor-pointer"
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex flex-col gap-3 apple-spring apple-view-animate stagger-3 cursor-pointer"
         >
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-3.5 min-w-0">
             <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${
               isDark ? 'bg-white/[0.08] text-blue-300' : 'bg-black/[0.04] text-blue-600'
             }`}>
               <Sparkles className="w-5 h-5 drop-shadow-sm" />
             </div>
-            <div>
-              <h3 className={`text-xs font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+            <div className="min-w-0">
+              <h3 className={`text-xs font-bold truncate ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                 Telegram Premium
               </h3>
-              <p className={`text-[11px] mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
+              <p className={`text-[11px] mt-0.5 line-clamp-2 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
                 {t.premiumDesc}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
+          <div className="flex items-center justify-between gap-2">
+            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill whitespace-nowrap shrink-0 ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
               {fromPrice(lang, '40 000')}
             </span>
-            <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
+            <ChevronRight className="w-4 h-4 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
         </div>
 
         {/* Gifts Card */}
         <div
           onClick={() => onGoToBuy('gifts')}
-          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-4 cursor-pointer"
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex flex-col gap-3 apple-spring apple-view-animate stagger-4 cursor-pointer"
         >
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-3.5 min-w-0">
             <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${
               isDark ? 'bg-white/[0.08] text-neutral-300' : 'bg-black/[0.04] text-neutral-700'
             }`}>
               <Gift className="w-5 h-5 drop-shadow-sm" />
             </div>
-            <div>
-              <h3 className={`text-xs font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+            <div className="min-w-0">
+              <h3 className={`text-xs font-bold truncate ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                 Telegram Gifts
               </h3>
-              <p className={`text-[11px] mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
+              <p className={`text-[11px] mt-0.5 line-clamp-2 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
                 {t.giftsDesc}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
+          <div className="flex items-center justify-between gap-2">
+            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill whitespace-nowrap shrink-0 ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
               {fromPrice(lang, '3 000')}
             </span>
-            <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
+            <ChevronRight className="w-4 h-4 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
         </div>
 
@@ -199,33 +202,110 @@ export const HomeView: React.FC<HomeViewProps> = ({
         <button
           type="button"
           onClick={() => onGoToBuy('nft')}
-          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex items-center justify-between apple-spring apple-view-animate stagger-5 cursor-pointer text-left w-full"
+          className="group relative overflow-hidden rounded-[24px] liquid-glass p-4 flex flex-col gap-3 apple-spring apple-view-animate stagger-5 cursor-pointer text-left w-full"
         >
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-3.5 min-w-0">
             <div className={`w-11 h-11 rounded-[18px] flex items-center justify-center ${
               isDark ? 'bg-white/[0.08] text-neutral-300' : 'bg-black/[0.04] text-neutral-700'
             }`}>
               <Boxes className="w-5 h-5 drop-shadow-sm" />
             </div>
-            <div>
-              <h3 className={`text-xs font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+            <div className="min-w-0">
+              <h3 className={`text-xs font-bold truncate ${isDark ? 'text-white' : 'text-neutral-900'}`}>
                 NFT Rent
               </h3>
-              <p className={`text-[11px] mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
+              <p className={`text-[11px] mt-0.5 line-clamp-2 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
                 NFT sovg&apos;alar ijarasi
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill ${
+          <div className="flex items-center justify-between gap-2">
+            <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full liquid-glass-pill whitespace-nowrap shrink-0 ${
               isDark ? 'text-neutral-200' : 'text-neutral-800'
             }`}>
               {lang === 'uz' ? '3-50 kun' : '3-50 days'}
             </span>
-            <ChevronRight className="w-4 h-4 opacity-40 group-hover:opacity-100 transition-opacity" />
+            <ChevronRight className="w-4 h-4 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity" />
           </div>
         </button>
       </div>
+
+      {/* ===================================================================
+       * 📦 HAVOLALAR — pastdagi boʸshliq
+       *
+       * 🔴 NIMA UCHUN?
+       *   Xizmat kartalari ostida toʸli boʸsh joy qolardi — u
+       *   «beri kerak» maydoni kabi koʸrindi. Endi u foydali:
+       *   mijoz yordam, yangiliklar va buyurtmalarga bir bosishda
+       *   yetadi (avval bunday havolalar butunlay yoʸq edi).
+       *
+       * 🌐 HAVOLALAR qatʸi serverdan keladi:
+       *   support_username  → /api/config → Help
+       *   Kanal nomlari       → `?` emas, toʸgʸri ENV dan (DEFAULT bilan)
+       * ========================================================================== */}
+      <FooterLinks isDark={isDark} settings={settings} />
     </div>
+  );
+};
+
+/* =============================================================================
+ * 📦 HAVOLALAR QATORI
+ * ============================================================================= */
+const LINKS: { key: string; fallback: string; icon: React.ElementType; label: { uz: string; en: string } }[] = [
+  { key: 'support_username', fallback: 'normuzb', icon: LifeBuoy, label: { uz: 'Yordam', en: 'Help' } },
+  { key: 'news_channel', fallback: 'Shop_NeonChannel', icon: Megaphone, label: { uz: 'Yangiliklar', en: 'News' } },
+  { key: 'orders_channel', fallback: 'Shop_NeonOrders', icon: Receipt, label: { uz: 'Buyurtmalar', en: 'Orders' } },
+];
+
+const FooterLinks: React.FC<{ isDark: boolean; settings: StoreSettings | null }> = ({
+  isDark, settings,
+}) => {
+  const s = settings as unknown as Record<string, string> | null;
+
+  return (
+    <nav
+      aria-label="Foydali havolalar"
+      className="grid grid-cols-1 sm:grid-cols-3 gap-2.5"
+    >
+      {LINKS.map(({ key, fallback, icon: Icon, label }) => {
+        // 📝 `@` va boʸshliqlarni tozalaymiz — Telegram havolasi
+        //    `https://t.me/<nom>` boʸlishi uchun
+        const raw = String(s?.[key] || fallback).trim().replace(/^@/, '');
+        const href = raw ? `https://t.me/${raw}` : undefined;
+
+        return (
+          <a
+            key={key}
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`group flex items-center gap-3 rounded-[20px] liquid-glass px-4 py-3.5
+                        apple-spring apple-view-animate cursor-pointer
+                        ${href ? '' : 'pointer-events-none opacity-50'}`}
+          >
+            <div className={`w-9 h-9 rounded-[14px] flex items-center justify-center shrink-0 ${
+              isDark ? 'bg-white/[0.08] text-neutral-300' : 'bg-black/[0.04] text-neutral-700'
+            }`}>
+              <Icon className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className={`text-[11.5px] font-bold truncate ${
+                isDark ? 'text-white' : 'text-neutral-900'
+              }`}>
+                {label.uz}
+              </p>
+              <p className={`text-[10.5px] truncate ${
+                isDark ? 'text-neutral-400' : 'text-neutral-500'
+              }`}>
+                @{raw || '—'}
+              </p>
+            </div>
+            <ExternalLink className={`w-3.5 h-3.5 shrink-0 transition-opacity ${
+              isDark ? 'text-neutral-500 opacity-60' : 'text-neutral-400 opacity-60'
+            } group-hover:opacity-100`} />
+          </a>
+        );
+      })}
+    </nav>
   );
 };

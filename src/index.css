@@ -448,6 +448,41 @@
 
    Bu — kontent stikchi bar ostida «eriydigan» qatlam. Kontent shaffof
    oynadan o'tib ketganda matn o'qilmay qolmasin. */
+/* =============================================================================
+ * 📏 FAQAT PASTDAGI CHIZIQ — sarlavha uchun
+ *
+ * 🔴 NIMA UCHUN?
+ *   `.dark .liquid-glass-nav` specificity (0,2,0) bilan toʸli tomonlarga
+ *   `border: 1px solid var(--lg-edge)` beradi. Natijada sarlavha tepasida
+ *   «toʼrtburchak» koʸrinardi: yuqori + ikki yon + past.
+ *   Mijoz soʸradi: «faqat pastdagi toʸgʸri chiziq qolsin».
+ *
+ * 📝 YECHIM
+ *   Selector `html body .glass-bottom-edge` = specificity (0,1,2) —
+ *   `.dark .liquid-glass-nav` dan USTUN. Shuning uchun qoidaning
+ *   TARTIBI qancha boʸlsa ham yengmaydi, `!important` kerak emas.
+ * ========================================================================== */
+/* 🔴 SPECIFICITY — avvalgi urinish ishlamadi:
+ *    `html body .glass-bottom-edge` = (0,1,2)
+ *    `.dark .liquid-glass-nav`      = (0,2,0)   <- BU YUTADI
+ *
+ *    CSS avval ID, keyin KLASS, keyin ELEMENT boʸy taqqoslaydi.
+ *    1 klass vs 2 klass — 2 klassli qoidа yutadi. Shuning uchun
+ *    bizning qoidamiz ham `.dark`/`.light` ni oʸz ichiga oladi:
+ *
+ *      html body .dark  .glass-bottom-edge = (0,2,2)  ✧
+ *      html body .light .glass-bottom-edge = (0,2,2)  ✧
+ *
+ *    `!important` umuman kerak emas.
+ */
+html body .dark .glass-bottom-edge,
+html body .light .glass-bottom-edge {
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  border-bottom: 1px solid var(--lg-edge);
+}
+
 .glass-scroll-edge::after {
   content: "";
   position: absolute;

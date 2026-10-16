@@ -15,6 +15,8 @@ interface HeaderProps {
   onOpenTopup: () => void;
   onOpenAdmin?: () => void;
   isAdmin: boolean;
+  /** Bot nomi (`shop_neonbot`) — «Telegram Bot» tugmasi uchun */
+  botUsername?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -28,7 +30,10 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAdmin,
   isAdmin,
   isDesktop = false,
+  botUsername = '',
 }) => {
+  // 🔴 Bot havolasi — `@` va bo'sh joylarni tozalaymiz
+  const botHandle = (botUsername || '').trim().replace(/^@/, '');
   const [avatarError, setAvatarError] = React.useState(false);
 
   // 🔴 `avatarError` bir marta `true` bo'lsa butunlay
@@ -60,7 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
        chiqib, `padding-inline` bilan chapni qayta yozardi
        (≥1280px da 124px → 40px) va sarlavha menyu ustiga
        chiqib qolardi. Endi `html body .rail-clear` (0,1,2). */
-    <header className="glass-scroll-edge liquid-glass-nav sticky top-0 z-30 px-4 pt-3 pb-2.5 border-b transition-colors duration-300 border-white/[0.08]">
+    <header className="glass-scroll-edge glass-bottom-edge liquid-glass-nav sticky top-0 z-30 px-4 pt-3 pb-2.5 border-b transition-colors duration-300 border-white/[0.08]">
       <div
         className="max-w-md md:max-w-none md:px-6 xl:px-10 rail-clear mx-auto flex items-center justify-between gap-2.5"
       >
@@ -98,7 +103,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div>
             <div className="flex items-center gap-1">
               <span className={`text-[10px] font-semibold tracking-wider uppercase ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
-                NEON STORE
+                NeonShop
               </span>
               <ShieldCheck className="w-3 h-3 text-neutral-400" />
             </div>
@@ -108,8 +113,34 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Right Actions: Theme Toggle + Lang Switcher + Admin Gear + Minimal Balance Pill */}
+        {/* Right Actions: Telegram Bot + Theme + Lang + Admin Gear + Balance */}
         <div className="flex items-center gap-1.5">
+          {/* 📲 Telegram Bot — rasmiy kanalga boradi.
+              📌 Mijoz so'ragan: sarlavhada «Telegram Bot» tugmasi.
+              🔴 `botUsername` kelmasa (server javob bermasa) tugma
+                 umuman chiqmaydi — bo'sh joy qolmasin. */}
+          {botHandle && (
+            <a
+              href={`https://t.me/${botHandle}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full liquid-glass-pill
+                          text-[11px] font-semibold apple-spring cursor-pointer ${
+                isDark
+                  ? 'text-neutral-200 hover:text-white'
+                  : 'text-neutral-700 hover:text-black'
+              }`}
+              title={`@${botHandle}`}
+            >
+              {/* 📖 Rasmiy Telegram qog'oz-nokurasi */}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"
+                   aria-hidden="true" focusable="false" className="opacity-90">
+                <path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z" />
+              </svg>
+              <span className="uppercase tracking-wide">Bot</span>
+            </a>
+          )}
+
           {/* Day / Night Theme Toggle */}
           <button
             onClick={onToggleTheme}

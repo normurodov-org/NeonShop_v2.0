@@ -114,10 +114,16 @@ for fn in ("pathToRoute", "queryToRoute", "routeToPath", "stripQuery"):
           "📌📌 `%s` modulda eksport qilingan" % fn)
 
 # 📌📌 NFT yo'llari
-for p_, sub in [("/nft", "nft"), ("/nftrent", "nft"),
-                ("/nft-rent", "nft"), ("/rent", "nft")]:
-    check("'%s': { tab: 'buy', sub: '%s' }" % (p_, sub) in ROUTES,
-          "🗺️ %-11s -> Xarid + NFT" % p_)
+# 🔴 2026-10-16: `Route` endi `{ tab, sub }` emas, `{ tab, sections[] }`.
+#    `/nft` — kanonik, qolganlari alias (bitta manba: `ALIASES`).
+check("['nft']," in ROUTES, "🗺️ /nft — Xarid + NFT (kanonik zanjir)")
+for p_ in ("/nftrent", "/nft-rent", "/rent"):
+    check("'%s': { tab: 'buy', sections: ['nft'] }" % p_ in ROUTES,
+          "🗺️ %-11s -> /nft (alias)" % p_)
+# 📌 NFT ichki tabi ham o'z yo'lida
+check("['nft', 'gifts']," in ROUTES, "🗺️ /nft/gifts — NFT ichidagi 'Gifts'")
+check("['nft', 'usernames']," in ROUTES, "🗺️ /nft/usernames")
+check("['nft', 'mine']," in ROUTES, "🗺️ /nft/mine")
 
 # 📌📌 Botning eski `?tab=&sub=` havolalari BUZILMAYDI
 check("queryToRoute(window.location.search)" in APP,
@@ -125,15 +131,17 @@ check("queryToRoute(window.location.search)" in APP,
 check("url.searchParams.delete('tab')" in APP, "📌📌 `tab` marker tozalanadi")
 check("url.searchParams.delete('sub')" in APP, "📌📌 `sub` marker tozalanadi")
 
-# 📌📌 `tab` va `sub` turli darajada — aralashtirilmasin
+# 📌📌 `tab` va `sections` turli darajada — aralashtirilmasin
 check("setCurrentTab('nft')" not in APP,
-      "📌📌📌 `tab=nft` YO'Q — faqat `sub=nft` (bo'sh ekna bo'lmasin)")
-check("setInitialBuyCategory(route.sub)" in APP,
-      "📌📌📌 route.sub -> NFT kichik tabi")
+      "📌📌📌 `tab=nft` YO'Q — faqat `sections=['nft']` (bo'sh ekna bo'lmasin)")
+check("buySectionOf(route)" in APP,
+      "📌📌📌 route.sections -> NFT kichik tabi")
+check("nftSectionOf(route)" in APP,
+      "📌📌📌 NFT ichki tabi ham URL dan (`/nft/usernames`)")
 
 # BuyView `initialTab` ni qabul qilishi
 check("initialTab = 'stars'" in BUY, "🟡 BuyView `initialTab` qabul qiladi")
-check("useState<'stars' | 'premium' | 'gifts' | 'nft'>(initialTab)" in BUY,
+check("useState<BuySub>(initialTab)" in BUY,
       "🟡 `subTab` `initialTab` dan boshlanadi")
 
 print()
