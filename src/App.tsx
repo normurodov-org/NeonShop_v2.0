@@ -341,6 +341,58 @@ export default function App() {
     fetchUserData(parsedId, parsedUn, parsedPhoto, parsedFirst, initDataRaw);
   }, []);
 
+  /* =======================================================================
+   * 🔗 CHUQUR HAVOLA (?tab=…&sub=…) — botdagi bo'limni to'g'ridan-to'g'ri
+   *    ochish uchun.
+   *
+   * 🔴 NIMA UCHUN?
+   *    Botdagi «NFT Gift ijarasi» bo'limi endi WebApp'ning ichki
+   *    sahifasiga (`Xarid → NFT`) olib boradi. Avval u foydalanuvchini
+   *    tashqi kanalga yuborax edi — mijoz esa NEON STORE da qolib
+   *    ketmoqchi.
+   *
+   * 📌 MISOL: `https://…/?tab=buy&sub=nft`
+   *    → `currentTab = 'buy'` va `BuyView initialTab = 'nft'`
+   *
+   * 📌 `sub` ni HECH QACHON `currentTab`ga aralashtirmaymiz — ular
+   *    turli darajada: `tab` = navigatsiya (BottomNav), `sub` = ichki
+   *    kichik tab. Aks holda `?tab=nft` BottomNav'da noma'lum tab
+   *    berib, bo'sh sahifa ochardi.
+   * ===================================================================== */
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const tab = (p.get('tab') || '').trim();
+      const sub = (p.get('sub') || '').trim();
+
+      if (tab === 'buy') {
+        setCurrentTab('buy');
+        if (sub === 'nft') setInitialBuyCategory('nft');
+        else if (sub === 'premium') setInitialBuyCategory('premium');
+        else if (sub === 'gifts') setInitialBuyCategory('gifts');
+        else if (sub === 'stars') setInitialBuyCategory('stars');
+      } else if (tab === 'topup') {
+        setCurrentTab('topup');
+      } else if (tab === 'ranking') {
+        setCurrentTab('ranking');
+      } else if (tab === 'profile') {
+        setCurrentTab('profile');
+      }
+
+      // 🔴 Marker belgisini tozalaymiz — aks holda mijoz ichki
+      //    tabga o'tib, "Mening hisobim" degan oyna deyarli ko'rinmas
+      //    edi. `replaceState` — sahifa QAYTA YUKLANMAYDI.
+      if (tab || sub) {
+        const u = new URL(window.location.href);
+        u.searchParams.delete('tab');
+        u.searchParams.delete('sub');
+        window.history.replaceState({}, '', u.pathname + u.search + u.hash);
+      }
+    } catch {
+      /* URLni o'qib bo'lmadi — standart navigatsiya qoladi */
+    }
+  }, []);
+
   const triggerHaptic = (type: 'light' | 'medium' | 'heavy' | 'success' = 'medium') => {
     try {
       const tg = (window as any).Telegram?.WebApp;

@@ -2051,6 +2051,7 @@ class NftStates(StatesGroup):
     title = State()     # 1/2 — nom (FAQAT admin rasm yuborsa)
     photo = State()     # ALDIYI NFT ga rasm biriktirish (ixtiyoriy)
     daily = State()     # 2/2 — 1 kunlik narx
+    price = State()     # 🔄 ALDIYI NFT ning 1 kunlik narxini O'ZGARTIRISH
 
 
 class TopupStates(StatesGroup):
@@ -7064,6 +7065,8 @@ def _nft_list_kb() -> tuple:
             row.append(InlineKeyboardButton(
                 text="🖼 Rasm", callback_data=f"adm:nft_photo:{n.get('id')}"))
         row.append(InlineKeyboardButton(
+            text="💰 Narx", callback_data=f"adm:nft_price:{n.get('id')}"))
+        row.append(InlineKeyboardButton(
             text=("🚫 Yopish" if active else "✅ Ochish"),
             callback_data=f"adm:nft_toggle:{n.get('id')}"))
         buttons.append(row)
@@ -7589,6 +7592,106 @@ async def adm_nft_toggle(call: CallbackQuery):
                                   disable_web_page_preview=True)
     await call.answer("✅ Ochildi — mijozga ko'rinadi" if n["active"]
                       else "⏸️ Yopildi — mijozga ko'rinmaydi")
+
+
+# =============================================================================
+# NFT NARXI — O'ZGARTIRISH
+# -----------------------------------------------------------------------------
+# 🔴 NIMA UCHUN?
+#     NFT qo'shishda narx bir marta kiritiladi va keyin butunlay
+#     QATTIQ qolib ketardi. Buning uchun `removed`/arxiv funksiyasi
+#     bor, lekin narxi noto'g'ri bo'lsa (uzilish, xato kiritish,
+#     bozor o'zgarishi) — uni tuzatish yo'li YO'Q edi: NFT'ni o'chirib,
+#     qayta qo'shish (rasmni ham) kerak bo'lardi.
+#
+# Oqim:
+#   1) `adm:nft_price:<id>`  -> yangi 1 kunlik narxni so'raydi
+#   2) admin son yuboradi    -> `daily` yangilanadi, `db.save()`
+#   3) ro'yxat shu yerda qayta chiziladi — narx darhol ko'rinadi
+#
+# 📌 Nima uchun FAQAT `daily`?
+#     Narx boshqa joylarda qattiq yozilgan emas — WebApp narxni
+#     `/api/nfts` orqali oladi va `nft_rent_quote()` bilan
+#     ko'paytiradi. Shu sabab bitta qiymatni o'zgartirish yetarli.
+# =============================================================================
+@admin_router.callback_query(F.data.startswith("adm:nft_price:"))
+async def adm_nft_price_ask(call: CallbackQuery, state: FSMContext):
+    """NFT ning 1 kunlik narxini yangilashga o'tadi."""
+    if not await _admin_guard(call):
+        return
+    db.reload_if_changed()
+    await call.answer()
+    nid = call.data.split(":", 2)[2]
+    n = db.data.get("nfts", {}).get(nid)
+    if not n:
+        await call.message.answer(
+            "🔴 NFT topilmadi — ro'yxatda o'zgargan bo'lishi mumkin.\n"
+            "<i>🔄 Qayta ochish uchun: /admin → 🏥 NFT ro'yxati</i>"
+        )
+        return
+
+    old = num(n.get("daily"))
+    await state.set_state(NftStates.price)
+    await state.update_data(nft_id=nid)
+    await call.message.answer(
+        f"💰 <b>Narxni o'zgartirish</b>\n\n"
+        f"🖼 <b>{esc(str(n.get('title')))}</b>"
+        + (f" <code>#{n.get('number')}</code>" if n.get("number") else "")
+        + f"\n\n💵 Hozirgi 1 kunlik narx: <b>{fmt(old)} UZS</b>"
+        + f"\n📦 {NFT_MIN_DAYS} kunlik jami: "
+          f"<b>{fmt(nft_rent_quote(old, NFT_MIN_DAYS)['total'])} UZS</b>\n\n"
+        "✍️ <b>Yangi 1 kunlik narxni</b> yuboring (so'mda).\n\n"
+        f"<i>Masalan: <code>{max(1, old * 2)}</code> "
+        f"yoki <code>{(fmt(old).replace(' ', ' '))}</code></i>",
+        reply_markup=cancel_inline_kb("adm:nft_cancel"),
+    )
+
+
+@admin_router.message(StateFilter(NftStates.price), F.text)
+async def adm_nft_price_set(message: Message, state: FSMContext):
+    """Yangi narxni qabul qiladi va saqlaydi."""
+    data = await state.get_data()
+    nid = data.get("nft_id")
+    db.reload_if_changed()
+    n = db.data.get("nfts", {}).get(nid) if nid else None
+    if not n:
+        await state.clear()
+        await message.answer(
+            "🔴 NFT topilmadi — narx o'zgartirilmadi.\n"
+            "<i>🔄 Qayta ochish uchun: /admin → 🏥 NFT ro'yxati</i>"
+        )
+        return
+
+    new = parse_uzs_amount(message.text or "")
+    if new is None or new < 1:
+        await message.answer(
+            "⚠️ Narxni butun son ko'rinishida yuboring (masalan: 84).\n"
+            "<i>💾 Bekor qilish: /cancel</i>"
+        )
+        return
+
+    old = num(n.get("daily"))
+    n["daily"] = int(new)
+    db.save()
+    await state.clear()
+
+    delta = int(new) - old
+    arrow = "📈" if delta > 0 else ("📉" if delta < 0 else "➖")
+    text, kb = _nft_list_kb()
+    await message.answer(
+        "✅ <b>Narx yangilandi!</b>\n\n"
+        f"🖼 <b>{esc(str(n.get('title')))}</b>"
+        + (f" <code>#{n.get('number')}</code>" if n.get("number") else "")
+        + f"\n\n💵 1 kunlik: <b>{fmt(old)}</b> → <b>{fmt(int(new))} UZS</b> {arrow}"
+        + f"\n📦 {NFT_MIN_DAYS} kunlik jami: "
+          f"<b>{fmt(nft_rent_quote(int(new), NFT_MIN_DAYS)['total'])} UZS</b>\n\n"
+        "📲 Mijozlarda WebApp darhol ko'rinadi (sahifa yangilanganda).",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📋 NFT ro'yxati", callback_data="adm:nft_list"),
+            InlineKeyboardButton(text="⬅️ Admin", callback_data="adm:home"),
+        ]]),  # type: ignore[arg-type]
+        disable_web_page_preview=True,
+    )
 
 
 @admin_router.callback_query(F.data == "adm:nft_cancel")
@@ -9076,6 +9179,25 @@ def nft_notice() -> str:
     )
 
 
+def nft_webapp_url() -> str:
+    """Web App ichidagi NFT ijarasi bo'limining TO'G'RIDAN manzili.
+
+    🔴 `?tab=buy&sub=nft` — ilova shu ikki parametrni o'qib, «Xarid»
+       ekranini va uning ichidagi NFT kichik tabini BIR VAQTDA ochadi
+       (qarang: `src/App.tsx` → `CHUQUR HAVOLA` izohi).
+
+    📌 `?sub=nft` YOKI `?tab=nft` bo'lsa, mijoz noto'g'ri ekranda
+       ochilib, «bo'sh sahifa» deb o'ylaydi. Shuning uchun `sub`
+       alohida — navigatsiya (`tab`) va ichki tab (`sub`) turli
+       darajada.
+
+    📌 `WEBAPP_URL` allaqachon `https://` bilan normal qilib qo'yilgan
+       (yuqorida, `WEBAPP_API_URL` bilan birga).
+    """
+    base = WEBAPP_URL.rstrip("/")
+    return f"{base}/?tab=buy&sub=nft"
+
+
 # =============================================================================
 # TELEGRAM PREMIUM — bot menyusi (m:premium)
 # =============================================================================
@@ -9144,19 +9266,41 @@ async def premium_start(message: Message, state: FSMContext) -> None:
 
 
 async def nft_start(message: Message, state: FSMContext) -> None:
+    """NFT Gift ijarasi — endi WEB APP ichidagi NFT bo'limiga olib boradi.
+
+    🔴 NIMA UCHUN O'ZGARTI?
+        Avval bu yerda faqat `@rentnftlarr` kanalining tugmasi bor edi
+        (`url=`). Mijoz bot ichida «NFT Gift ijarasi» bosganida
+        NEON STORE'ni tashib ketib, tashqi kanalga yuborilardi —
+        boshqaruv, narx va holat biror joyda emas edi.
+
+        Endi birinchi tugma — WEB APP (`?tab=buy&sub=nft`), ya'ni mijoz
+        to'g'ridan-to'g'ri «Xarid → NFT ijaraga olish» bo'limiga
+        tushadi: ro'yxat, narx, muddat va buyurtma BIZNING ilovamizda.
+
+        📌 Deep link App.tsx dagi `?tab=…&sub=…` o'quvchi bilan
+           ishlaydi (qarang: `CHUQUR HAVOLA` izohi).
+    """
     await state.clear()
+    rows = [
+        [InlineKeyboardButton(
+            text="🎁 NFT ijaraga olish (Web App)",
+            web_app=WebAppInfo(url=nft_webapp_url()),
+            style="primary",
+        )],
+        [InlineKeyboardButton(
+            text=f"🔗 {NFT_CHANNEL} kanalini ochish",
+            url=f"https://t.me/{NFT_CHANNEL.lstrip('@')}",
+        )],
+        [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:buy", style="danger")],
+    ]
     await message.answer(
-        f"🎭 <b>NFT Gift Ijarasi</b>\n\n"
+        "🎭 <b>NFT Gift Ijarasi</b>\n\n"
         "NFT sovg'a vaqtincha ijara qilish xizmati.\n\n"
+        "📲 <b>Narx va ro'yxat</b> — quyidagi tugma orqali Web App'da "
+        "ko'rsatiladi. To'lov balansingizdan yechiladi.\n\n"
         f"{nft_notice()}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"🔗 {NFT_CHANNEL} kanalini ochish",
-                url=f"https://t.me/{NFT_CHANNEL.lstrip('@')}",
-                style="primary",
-            )],
-            [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:buy", style="danger")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),  # type: ignore[arg-type]
     )
 
 
