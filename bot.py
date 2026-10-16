@@ -941,6 +941,45 @@ def esc(text: Any) -> str:
     return html.escape(str(text if text is not None else ""))
 
 
+async def edit_or_answer(
+    message: Message,
+    text: str,
+    rows: Optional[list] = None,
+) -> None:
+    """🔴🔴🔴 XABARNI O'SHIDA O'ZGARTIRADI — YANGI XABAR YUBORMAYDI.
+
+    📌 MIJOZ SO'RAYOTGAN MUAMMO (2026-10-16):
+        «1-xabardagi orqaga tugmasini bosganimda 2-xabar junatilyapti.»
+
+    NIMA BO'LGAN EDI?
+        Har «Orqaga» bosilganda handler `message.answer(...)` chaqirardi.
+        `answer` — DOIMO YANGI xabar yuboradi. Natijada mijoz chatda
+        eski xabarlar ko'payib ketardi: NFT ekrani → Orqaga → yangi
+        «Stars sotib olish» xabari → yana Orqaga → yana yangi xabar…
+
+    NIMA QILINADI?
+        Avval `message.edit_text(...)` — xabar O'ZIGA o'zgartiradi
+        (xabar ID o'zgarmaydi, chat to'lishmaydi). Agar tahrirlab
+        bo'lmasa (masalan, xabar turi boshqa yoki vaqti o'tgan) —
+        eski usulga (`answer`) qaytadi, bot ishlamasligi shart.
+
+    📌 QO'LLANILGAN JOYLAR:
+        `nft_start`, `buy_start` — mijoz so'ragan oqim. Qolgan
+        menyu handlerlari (`premium_start`, `gifts_start`, …) ham
+        xuddi shu kamchilikda — ular keyinroq shu helperga o'tkaziladi.
+    """
+    markup = InlineKeyboardMarkup(inline_keyboard=rows or [])
+    try:
+        await message.edit_text(text, reply_markup=markup)
+        return
+    except Exception as exc:  # noqa: BLE001 — tahrirlab bo'lmasa, yangi yuboramiz
+        log.warning("edit_text o'rniga yangi xabar yuborilmoqda (%s): %s", message.chat.id, exc)
+    try:
+        await message.answer(text, reply_markup=markup)
+    except Exception as exc2:  # noqa: BLE001
+        log.error("Xabar yuborib bo'lmadi (chat %s): %s", message.chat.id, exc2)
+
+
 def new_id(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex[:10]}"
 
@@ -3017,9 +3056,12 @@ async def buy_start(message: Message, state: FSMContext, db_user: dict):
     if db_user.get("username"):
         rows.append([InlineKeyboardButton(text=f"🙋 O'zimga (@{db_user['username']})", callback_data="buy_self", style="success")])
     rows.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel", style="danger")])
-    await message.answer(
+    # 🔴🔴🔴 `answer` EMAS — `edit_or_answer`: «Orqaga» bosilganda yangi
+    #    xabar yuborilib chat to'lib ketardi (mijoz so'ragan muammo).
+    await edit_or_answer(
+        message,
         "⭐ <b>Stars sotib olish</b>\n\nStars kimga yuborilsin? Telegram <b>@username</b> ni yuboring:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        rows,
     )
 
 
@@ -9310,13 +9352,17 @@ async def nft_start(message: Message, state: FSMContext) -> None:
         #    ichida — tashqi kanalga chiqish kerak emas.
         [InlineKeyboardButton(text="◀️ Orqaga", callback_data="m:buy", style="danger")],
     ]
-    await message.answer(
+    # 🔴🔴🔴 `answer` EMAS — `edit_or_answer`. Aks holda «Orqaga»
+    #    bosilganda YANGI xabar yuborilib, chat to'lib ketardi
+    #    (mijoz so'ragan muammo).
+    await edit_or_answer(
+        message,
         "🎭 <b>NFT Gift Ijarasi</b>\n\n"
         "NFT sovg'a vaqtincha ijara qilish xizmati.\n\n"
         "📲 <b>Narx va ro'yxat</b> — quyidagi tugma orqali Web App'da "
         "ko'rsatiladi. To'lov balansingizdan yechiladi.\n\n"
         f"{nft_notice()}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),  # type: ignore[arg-type]
+        rows,
     )
 
 

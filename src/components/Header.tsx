@@ -17,6 +17,12 @@ interface HeaderProps {
   isAdmin: boolean;
   /** Bot nomi (`shop_neonbot`) — «Telegram Bot» tugmasi uchun */
   botUsername?: string;
+  /**
+   * 🔴🔴🔴 MIJOZ: «BOT tugmasi FAQAT WEBSITE'da bo'lsin, bot ichidagi
+   *    WebApp'da kerak emas.»
+   *    `true` = mijoz hozir Telegram ichida (WebApp) — tugma yashirinadi.
+   */
+  inTelegram?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   isAdmin,
   isDesktop = false,
   botUsername = '',
+  inTelegram = false,
 }) => {
   // 🔴 Bot havolasi — `@` va bo'sh joylarni tozalaymiz
   const botHandle = (botUsername || '').trim().replace(/^@/, '');
@@ -66,11 +73,22 @@ export const Header: React.FC<HeaderProps> = ({
        (≥1280px da 124px → 40px) va sarlavha menyu ustiga
        chiqib qolardi. Endi `html body .rail-clear` (0,1,2). */
     <header className="glass-scroll-edge glass-bottom-edge liquid-glass-nav sticky top-0 z-30 px-4 pt-3 pb-2.5 border-b transition-colors duration-300 border-white/[0.08]">
+      {/* 🔴🔴🔴 MIJOZ: «Website&WebApp (telefon) ancha tiqilishib qolgan.»
+        📌 SABAB: bitta qatorda 8 ta element (avatar + brend + @ism +
+           BOT + mavzu + til + admin + balans) — 360px li telefonda
+           ~480px kerak bo'ladi, natija: siqilib chiqib ketardi.
+        ✅ YECHIM: `flex-wrap` — tor ekranda tugmalar IKKINCHI qatorga
+           tushadi. Shuning uchun:
+             • `gap-y-2` — qatorlar orasida bo'sh joy
+             • chap guruh `min-w-0` — avatar hech qachon siqilmaydi
+             • `@ism` tor ekranda qisqartiriladi (72px → 110px)
+        📌 Keng ekranda (md+) o'zgarmaydi: `justify-between` bilan
+           chap chapda, tugmalar o'ngda. */}
       <div
-        className="max-w-md md:max-w-none md:px-6 xl:px-10 rail-clear mx-auto flex items-center justify-between gap-2.5"
+        className="max-w-md md:max-w-none md:px-6 xl:px-10 rail-clear mx-auto flex flex-wrap items-center justify-between gap-x-2.5 gap-y-2"
       >
         {/* User Avatar + Greeting */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
           <div className="relative">
             <div className={`w-9 h-9 rounded-full p-[1.5px] overflow-hidden ${
               isDark
@@ -107,19 +125,23 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
               <ShieldCheck className="w-3 h-3 text-neutral-400" />
             </div>
-            <h2 className={`text-xs font-bold leading-none mt-0.5 truncate max-w-[110px] ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+            {/* 📌 `min-w-0` — tor ekranda ism uzun bo'lsa ham siqilmaydi,
+                 `truncate` bilan kesiladi. Keng ekranda 110px. */}
+            <h2 className={`text-xs font-bold leading-none mt-0.5 truncate max-w-[72px] sm:max-w-[110px] ${isDark ? 'text-white' : 'text-neutral-900'}`}>
               {displayName}
             </h2>
           </div>
         </div>
 
-        {/* Right Actions: Telegram Bot + Theme + Lang + Admin Gear + Balance */}
-        <div className="flex items-center gap-1.5">
-          {/* 📲 Telegram Bot — rasmiy kanalga boradi.
-              📌 Mijoz so'ragan: sarlavhada «Telegram Bot» tugmasi.
-              🔴 `botUsername` kelmasa (server javob bermasa) tugma
-                 umuman chiqmaydi — bo'sh joy qolmasin. */}
-          {botHandle && (
+        {/* Right Actions: Telegram Bot + Theme + Lang + Admin Gear + Balance
+            📌 `flex-wrap` — tor ekranda (BOT yashirin bo'lgach) mavzu/til
+            tugmalari ham qolmasligi uchun. */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* 🔴🔴🔴 FAQAT WEBSITE. Mijoz: «BOT tugmasi faqat websiteda bo'lsin,
+               bot ichidagi webapp ga kerak emas.» Telegram ichida
+               (`inTelegram`) tugma umuman chiqmaydi — mijoz allaqachon
+               bot ichida, qaytish tugmasi kerak emas. */}
+          {botHandle && !inTelegram && (
             <a
               href={`https://t.me/${botHandle}`}
               target="_blank"

@@ -923,6 +923,7 @@ export default function App() {
           isAdmin={isAdmin}
           isDesktop={isDesktop}
           botUsername={botUsername}
+          inTelegram={!inBrowser}
         />
       </ErrorBoundary>
 

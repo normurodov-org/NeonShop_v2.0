@@ -139,6 +139,27 @@ check(NFT_CODE.index("nft_webapp_url()") < NFT_CODE.index('callback_data="m:buy"
       "🔴🔴🔴 WebApp tugmasi birinchi, «Orqaga» ikkinchi")
 
 # =============================================================================
+section("2b) 🔴🔴🔴 «ORQAGA» YANGI XABAR YUBORMAYDI")
+# =============================================================================
+# MIJOZ: «1-xabardagi orqaga tugmasini bosganimda 2-xabar junatilyapti.»
+check("async def edit_or_answer(" in BOT,
+      "🔴🔴🔴 `edit_or_answer` yordamchisi bor")
+check("await message.edit_text(text, reply_markup=markup)" in BOT,
+      "🔴🔴🔴 avval xabar O'ZIGA tahrirlanadi")
+check("await message.answer(text, reply_markup=markup)" in BOT,
+      "🔴🔴🔴 tahrirlab bo'lmasa — yangi xabar (zaxira)")
+# 📌 `nft_start` va `buy_start` — `answer` EMAS, `edit_or_answer`
+check("await edit_or_answer(" in nft_start,
+      "🔴🔴🔴 `nft_start` yangi xabar YUBORMAYDI")
+check("await message.answer(" not in _code_only(nft_start),
+      "🔴🔴🔴 `nft_start` da `message.answer` QOLMADI")
+buy_start = BOT.split("async def buy_start", 1)[1][:1200].split("\n\n@router", 1)[0]
+check("await edit_or_answer(" in buy_start,
+      "🔴🔴🔴 `buy_start` yangi xabar YUBORMAYDI")
+check("await message.answer(" not in _code_only(buy_start),
+      "🔴🔴🔴 `buy_start` da `message.answer` QOLMADI")
+
+# =============================================================================
 section("3) 🌐 ILOVA: NFT BO'LIMIGA YO'L QORQALI KIRISH")
 # =============================================================================
 # 📌 Eski tuzilma «CHUQUR HAVOLA» effekti edi (`?tab=&sub=`).

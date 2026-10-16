@@ -141,7 +141,33 @@ check(COMP.index("const reducedMotion") < COMP.index("reducedMotion()"),
       "🔴🔴 `reducedMotion` ta'rifidan oldin ishlatilmaydi")
 
 # =============================================================================
-section("6) FON butun ekranlarda")
+section("6) SARLAVHA — FAQAT PASTDA CHIZIQ + BOT FAQAT WEBSITE'DA")
+# =============================================================================
+# 🔴🔴🔴 MIJOZ: «tepadagi belgilanga chiziq kerak emas. olib tashla,
+#    faqat pasdagi qolsin.»
+check("border-top: 0" in CSS, "🔴🔴🔴 tepa chiziq OLIB TASHLANGAN")
+check("border-right: 0" in CSS, "🔴🔴🔴 o'ng chiziq OLIB TASHLANGAN")
+check("border-left: 0" in CSS, "🔴🔴🔴 chap chiziq OLIB TASHLANGAN")
+check("border-bottom: 1px solid var(--lg-edge)" in CSS,
+      "🔴🔴🔴 FAQAT pastdagi chiziq qolgan")
+
+# 🔴🔴🔴 MIJOZ: «BOT tugmasi faqat websiteda bo'lsin, bot ichidagi
+#    webapp ga kerak emas.»
+check("inTelegram" in HDR, "🔴🔴🔴 `inTelegram` prop'i bor")
+check("{botHandle && !inTelegram && (" in HDR,
+      "🔴🔴🔴 Telegram ichida BOT tugmasi YASHIRINADI")
+check("inTelegram={!inBrowser}" in APP,
+      "🔴🔴🔴 `inBrowser` (oddiy brauzer) → BOT KO'RSATILADI")
+
+# 🔴🔴🔴 MIJOZ: «Website&WebApp (telefon) ancha tiqilishib qolgan.»
+check("flex-wrap" in HDR, "🔴🔴🔴 `flex-wrap` — tor ekranda 2 qator")
+check("gap-y-2" in HDR, "🔴🔴🔴 qatorlar orasida bo'sh joy")
+check("min-w-0" in HDR, "🔴🔴🔴 avatar siqilmaydi")
+check("max-w-[72px] sm:max-w-[110px]" in HDR,
+      "🔴🔴🔴 @ism tor ekranda qisqartiriladi")
+
+# =============================================================================
+section("7) FON butun ekranlarda")
 # =============================================================================
 check(APP.count("<GridBackdrop") == 3,
       "📍 GridBackdrop 3 ekranda (kirish / bot-to'xtatilgan / asosiy)")
