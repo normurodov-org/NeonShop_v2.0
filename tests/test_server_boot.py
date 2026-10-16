@@ -413,8 +413,8 @@ try:
     check(j.get("ok") is True, "quote ok")
     check(q.get("per_day") == 84, f"1 kunlik = {q.get('per_day')}")
     check(q.get("rent") == 588, f"ijara (7 kun) = {q.get('rent')}")
-    check(q.get("network_fee") == 1700, f"network fee = {q.get('network_fee')}")
-    check(q.get("total") == 2288, f"JAMI = {q.get('total')}")
+    check(q.get("network_fee") == 2000, f"network fee = {q.get('network_fee')}")
+    check(q.get("total") == 2588, f"JAMI = {q.get('total')}")
 except Exception as exc:  # noqa: BLE001
     check(False, f"JSON emas: {exc}")
 

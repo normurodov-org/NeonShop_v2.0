@@ -634,7 +634,12 @@ NFT_MIN_DAYS = 3
 NFT_MAX_DAYS = 50
 # Telegram tarmog'ida bir tranzaksiya uchun to'lanadigan xarajat.
 # Bu foydalanuvchiga alohida ko'rsatiladi — u ijaraga QO'SHILMAYDI.
-NFT_NETWORK_FEE = 1700
+#
+# 🔴🔴 server.ts dagi `NFT_NETWORK_FEE` BILAN BIR XIL BO'LSIN!
+#     Ikkala joyda turli qiymat bo'lsa, mijoz WebApp'da bitta narxni,
+#     bot xabarida boshqasini ko'radi (aralashib ketadi). Ikkala
+#     tomon ham bitta raqamdan o'qishi kerak.
+NFT_NETWORK_FEE = 2000
 # Tez tanlash uchun qulay muddatlar
 NFT_QUICK_DAYS = (3, 7, 14, 30)
 
@@ -863,7 +868,7 @@ def nft_rent_quote(daily: Any, days: Any) -> dict:
     Rasmdagi kabi:
         Per day        = kunlik narx
         Rent (N days) = kunlik × muddat
-        Network fee    = 1 700
+        Network fee    = NFT_NETWORK_FEE (2 000 so'm)
         Total          = Rent + Network fee
     """
     d = max(NFT_MIN_DAYS, min(NFT_MAX_DAYS, num(days, NFT_MIN_DAYS)))

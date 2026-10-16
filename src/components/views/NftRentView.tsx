@@ -72,6 +72,20 @@ const COLLECTIONS = ['All collections', 'Regular gifts', 'Upgrades', 'Unique'];
 
 const fmt = (n: number) => Number(n || 0).toLocaleString('uz-UZ').replace(/,/g, ' ');
 
+/* ──────────────────────────────────────────────────────────────────────
+ * 🌐 NETWORK FEE — server javobidan olinadi.
+ *
+ * 🔴🔴 NIMA UCHUN BU SHUNDAY?
+ *     `useState(1700)` kabi qat'iy son yozilsa, server javobida
+ *     `network_fee` kelmaganda (yo'ldan xato, eski API, bo'sh
+ *     javob) mijozga NOTO'G'RI narx ko'rinardi — 1700 emas, 2000.
+ *
+ *     Bu qiymat `server.ts` va `bot.py` dagi `NFT_NETWORK_FEE` bilan
+ *     BIR XIL bo'lishi shart (test tekshiradi). Server har doim
+ *     ustidan yozadi — bu faqat ZAXIRA qiymat.
+ * ──────────────────────────────────────────────────────────────────── */
+const DEFAULT_NETWORK_FEE = 2000;
+
 /**
  * Rasm manzilini tekshiradi.
  *
@@ -363,7 +377,7 @@ export const NftRentView: React.FC<NftProps> = ({
         setItems(d.items || []);
         setMinDays(d.min_days ?? 3);
         setMaxDays(d.max_days ?? 50);
-        setNetworkFee(d.network_fee ?? 1700);
+        setNetworkFee(d.network_fee ?? DEFAULT_NETWORK_FEE);
         if (Array.isArray(d.quick_days) && d.quick_days.length) {
           setQuick(d.quick_days);
         }
@@ -375,7 +389,7 @@ export const NftRentView: React.FC<NftProps> = ({
     }
   };
 
-  const [networkFee, setNetworkFee] = useState(1700);
+  const [networkFee, setNetworkFee] = useState(DEFAULT_NETWORK_FEE);
 
   useEffect(() => {
     load();

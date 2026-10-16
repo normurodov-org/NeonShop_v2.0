@@ -1095,10 +1095,14 @@ function isExpired(t: any): boolean {
 /**
  * NFT RENT — narx hisobi (bot.py bilan BIR XIL).
  * Mijozga: per day / rent / network fee / total.
+ *
+ * 🔴🔴 `NFT_NETWORK_FEE` bot.py dagi bilan BIR XIL bo'lishi SHART —
+ *     ikki tomon turli qiymat ko'rsatsa, mijoz WebApp'da bitta
+ *     narxni, bot xabarida boshqasini ko'radi.
  */
 const NFT_MIN_DAYS = 3;
 const NFT_MAX_DAYS = 50;
-const NFT_NETWORK_FEE = 1700;
+const NFT_NETWORK_FEE = 2000;
 const NFT_QUICK_DAYS = [3, 7, 14, 30];
 
 function nftQuote(daily: number, days: number) {
