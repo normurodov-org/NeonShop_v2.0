@@ -23,10 +23,12 @@ def section(t):
     print("=" * 77)
 
 
-BOT = io.open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
-APP = io.open(os.path.join(ROOT, "src/App.tsx"), encoding="utf-8").read()
-BUY = io.open(os.path.join(ROOT, "src/components/views/BuyView.tsx"),
-               encoding="utf-8").read()
+def read(p):
+    return io.open(os.path.join(ROOT, p), encoding="utf-8").read()
+
+BOT = read("bot.py")
+APP = read("src/App.tsx")
+BUY = read("src/components/views/BuyView.tsx")
 
 # Python sintaksisini ham tekshiramiz — Dockerfile build'da shuni qiladi
 try:
@@ -98,31 +100,38 @@ check(nft_start.index("nft_webapp_url()") < nft_start.index("NFT_CHANNEL"),
       "🔴🔴🔴 WebApp tugmasi birinchi (kanal — ikkinchi)")
 
 # =============================================================================
-section("3) 🌐 ILOVA: CHUQUR HAVOLANI O'QISHI")
+section("3) 🌐 ILOVA: NFT BO'LIMIGA YO'L QORQALI KIRISH")
 # =============================================================================
-check("CHUQUR HAVOLA" in APP, "🔴 izoh bilan belgilangan")
-check("urlParams.get('tab')" in APP or "p.get('tab')" in APP,
-      "🔴🔴 `?tab=` o'qiladi")
-check("p.get('sub')" in APP, "🔴🔴 `?sub=` o'qiladi")
-check("setInitialBuyCategory('nft')" in APP, "🔴🔴🔴 `sub=nft` → NFT kichik tabi")
+# 📌 Eski tuzilma «CHUQUR HAVOLA» effekti edi (`?tab=&sub=`).
+#    Endi bu mantiqa `src/lib/routes.ts` ga ko'chirilgan — u yagona
+#    manba bo'lib, `/nft` kabi HAQIQIY yo'llarni ham qo'llaydi.
+ROUTES = read("src/lib/routes.ts")
 
-for tab, state in [("buy", "buy"), ("topup", "topup"),
-                   ("ranking", "ranking"), ("profile", "profile")]:
-    check("setCurrentTab('%s')" % state in APP,
-          "🔴 `?tab=%s` → `%s` ekrani" % (tab, state))
+check("from './lib/routes'" in APP, "📌 ilova routing modulini import qiladi")
+for fn in ("pathToRoute", "queryToRoute", "routeToPath", "stripQuery"):
+    check(fn in APP, "📌 `%s` ishlatiladi" % fn)
+    check("export function %s" % fn in ROUTES,
+          "📌📌 `%s` modulda eksport qilingan" % fn)
 
-# 🔴 Marker tozalanishi — aks holda ichki tabga o'tib, navigatsiya
-#    "yo'qoladi" (mijoz qanday orqaga qaytishini bilmaydi)
-check("searchParams.delete('tab')" in APP, "🔴 `tab` marker tozalanadi")
-check("searchParams.delete('sub')" in APP, "🔴 `sub` marker tozalanadi")
-check("history.replaceState" in APP, "🔴🔴 `replaceState` — sahifa QAYTA YUKLANMAYDI")
+# 📌📌 NFT yo'llari
+for p_, sub in [("/nft", "nft"), ("/nftrent", "nft"),
+                ("/nft-rent", "nft"), ("/rent", "nft")]:
+    check("'%s': { tab: 'buy', sub: '%s' }" % (p_, sub) in ROUTES,
+          "🗺️ %-11s -> Xarid + NFT" % p_)
 
-# 🔴 `tab` va `sub` turli darajada — aralashtirilmasin
-sub_body = APP.split("if (tab === 'buy')", 1)[1][:600]
+# 📌📌 Botning eski `?tab=&sub=` havolalari BUZILMAYDI
+check("queryToRoute(window.location.search)" in APP,
+      "📌 botning `?tab=&sub=` havolalari qo'llab-quvvatlanadi")
+check("url.searchParams.delete('tab')" in APP, "📌📌 `tab` marker tozalanadi")
+check("url.searchParams.delete('sub')" in APP, "📌📌 `sub` marker tozalanadi")
+
+# 📌📌 `tab` va `sub` turli darajada — aralashtirilmasin
 check("setCurrentTab('nft')" not in APP,
-      "🔴🔴🔴 `tab=nft` YO'Q — faqat `sub=nft` (bo'sh ekna bo'lmasin)")
+      "📌📌📌 `tab=nft` YO'Q — faqat `sub=nft` (bo'sh ekna bo'lmasin)")
+check("setInitialBuyCategory(route.sub)" in APP,
+      "📌📌📌 route.sub -> NFT kichik tabi")
 
-# BuyView `initialTab` ni qabul qilishi (mavjud zaxira)
+# BuyView `initialTab` ni qabul qilishi
 check("initialTab = 'stars'" in BUY, "🟡 BuyView `initialTab` qabul qiladi")
 check("useState<'stars' | 'premium' | 'gifts' | 'nft'>(initialTab)" in BUY,
       "🟡 `subTab` `initialTab` dan boshlanadi")

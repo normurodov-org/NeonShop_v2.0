@@ -1256,6 +1256,10 @@ app.get('/api/nft-image/:id', async (req: Request, res: Response) => {
 
 app.post('/api/topup', (req: Request, res: Response) => {
   const user = getUser(req);
+  // 🔴🔴 BOT TOʼXTATILGANMI? Balansga tegadigan soʸrov —
+  // admin tugmasi bosgan boʸlsa, server QABUL QILMAYDI
+  // (avval pul yechilib, xabar yuborilmay qolardi).
+  if (requireBotActive(res)) return;
   if (!user) return unauthorized(res);
   const amount = Number(req.body.amount);
 
@@ -1428,6 +1432,10 @@ app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
 
 app.post('/api/order', async (req: Request, res: Response) => {
   const user = getUser(req);
+  // 🔴🔴 BOT TOʼXTATILGANMI? Balansga tegadigan soʸrov —
+  // admin tugmasi bosgan boʸlsa, server QABUL QILMAYDI
+  // (avval pul yechilib, xabar yuborilmay qolardi).
+  if (requireBotActive(res)) return;
   if (!user) return unauthorized(res);
   const { kind, amount, months, gift, username, hide_my_name } = req.body;
 
@@ -2091,6 +2099,10 @@ app.get("/api/config", async (_req: Request, res: Response) => {
  */
 app.post('/api/nfts/rent', async (req: Request, res: Response) => {
   const user = getUser(req);
+  // 🔴🔴 BOT TOʼXTATILGANMI? Balansga tegadigan soʸrov —
+  // admin tugmasi bosgan boʸlsa, server QABUL QILMAYDI
+  // (avval pul yechilib, xabar yuborilmay qolardi).
+  if (requireBotActive(res)) return;
   if (!user) return unauthorized(res);
   refreshNftsFromDisk();
   const id = String(req.body?.id || '');
@@ -2728,6 +2740,10 @@ app.post('/api/admin/contest', (req: Request, res: Response) => {
 
 app.post('/api/contest/join', (req: Request, res: Response) => {
   const user = getUser(req);
+  // 🔴🔴 BOT TOʼXTATILGANMI? Balansga tegadigan soʸrov —
+  // admin tugmasi bosgan boʸlsa, server QABUL QILMAYDI
+  // (avval pul yechilib, xabar yuborilmay qolardi).
+  if (requireBotActive(res)) return;
   if (!user) return unauthorized(res);
 
   // Konkurs faol emas — hech kim qatnasha olmaydi
@@ -2759,6 +2775,10 @@ app.post('/api/contest/join', (req: Request, res: Response) => {
 
 app.post('/api/referral/withdraw', (req: Request, res: Response) => {
   const user = getUser(req);
+  // 🔴🔴 BOT TOʼXTATILGANMI? Balansga tegadigan soʸrov —
+  // admin tugmasi bosgan boʸlsa, server QABUL QILMAYDI
+  // (avval pul yechilib, xabar yuborilmay qolardi).
+  if (requireBotActive(res)) return;
   if (!user) return unauthorized(res);
   if (user.ref_stars < 50) {
     return res.status(400).json({
@@ -2909,6 +2929,76 @@ app.post('/api/admin/toggle-bot', (req: Request, res: Response) => {
   syncAndSaveDb();
   res.json({ ok: true, bot_active: store.settings.bot_active });
 });
+
+/* =============================================================================
+ * 🔴🔴🔴 BOT HOLATI QALQONI — «Botni to'xtatish» HAQIQATAN ISHLASHI UCHUN
+ *
+ * NIMA BUZILGAN EDI?
+ *   Admin panelda «Botni to'xtatish» bosilganda faqat
+ *   `settings.bot_active = false` yoziladi. Mijoz esa shunda ham
+ *   XARID QILA OLARDI, chunki:
+ *
+ *     1) UI qalqoni `App.tsx` da bor, lekin u `settings` ni faqat
+ *        BIR marta yuklaydi → ekranni yangilamasdan hech qachon
+ *        o'zgarishni ko'rmaydi. Sabab: «refresh qilmasdan ishlayapti».
+ *
+ *     2) 🔴 ASOSIY SABAB: server PUL YECHADIGAN endpointlari
+ *        `bot_active` ni HECH QACHON teksirmagan. Ya'ni admin botni
+ *        to'xtatsa ham, mijoz so'rovni yubora va server balansdan
+ *        pul YECHARDI — xabar yuborilmay qolardi.
+ *
+ * NIMA QILAMIZ?
+ *   Balansga tegadigan HAR BIR so'rov avval shu qalqondan o'tadi.
+ *   `503 Service Unavailable` + `bot_active: false` qaytariladi, shu
+ *   bilan mijoz brauzerda aniq xabar ko'radi (App.tsx ishlaydi).
+ *
+ * 📌 NIMA UCHUN `getUser(req)`?
+ *   Bot holati boshqa jarayon (yoki admin panel orqali) yozgan
+ *   bo'lishi mumkin — xotiradagi `store` eskirgan bo'lsa, qalqon
+ *   o'tib ketib qolardi.
+ * ========================================================================== */
+function botPaused(res: Response): boolean {
+  return false; // eski qoldiq — ishlatilmaydi
+}
+function botIsActive(): boolean {
+  return store.settings.bot_active !== false;
+}
+
+/** Balansga tegadigan so'rov uchun qalqon. `true` = rad etildi. */
+function requireBotActive(res: Response): boolean {
+  // 🔴 Holatni DISKDAN qayta o'qiymiz — admin panel boshqa so'rov
+  //    orqali yozgan bo'lishi mumkin, `store` esa eskirgan bo'lishi
+  //    mumkin. Aks holda qalqon o'tib ketib, pul yechilib qolardi.
+  reloadSettingsFromDisk();
+  if (store.settings.bot_active !== false) return false;
+  res.status(503).json({
+    ok: false,
+    bot_active: false,
+    error: 'Bot vaqtincha to‘xtatilgan. Iltimos, birozdan keyin qayta urinib ko‘ring.',
+  });
+  return true;
+}
+
+/**
+ * 🔴 Faqat `settings.bot_active` ni diskdan qayta oladi.
+ *
+ * 📌 Butun bazani `loadDatabase()` bilan yuklash har bir so'rovda
+ *    qimmat (baza kattalashadi). Bizga faqat bitta boolean kerak.
+ */
+/** 🔴 `reloadSettingsFromDisk()` uchun oxirgi ko'ʸrilgan mtime. */
+let lastSettingsMtime = 0;
+
+function reloadSettingsFromDisk(): void {
+  try {
+    const mtime = fs.statSync(DB_FILE).mtimeMs;
+    if (mtime === lastSettingsMtime) return;
+    lastSettingsMtime = mtime;
+    const fresh = loadDatabase();
+    store.settings = { ...store.settings, ...(fresh.settings || {}) };
+  } catch {
+    /* diskni o‘qib bo‘lmasa — xotiradagi holatni ishlatamiz */
+  }
+}
 
 app.post('/api/admin/adjust-balance', (req: Request, res: Response) => {
   // 🔐 AUTENTIFIKATSIYA — bu endpoint faqat ADMINga ochiq.

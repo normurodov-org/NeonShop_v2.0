@@ -15,6 +15,10 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { CheckCircle2, ArrowLeft, PauseCircle, ShieldAlert } from 'lucide-react';
 import { useIsDesktop } from './lib/useLayout';
 import { isInsideTelegram, tgHeadersGet } from './lib/tgAuth';
+import {
+  pathToRoute, queryToRoute, routeToPath, stripQuery,
+  type Route,
+} from './lib/routes';
 import TelegramLogin from './components/TelegramLogin';
 
 export default function App() {
@@ -237,6 +241,54 @@ export default function App() {
       console.error('Failed to fetch user data:', err);
     }
   };
+  /* =======================================================================
+   * 🔴🔴 BOT HOLATINI KUZATISH — ekranni yangilamasdan.
+   *
+   * 🔴 NIMA UCHUN?
+   *    `settings` faqat bir marta (`fetchUserData`) yuklanadi. Admin
+   *    panelda «Botni toʼxtatish» bosilsa, mijoz ekranni YANGILAMAGAN
+   *    holda davom etib xarid qilib yurardi — «refresh qilmasdan
+   *    ishlayapti» degan shikoyat aynan shundan kelib chiqqan.
+   *
+   * ✅ Endi `/api/me` har 10 soniyada YENGIL soʸrov bilan qaytariladi.
+   *    `settings.bot_active` oʸzgarganini sezib, darhol «Bot
+   *    toʼxtatilgan» ekranini koʸrsatamiz. Server esa bir vaqtning
+   *    oʸzida 503 bilan soʸrovni RAD ETADI — pul yechilmaydi.
+   *
+   * 📌 Nima uchun butun `fetchUserData` emas, alohida `/api/me`?
+   *    Aks holda har 10 soniyada balans, tarix va kontest
+   *    qayta yuklanib, ekran «jim-jay» qilib qolardi.
+   * ===================================================================== */
+  useEffect(() => {
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/me', { headers: tgHeadersGet() });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (cancelled || !d?.ok) return;
+        setSettings((prev) => {
+          const next = d.settings || null;
+          if (!next) return prev;
+          // 🔴 Faqat bot holati OʼZGARGANDA stateʸni yangilaymiz —
+          //    aks holda har 10 soniyada butun `settings` yangilanib,
+          //    `App` va barcha bolalar qayta chizilardi.
+          if (prev && prev.bot_active === next.bot_active) return prev;
+          return next;
+        });
+      } catch {
+        /* tarmoq uzilsa — keyingi tsiklda qayta urinamiz */
+      }
+    };
+
+    const timer = window.setInterval(poll, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
 
   useEffect(() => {
     const tg = (window as any).Telegram?.WebApp;
@@ -342,56 +394,93 @@ export default function App() {
   }, []);
 
   /* =======================================================================
-   * 🔗 CHUQUR HAVOLA (?tab=…&sub=…) — botdagi bo'limni to'g'ridan-to'g'ri
-   *    ochish uchun.
+   * 🗺️ YO'LLAR — `/nft`, `/premium`, `/profile` …
    *
    * 🔴 NIMA UCHUN?
-   *    Botdagi «NFT Gift ijarasi» bo'limi endi WebApp'ning ichki
-   *    sahifasiga (`Xarid → NFT`) olib boradi. Avval u foydalanuvchini
-   *    tashqi kanalga yuborax edi — mijoz esa NEON STORE da qolib
-   *    ketmoqchi.
+   *    Avval barcha xizmatlar bitta sahifada `currentTab` orqali
+   *    ochilardi — ya'ni `https://…/nft` butunlay ko'rinmasdi.
+   *    Endi har bir xizmat o'z manziliga ega va Telegram'da
+   *    saqlanishi, ulashishi, havolasi yuborilishi mumkin.
    *
-   * 📌 MISOL: `https://…/?tab=buy&sub=nft`
-   *    → `currentTab = 'buy'` va `BuyView initialTab = 'nft'`
+   * 🔴🔴 IKKI TOMONLAMA SYNKRONIZATSIYA:
+   *      1) YO'L -> ILOVA
+   *         • dastlabki yuklash: `location.pathname`
+   *           (eski bot havolalari uchun `?tab=&sub=` ham o'qiladi)
+   *         • `popstate` — brauzerdagi orqaga/oldinga tugmalar
+   *      2) ILOVA -> YO'L (`pushState`) — ichki tabga o'tganda
    *
-   * 📌 `sub` ni HECH QACHON `currentTab`ga aralashtirmaymiz — ular
-   *    turli darajada: `tab` = navigatsiya (BottomNav), `sub` = ichki
-   *    kichik tab. Aks holda `?tab=nft` BottomNav'da noma'lum tab
-   *    berib, bo'sh sahifa ochardi.
+   * 🔴🔴🔴 MOUNT MUAMMOSI (ayni shu yerda tuzatildi):
+   *      Tab holati birinchi render'da HALI eski qiymatda bo'ladi
+   *      (`useState('home')`). Agar `ILOVA -> YO'L` effekti mount'da
+   *      ishga tushsa, u `currentTab === 'home'` ko'rib, manzilni
+   *      DARHOL `/` ga qaytarib yuboradi — ya'ni `/nft` ochilgan
+   *      sayt bir zumda bosh sahifaga aylanardi.
+   *      Shuning uchun `readyRef` bilan effekt birinchi marta
+   *      ISHLAMAYDI; uni yo'l effekti yoqilgandan keyin yoqamiz.
    * ===================================================================== */
-  useEffect(() => {
-    try {
-      const p = new URLSearchParams(window.location.search);
-      const tab = (p.get('tab') || '').trim();
-      const sub = (p.get('sub') || '').trim();
 
-      if (tab === 'buy') {
-        setCurrentTab('buy');
-        if (sub === 'nft') setInitialBuyCategory('nft');
-        else if (sub === 'premium') setInitialBuyCategory('premium');
-        else if (sub === 'gifts') setInitialBuyCategory('gifts');
-        else if (sub === 'stars') setInitialBuyCategory('stars');
-      } else if (tab === 'topup') {
-        setCurrentTab('topup');
-      } else if (tab === 'ranking') {
-        setCurrentTab('ranking');
-      } else if (tab === 'profile') {
-        setCurrentTab('profile');
-      }
+  /** Oxirgi yozilgan kanonik yo'l (takror yozishni va tariq spamni oldi oladi). */
+  const lastPath = useRef<string>(window.location.pathname);
 
-      // 🔴 Marker belgisini tozalaymiz — aks holda mijoz ichki
-      //    tabga o'tib, "Mening hisobim" degan oyna deyarli ko'rinmas
-      //    edi. `replaceState` — sahifa QAYTA YUKLANMAYDI.
-      if (tab || sub) {
-        const u = new URL(window.location.href);
-        u.searchParams.delete('tab');
-        u.searchParams.delete('sub');
-        window.history.replaceState({}, '', u.pathname + u.search + u.hash);
-      }
-    } catch {
-      /* URLni o'qib bo'lmadi — standart navigatsiya qoladi */
+  const applyRoute = useCallback((route: Route) => {
+    if (route.tab === 'buy') {
+      setCurrentTab('buy');
+      if (route.sub) setInitialBuyCategory(route.sub);
+    } else {
+      setCurrentTab(route.tab);
+    }
+
+    // 🔴 Kanonik yo'lga o'tkazamiz: alias (`/nftrent` -> `/nft`) va
+    //    eski marker (`?tab=&sub=`) tozalanadi.
+    const want = routeToPath(route.tab, route.tab === 'buy' ? route.sub : null);
+    const url = new URL(window.location.href);
+    url.pathname = want;
+    url.searchParams.delete('tab');
+    url.searchParams.delete('sub');
+    const next = url.pathname
+      + (url.searchParams.toString() ? `?${url.searchParams}` : '')
+      + url.hash;
+    lastPath.current = want;
+    if (next !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState({}, '', next);
     }
   }, []);
+
+  // 1) Dastlabki yo'l + `popstate`
+  useEffect(() => {
+    const q = queryToRoute(window.location.search);
+    applyRoute(q || pathToRoute(window.location.pathname));
+
+    const onPop = () => {
+      const q2 = queryToRoute(window.location.search);
+      applyRoute(q2 || pathToRoute(window.location.pathname));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [applyRoute]);
+
+  // 2) ILOVA -> YO'L — mijoz ichki bo'limga o'tganda manzil yangilanadi
+  //
+  // 🔴🔴🔴 BIRINCHI O'RINNI BUTUNLAY O'TKAZAMIZ
+  //     React effektlar birinchi render'dan KEYIN ishlaydi, lekin
+  //     `currentTab`/`initialBuyCategory` shu render'da HALI ESKI
+  //     qiymatda bo'ladi (`useState('home')`). Birinchi o'rinda
+  //     ular ishlagan bo'lardi va biz `/nft` ni darhol `/` ga
+  //     qaytarib yuborgan bo'larmiz.
+  //     Shuning uchun birinchi chaqiruv butunlay o'tkaziladi —
+  //     keyingi renderda (`applyRoute` state yangilagandan keyin)
+  //     qiymatlar to'g'ri bo'ladi va `lastPath` bilan solishtiriladi.
+  const skipFirstPathSync = useRef(true);
+  useEffect(() => {
+    if (skipFirstPathSync.current) {
+      skipFirstPathSync.current = false;
+      return;
+    }
+    const want = routeToPath(currentTab, currentTab === 'buy' ? initialBuyCategory : null);
+    if (want === lastPath.current) return;
+    lastPath.current = want;
+    window.history.pushState({}, '', want);
+  }, [currentTab, initialBuyCategory]);
 
   const triggerHaptic = (type: 'light' | 'medium' | 'heavy' | 'success' = 'medium') => {
     try {
