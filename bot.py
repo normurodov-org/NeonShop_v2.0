@@ -5912,9 +5912,14 @@ def userbot_diagnose() -> list[str]:
     #   bo'lmaydi va hech qanday o'zgarish yordam bermaydi.
     rt = db.data.get("settings", {}).get("runtime") or {}
     account = str(rt.get("account") or "")
+    # 🔴🔴🔴 Python 3.11 (Railway) f-string ICHIDA backslashga IZOH
+    #   beradi: «SyntaxError: f-string expression part cannot include a
+    #   backslash». `'noma\u2018lum'` ni f-string ichida yozish mumkin
+    #   EMAS — qiymatni TASHQARIDA hisoblab qo'yamiz.
+    account_txt = account or "noma\u2018lum"
     lines.append(
         f"{yes if account else no} Ulangan akkaunt: "
-        f"<code>{esc(account or 'noma\u2018lum')}</code>"
+        f"<code>{esc(account_txt)}</code>"
     )
     # 🔴 Bank chatida xabar BORMI? — 0 bo'lsa, to'lovni bu akkaunt
     #   ko'rmaydi (karta egasi boshqa akkaount).
