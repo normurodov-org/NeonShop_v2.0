@@ -15,6 +15,7 @@ Bu test simulyatsiya qilingan USERBOT bilan:
   5) takror «Tekshirish» pulni IKKI marta qo'shmaydi
 """
 import asyncio
+import os
 import sys
 import time
 import types
@@ -51,7 +52,14 @@ class FakeChat:
 
 
 class FakeUserbot:
-    """`get_chat` va `get_chat_history` ni sun'ulaydi."""
+    """`get_chat` va `get_chat_history` ni sun'ulaydi.
+
+    🔴🔴🔴 DIQQAT: `get_chat_history` HAQIQIY API kabi **async generator**
+       bo'lishi SHART (pyrofork shunday qiladi). Agar testda oddiy
+       coroutine yozsak, haqiqiy kodda bo'ladigan xato
+       «object async_generator can't be used in 'await' expression»
+       ko'rinmaydi — shuning uchun bu yerda ataylab shunday qilingan.
+    """
 
     def __init__(self, messages):
         self.is_connected = True
@@ -62,7 +70,8 @@ class FakeUserbot:
 
     async def get_chat_history(self, chat, limit=40):
         # Real API: ESKI -> YANGI
-        return list(self._messages[:limit])
+        for m in self._messages[:limit]:
+            yield m
 
 
 class FakeBot:
@@ -284,6 +293,58 @@ async def main():
     ok.append(good)
     print("      xabar:", parsed, "| topup:", st, "| balans:", bal)
     print(("  \u2705 " if good else "  \u274c ") + "userbot YO'Q holda ham to'ldi")
+
+    # ---------------------------------------------------------------- 11
+    print("\n11) \U0001F41B\U0001F534 `get_chat_history` ASYNC GENERATOR (haqiqiy API)")
+    src3 = open("bot.py", encoding="utf-8").read()
+    fn = src3.split("async def rescan_humo_for_topup")[1].split("\nasync def ")[0]
+    # 📘 Izohlar tozalanadi — xato «bu nima boʸldi» izohida
+    #    saqlanib qolsa, test yolgʴon xato beradi.
+    code_fn = "\n".join(l for l in fn.split("\n")
+                       if not l.strip().startswith("#"))
+    no_await = "await ub.get_chat_history" not in code_fn
+    uses_asyncfor = (
+        "async for m in raw" in code_fn
+        or "async for msg in ub.get_chat_history" in code_fn
+    )
+    # \U0001F6E1\uFE0F Kelajak uchun qat\u2018iy: async generator BO\u02b8LMASIN
+    guards_both = "__aiter__" in code_fn
+    # Fake userbot ham async generator — test HAQIQIY API ga o'xshaydi
+    fake = "async def get_chat_history" in open(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "test_topup_rescan.py"), encoding="utf-8").read()
+    fake_gen = "yield m" in open(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "test_topup_rescan.py"), encoding="utf-8").read()
+    for nm, v in [("`await get_chat_history` YO'Q", no_await),
+                  ("`async for` bilan o'qiladi", uses_asyncfor),
+                  ("`__aiter__` bilan ikkala variantga mos", guards_both),
+                  ("test userboti async generator", fake and fake_gen)]:
+        ok.append(v)
+        print(("  \u2705 " if v else "  \u274c ") + nm)
+    if not (no_await and uses_asyncfor):
+        print("      \U0001F534 xato: async_generator await qilinmaydi!")
+
+    # ---------------------------------------------------------------- 12
+    print("\n12) \U0001F41E IKKALA API VARIANTI ham ishlaydi")
+    reset(); add_topup(1000, 22)
+    now_ts = int(time.time())
+
+    class ListUserbot(FakeUserbot):
+        """Kelajakdagi versiya: oddiy ro'yxat qaytaradi (async generator emas)."""
+
+        async def get_chat_history(self, chat, limit=40):
+            return list(self._messages[:limit])
+
+    for nm, ub_cls in [("async generator", FakeUserbot), ("oddiy list", ListUserbot)]:
+        reset(); add_topup(1000, 22)
+        B.userbot = ub_cls([FakeMsg(50, bank_msg(1022), now_ts - 20)])
+        r = await B.rescan_humo_for_topup("top_x")
+        bal = balance()
+        v = r.get("status") == "found" and bal == 1000
+        ok.append(v)
+        print("      %-16s -> %-8s balans=%d  %s"
+              % (nm, r.get("status"), bal, "\u2705" if v else "\u274c"))
 
     print()
     bad = [i + 1 for i, o in enumerate(ok) if not o]
