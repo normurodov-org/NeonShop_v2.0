@@ -5226,6 +5226,21 @@ async def rescan_humo_for_topup(topup_id: str) -> dict:
         return {"status": "error",
                 "message": f"Xabar tarixi o'qilmadi: {exc}", "credited": 0}
 
+    # 🔴🔴🔴 ASOSIY DIAGNOSTIKA — bank chatida xabar bor yoki yo'qmi?
+    #   Eng ko'p sabab: userbot kartani EGASINING akkaunti emas.
+    #   Bank xabari faqat karta egasiga yuboriladi, shuning uchun
+    #   boshqa akkaunt tarixida xabar bo'lmaydi — va hech qanday kod
+    #   tuzatishi bu holatni hal qilmaydi.
+    #   Natijani runtime'ga yozamiz -> /admin -> 🩺 Userbot holati.
+    try:
+        set_runtime_status(
+            userbot="connected",
+            humo_chat_ok=bool(history),
+            humo_msgs=len(history),
+        )
+    except Exception:  # noqa: BLE001 — diagnostika ishlamasligi mumkin
+        pass
+
     for msg in reversed(history):
         scanned += 1
         text = getattr(msg, "text", None) or getattr(msg, "caption", None) or ""
@@ -5250,6 +5265,23 @@ async def rescan_humo_for_topup(topup_id: str) -> dict:
         return {"status": "found",
                 "message": f"Topildi! Balansga {fmt(after - before)} UZS qo'shildi.",
                 "credited": after - before}
+
+    # 🔴🔴🔴 NIMA QILINDI? — «topilmadi» ning ikki butunlay boshqa
+    #   sababi bor, mijozga aniq aytishimiz kerak:
+    #
+    #   A) `scanned == 0` — userbot bank chatida BIROR xabar ko'rmaydi.
+    #      🔴 Bu degani userbot KARTANI EGASINING akkaunti emas.
+    #      Bank xabari faqat karta egasiga yuboriladi. Kod bilan
+    #      tuzatib bo'lmaydi — sessionni karta egasining akkaunti
+    #      bilan qayta ulash kerak.
+    #   B) `scanned > 0` — xabarlar bor, lekin summa mos emas.
+    if not scanned:
+        return {"status": "chat_empty",
+                "message": (f"{TOPUP_SOURCE_CHAT} chatida BIROR xabar yo'q. "
+                            "Bu degani userbot karta egasi akkaunti bilan "
+                            "ulangan emas — bank xabari faqat karta "
+                            "egasiga yuboriladi."),
+                "credited": 0}
 
     return {"status": "not_found",
             "message": (f"{scanned} ta xabar ko'rib chiqildi, lekin "
@@ -5738,6 +5770,25 @@ def userbot_diagnose() -> list[str]:
     session_txt = f"{set_txt} ({len(SESSION_STRING)} belgi)" if has_session else missing_txt
     lines.append(f"{yes if has_session else no} SESSION_STRING: {session_txt}")
 
+    # 🔴🔴🔴 ASOSIY DIAGNOSTIKA: qaysi AKKAUNT bilan ulanganmiz?
+    #   Muammoning eng ko'p uchraydigan sababi — userbot kartani
+    #   EGASINING akkaunti emas. Bank xabari faqat KARTA EGASIGA
+    #   yuboriladi, shuning uchun boshqa akkaunt tarixida xabar
+    #   bo'lmaydi va hech qanday o'zgarish yordam bermaydi.
+    rt = db.data.get("settings", {}).get("runtime") or {}
+    account = str(rt.get("account") or "")
+    lines.append(
+        f"{yes if account else no} Ulangan akkaunt: "
+        f"<code>{esc(account or 'noma\u2018lum')}</code>"
+    )
+    # 🔴 Bank chatida xabar BORMI? — 0 bo'lsa, to'lovni bu akkaunt
+    #   ko'rmaydi (karta egasi boshqa akkaount).
+    lines.append(
+        f"{yes if rt.get('humo_chat_ok') else no} "
+        f"Bank chati ({esc(str(TOPUP_SOURCE_CHAT))}): "
+        + ("xabarlar ko\u2018rinadi" if rt.get("humo_chat_ok")
+           else "xabar YO\u2018Q yoki ko\u2018rinmaydi")
+    )
     return lines
 
 

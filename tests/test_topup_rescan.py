@@ -371,6 +371,36 @@ async def main():
     print(("  \u2705 " if treats_transient else "  \u274c ")
           + "faqat missing_env/invalid_session -> haqiqiy \u00abulanmagan\u00bb")
 
+    # ---------------------------------------------------------------- 15
+    print("\n15) \U0001F50E DIAGNOSTIKA: chat bo\u02b8sh vs xabar yo\u02b8q")
+    reset(); add_topup(1000, 22)
+    B.userbot = FakeUserbot([])          # chat bo\u02b8sh, xabar yo\u02b8q
+    r = await B.rescan_humo_for_topup("top_x")
+    print("      natija:", r.get("status"), "|", (r.get("message") or "")[:60])
+    good = r.get("status") == "chat_empty" and balance() == 0
+    ok.append(good)
+    print(("  \u2705 " if good else "  \u274c ") + "`chat_empty` = userbot karta egasi emas")
+
+    reset(); add_topup(1000, 22)
+    B.userbot = FakeUserbot([FakeMsg(60, "boshqa", int(time.time()))])
+    r = await B.rescan_humo_for_topup("top_x")
+    good2 = r.get("status") == "not_found"
+    ok.append(good2)
+    print(("  \u2705 " if good2 else "  \u274c ")
+          + "`not_found` = xabar bor, summa mos emas")
+
+    # ---------------------------------------------------------------- 16
+    print("\n16) \U0001F9EA /admin \u2192 \U0001FA7A Userbot holati = akkaunt + bank chati")
+    s4 = open("bot.py", encoding="utf-8").read()
+    has_acct = "Ulangan akkaunt" in s4
+    has_chat = "humo_chat_ok" in s4
+    has_msgs = "humo_msgs" in s4
+    for nm, v in [("ulangan akkaunt ko\u02b8rsatiladi", has_acct),
+                  ("bank chati holati yoziladi", has_chat),
+                  ("xabar soni yoziladi", has_msgs)]:
+        ok.append(v)
+        print(("  \u2705 " if v else "  \u274c ") + nm)
+
     print()
     bad = [i + 1 for i, o in enumerate(ok) if not o]
     if bad:

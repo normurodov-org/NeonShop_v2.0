@@ -110,6 +110,18 @@ export const TopupView: React.FC<TopupViewProps> = ({
               'Bank xabari avtomatik tekshirilmaydi — userbot ulanmagan. '
               + 'Iltimos yordamchiga murojaat qiling: to\'lov qo\'lda tasdiqlanadi.'
             );
+          } else if (r === 'chat_empty') {
+            // 🔴🔴🔴 Eng ko'p uchraydigan sabab: userbot kartani
+            //   EGASINING akkaunti emas. Bank xabari faqat karta
+            //   egasiga yuboriladi — kod bilan tuzatib bo'lmaydi.
+            setError(
+              'Bank xabarida hech narsa topilmadi: bot karta egasi akkaunti '
+              + 'bilan ulangan emas. Iltimos yordamchiga murojaat qiling.'
+            );
+          } else if (r && r !== 'found' && r !== 'already') {
+            // 🔴 Texnik xato — mijozga «nima qilish kerak» aytilmasin,
+            //    ammo sabab ko'rinishi uchun maydon chiqariladi.
+            setError(String(data.topup?.rescan_message || ''));
           }
         }
       } catch (e) {
