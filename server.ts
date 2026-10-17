@@ -1055,14 +1055,42 @@ let TOPUP_SEQ = 0;
 loadTopupSequence();
 
 function nextTopupSequence(): number {
-  // Noldan boshlanmaslik uchun birga qo'shiladi
-  return ++TOPUP_SEQ;
+  // 🔴🔴🔴 MIJOZ: «mijoz to'laganda avtomatik aniqlamayapti».
+  //
+  //   SABAB: bu hisoblagich FAQAT xotirada (module-level) yashirdi —
+  //   DB'ga YOZILMADI. Ya'ni server.ts va bot.py IKKI TA mustaqil
+  //   hisoblagich ishlatar edi:
+  //       bot.py   -> settings["topup_seq"]  (DB'ga yoziladi)
+  //       server.ts-> TOPUP_SEQ              (FAQAT xotirada!)
+  //   Natijada ikkala tarafdagi birinchi so'rov ham №1 oladi:
+  //       mijoz A (bot orqali)    1 000 + 1 = 1 001
+  //       mijoz B (sayt orqali)   1 000 + 1 = 1 001   ← BIR XIL!
+  //   Bankda ikki xil 1 001 ko'rinadi — kim to'laganini aniqlab
+  //   bo'lmaydi va «To'lov avtomatik bog'lanmadi» chiqadi.
+  //
+  // ✅ YECHIM: bitta manba — `settings.topup_seq` (DB'da). Har ikki
+  //    tomon shuni o'qiydi va yozadi. Qolgan raqam hech qachon
+  //    qayta ishlatilmaydi.
+  const cur = Number((store.settings as any)?.topup_seq) || 0;
+  const n = Math.max(cur, TOPUP_SEQ) + 1;
+  TOPUP_SEQ = n;
+  try {
+    (store.settings as any).topup_seq = n;
+  } catch {
+    /* settings o'qilmas bo'lsa — topup allaqachon yozilgan, xavfsiz */
+  }
+  return n;
 }
 
 function loadTopupSequence(): number {
-  // DB'da eng katta ketma-ket raqamni topamiz (restart'dan keyin
-  // raqam qayta ishlatilmasligi kerak)
-  let max = 0;
+  // 🔴🔴🔴 Restart'dan keyin raqam QAYTA ISHLATILMASLIGI kerak.
+  //   Uchta manbani o'ylab qo'shamiz:
+  //     1) `settings.topup_seq` — asosiy saqlangan hisoblagich
+  //     2) topuplardagi eng katta `seq` — agar settings yo'q bo'lsa
+  //     3) 0 — bazadan umuman foydalanilmagan bo'lsa
+  //   Eng KATTASI olinadi: aks holda eski raqam qayta chiqib,
+  //   boshqa mijozning to'loviga chalkashib qoladi.
+  let max = Number((store.settings as any)?.topup_seq) || 0;
   for (const t of store.topups.values()) {
     const n = Number((t as any)?.seq) || 0;
     if (n > max) max = n;

@@ -245,6 +245,20 @@ export const TopupView: React.FC<TopupViewProps> = ({
               </div>
             ) : null}
 
+            {/* 📌 Buyurtma raqami (№) — mijoz uchun qulay va
+                «qayerdan keldi?» savoliga aniq javob.
+                🔴 Bu raqam BALANSGA QO'SHILMAYDI — faqat to'lovni
+                chalkashtirmaslik uchun. Balansga `amount` (so'rangan
+                summa) qo'shiladi. */}
+            {activeTopup.amount_to_send != null
+              && activeTopup.amount_to_send !== activeTopup.amount ? (
+              <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} mt-1`}>
+                So&apos;ragan: <b>{activeTopup.amount.toLocaleString()}</b> so&apos;m
+                {' · '}№<b>{(activeTopup as any).seq ?? activeTopup.amount_to_send - activeTopup.amount}</b>
+                {' · '}farqlash uchun +<b>{(activeTopup.amount_to_send - activeTopup.amount).toLocaleString()}</b>
+              </div>
+            ) : null}
+
             <div className="pt-2 border-t border-white/10 flex items-center justify-between">
               <div>
                 <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>Karta raqami:</div>

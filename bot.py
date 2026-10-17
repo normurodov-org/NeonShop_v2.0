@@ -6163,12 +6163,34 @@ def next_topup_seq() -> int:
     """To'lov so'rovi uchun ketma-ket raqam.
 
     Nima uchun: mijoz so'ragan summa + bu raqam = kartaga yuboriladigan
-    summa. Masalan 1 000 so'm so'raydi, #39-so'rov bo'lsa ->
+    summa. Masalan 1 000 so'm so'raydi, №39-so'rov bo'lsa ->
     1 039 so'm yuboradi. Shu bilan bir xil summali to'lovlar chalkashmaydi
     va userbot aniq qaysi mijoz ekanini aniqlaydi.
+
+    🔴🔴🔴 MIJOZ: «mijoz to'laganda avtomatik aniqlamayapti».
+
+    BU YERDA IKKI XIL XAVF BOR — ikkalasi ham tuzatildi:
+
+    1) `settings["topup_seq"]` — asosiy saqlangan hisoblagich. `server.ts`
+       ham ENDI shuni o'qiydi (avval `TOPUP_SEQ` faqat xotirada edi),
+       ya'ni endi bitta manba.
+
+    2) 🔴 ESKI RAQAM QAYTA ISHLATILMASIN. Agar bazada topuplar
+       tozalanib, `topup_seq` orqaga qolsa yoki ikkala manba
+       desinxron bo'lsa — so'ragan mijoz qayta bir xil
+       `amount_to_send` oladi va to'lov chalkashadi. Shu sabab
+       eng katta qiymat ONA topup.seq dan ham olinadi:
+
+           n = max(settings.topup_seq, max(topup.seq)) + 1
     """
     settings = db.data.setdefault("settings", {})
-    n = int(num(settings.get("topup_seq"))) + 1
+    cur = int(num(settings.get("topup_seq")))
+    # 🔴 Hech qanday vaqtda eski raqam QAYTA chiqmasin
+    for t in db.data.get("topups", {}).values():
+        used = int(num(t.get("seq")))
+        if used > cur:
+            cur = used
+    n = cur + 1
     settings["topup_seq"] = n
     return n
 
