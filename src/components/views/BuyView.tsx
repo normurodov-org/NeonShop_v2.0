@@ -6,6 +6,7 @@ import AEmoji from '../AEmoji';
 import NftRentView from './NftRentView';
 import { tgHeaders } from '../../lib/tgAuth';
 import type { BuySub, NftSub } from '../../lib/routes';
+import { fmtUzs } from '../../lib/format';
 
 interface BuyViewProps {
   user: User | null;
@@ -277,7 +278,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
     }
 
     if (!isEnough) {
-      setError(`${t.needMore} ${needMore.toLocaleString()} UZS.`);
+      setError(`${t.needMore} ${fmtUzs(needMore)} UZS.`);
       return;
     }
 
@@ -536,7 +537,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
           <div className="flex items-center justify-between text-xs">
             <span className={`font-semibold ${isDark ? 'text-neutral-300' : 'text-neutral-700'}`}>{t.starsAmount}</span>
             <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} font-mono`}>
-              {MIN_STARS.toLocaleString()} - {MAX_STARS.toLocaleString()}
+              {fmtUzs(MIN_STARS)} - {fmtUzs(MAX_STARS)}
             </span>
           </div>
 
@@ -636,7 +637,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
               >
                 <div className="text-xs font-bold">{p.label}</div>
                 <div className="text-[10px] opacity-80 mt-1 font-mono">
-                  {p.price.toLocaleString()} UZS
+                  {fmtUzs(p.price)} UZS
                 </div>
               </button>
             ))}
@@ -669,7 +670,7 @@ export const BuyView: React.FC<BuyViewProps> = ({
                   </div>
                 </div>
                 <div className="text-xs font-mono font-bold">
-                  {g.price.toLocaleString()} UZS
+                  {fmtUzs(g.price)} UZS
                 </div>
               </button>
             ))}
@@ -682,14 +683,14 @@ export const BuyView: React.FC<BuyViewProps> = ({
         <div className="flex items-center justify-between">
           <span className={`text-xs font-semibold ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{t.price}</span>
           <span className={`text-lg font-bold font-mono ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-            {currentPrice.toLocaleString()} <span className="text-xs font-normal opacity-70">UZS</span>
+            {fmtUzs(currentPrice)} <span className="text-xs font-normal opacity-70">UZS</span>
           </span>
         </div>
 
         {!isEnough && (
           <div className="pt-2 border-t border-white/10 flex items-center justify-between">
             <span className="text-xs font-semibold text-rose-400">
-              {t.needMore}: <b>{needMore.toLocaleString()} UZS</b>
+              {t.needMore}: <b>{fmtUzs(needMore)} UZS</b>
             </span>
             <button
               onClick={onGoToTopup}

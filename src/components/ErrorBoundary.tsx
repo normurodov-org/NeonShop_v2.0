@@ -5,7 +5,7 @@ import React from 'react';
  * tushib qoldirmasligi uchun.
  *
  * Nima uchun kerak: bitta komponentdagi kichik xato (masalan
- * `null.toLocaleString()`) butun ekranni oq qilib qoldirardi —
+ * `fmtUzs(null)`) butun ekranni oq qilib qoldirardi —
  * foydalanuvchi hech narsani ko'ra olmasdi va tabga o'ta olmasdi.
  * Endi xato bo'lsa faqat shu bo'lim ko'rsatiladi, qolgani ishlaydi.
  */

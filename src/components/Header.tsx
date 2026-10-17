@@ -2,6 +2,7 @@ import React from 'react';
 import { User, StoreSettings } from '../types';
 import { Lang } from '../i18n';
 import { ShieldCheck, Plus, Settings, Globe, Sun, Moon } from 'lucide-react';
+import { fmtUzs } from '../lib/format';
 
 interface HeaderProps {
   /** `window.innerWidth >= 768` — sarlavhani chap menyudan o'ngga surish */
@@ -212,7 +213,7 @@ export const Header: React.FC<HeaderProps> = ({
                 TypeError va ilova OQ EKRANGA tushardi (Header
                 ErrorBoundary dan tashqarida). */}
             <span className="font-mono text-[11px] font-bold">
-              {Number(user?.balance ?? 0).toLocaleString()}
+              {fmtUzs(Number(user?.balance ?? 0))}
             </span>
             <span className="text-[9px] font-medium opacity-70">UZS</span>
             <Plus className="w-3 h-3 ml-0.5 opacity-80" />

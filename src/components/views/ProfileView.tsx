@@ -6,6 +6,7 @@ import { Lang, translations } from '../../i18n';
 import { Shield, Plus, Users, Globe, Headphones, Settings, Copy, Check, ChevronRight, Sparkles, Star, Sun, Moon } from 'lucide-react';
 import AEmoji from '../AEmoji';
 import type { ProfileSub } from '../../lib/routes';
+import { fmtUzs } from '../../lib/format';
 
 interface ProfileViewProps {
   user: User | null;
@@ -130,7 +131,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
               <div className="shrink-0 text-right">
                 <div className={`text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                  {(ord.price ?? ord.price_uzs ?? 0).toLocaleString()} UZS
+                  {fmtUzs((ord.price ?? ord.price_uzs ?? 0))} UZS
                 </div>
                 <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
                   ['completed', 'done', 'sent_unconfirmed'].includes(ord.status)
@@ -390,7 +391,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
 
         <div className={`text-2xl font-bold font-mono tracking-tight mt-2 mb-4 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-          {userBalance.toLocaleString()}
+          {fmtUzs(userBalance)}
         </div>
 
         <div className="flex items-center gap-2">
@@ -438,8 +439,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
 
         <div className={`flex justify-between text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
-          <span>Haftalik: <b>{userSpent.toLocaleString()} / 500 000</b></span>
-          <span>Qoldi: {Math.max(0, 500000 - userSpent).toLocaleString()} UZS</span>
+          <span>Haftalik: <b>{fmtUzs(userSpent)} / 500 000</b></span>
+          <span>Qoldi: {fmtUzs(Math.max(0, 500000 - userSpent))} UZS</span>
         </div>
       </div>
 
@@ -451,7 +452,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>
             <span className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>{t.spent}</span>
             <div className={`text-sm font-bold font-mono mt-0.5 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-              {userSpent.toLocaleString()} <span className="text-[10px] font-normal opacity-70">UZS</span>
+              {fmtUzs(userSpent)} <span className="text-[10px] font-normal opacity-70">UZS</span>
             </div>
           </div>
           <div className={`p-3 rounded-[16px] ${isDark ? 'bg-black/20' : 'bg-white/50'}`}>

@@ -970,6 +970,7 @@ export default function App() {
             lang={lang}
             isDark={isDark}
             activeTopup={activeTopup}
+            botUsername={BOT_USERNAME}
             onTopupCreated={(t) => {
               setActiveTopup(t);
               showToast("To'lov so'rovi yaratildi.");

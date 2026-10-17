@@ -23,6 +23,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Topup, StoreSettings } from '../types';
 import { X, Copy, Check, Clock, CreditCard, ShieldCheck, Zap, AlertCircle, RefreshCw } from 'lucide-react';
 import { telegramInitData } from '../lib/tgAuth';
+import { fmtUzs } from '../lib/format';
 
 interface TopupModalProps {
   isOpen: boolean;
@@ -206,7 +207,7 @@ export const TopupModal: React.FC<TopupModalProps> = ({
                         : 'bg-slate-950/60 border-white/10 text-slate-300 hover:border-white/20'
                     }`}
                   >
-                    +{preset.toLocaleString()} UZS
+                    +{fmtUzs(preset)} UZS
                   </button>
                 ))}
               </div>
@@ -270,7 +271,7 @@ export const TopupModal: React.FC<TopupModalProps> = ({
               <div className="space-y-1">
                 <div className="text-[11px] text-slate-400">O'tkazilishi kerak bo'lgan summa:</div>
                 <div className="text-2xl font-black text-emerald-400">
-                  {activeTopup.amount.toLocaleString()}{' '}
+                  {fmtUzs(activeTopup.amount)}{' '}
                   <span className="text-sm font-semibold text-slate-400">UZS</span>
                 </div>
               </div>
@@ -309,7 +310,7 @@ export const TopupModal: React.FC<TopupModalProps> = ({
             {/* Instruction */}
             <div className="text-[11px] text-slate-400 space-y-1 bg-slate-950/50 p-3 rounded-xl border border-white/5">
               <p className="text-slate-300 font-medium">📌 To'lov yo'riqnomasi:</p>
-              <p>1. Kartaga aniq <b>{activeTopup.amount.toLocaleString()} UZS</b> o'tkazing (Payme, Click, Apelsin, bank ilovasi).</p>
+              <p>1. Kartaga aniq <b>{fmtUzs(activeTopup.amount)} UZS</b> o'tkazing (Payme, Click, Apelsin, bank ilovasi).</p>
               <p>2. To'lov amalga oshishi bilan bot to'lovni avtomatik aniqlaydi.</p>
             </div>
 
@@ -337,7 +338,7 @@ export const TopupModal: React.FC<TopupModalProps> = ({
                 ) : (
                   <>
                     <Zap className="w-4 h-4" />
-                    <span>🔵 To'lovni tasdiqlash ({activeTopup.amount.toLocaleString()} UZS qo'shish)</span>
+                    <span>🔵 To'lovni tasdiqlash ({fmtUzs(activeTopup.amount)} UZS qo'shish)</span>
                   </>
                 )}
               </button>

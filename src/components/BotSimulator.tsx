@@ -23,6 +23,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { User, StoreSettings, BotChatMessage } from '../types';
 import { Send, Bot, Sparkles, RefreshCw, ExternalLink, ShieldCheck, Play, Square, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { telegramInitData } from '../lib/tgAuth';
+import { fmtUzs } from '../lib/format';
 
 interface BotSimulatorProps {
   user: User | null;
@@ -53,7 +54,7 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({
     {
       id: 'init_1',
       sender: 'bot',
-      text: `👋 <b>Assalomu alaykum, @${user?.username || 'normuzb'}</b>\n\n🆔 User ID: <code>${user?.id || 8307046273}</code>\n💳 Balans: <b>${user?.balance.toLocaleString() || '357 813'} so'm</b>\n\n🔗 Referral link: <code>t.me/shop_neonbot?start=u${user?.id || 8307046273}</code>`,
+      text: `👋 <b>Assalomu alaykum, @${user?.username || 'normuzb'}</b>\n\n🆔 User ID: <code>${user?.id || 8307046273}</code>\n💳 Balans: <b>${fmtUzs(user?.balance) || '357 813'} so'm</b>\n\n🔗 Referral link: <code>t.me/shop_neonbot?start=u${user?.id || 8307046273}</code>`,
       time: '9:47 AM',
       inlineKeyboard: [
         [{ text: '⭐ Stars sotib olish', action: 'buy_stars' }],

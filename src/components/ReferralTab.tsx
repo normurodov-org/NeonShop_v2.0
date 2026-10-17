@@ -23,6 +23,7 @@ import React, { useState } from 'react';
 import { User, StoreSettings } from '../types';
 import { Users, Star, Copy, Check, ArrowRight, Gift, AlertCircle } from 'lucide-react';
 import { telegramInitData } from '../lib/tgAuth';
+import { fmtUzs } from '../lib/format';
 
 interface ReferralTabProps {
   user: User | null;
@@ -118,7 +119,7 @@ export const ReferralTab: React.FC<ReferralTabProps> = ({
         <div className="col-span-2 sm:col-span-1 rounded-2xl bg-slate-900/80 border border-white/10 p-4">
           <div className="text-[11px] text-slate-400">Yechish mumkin (so'mda)</div>
           <div className="text-2xl font-black text-cyan-400 mt-1">
-            {withdrawUzs.toLocaleString()}{' '}
+            {fmtUzs(withdrawUzs)}{' '}
             <span className="text-xs font-normal text-slate-400">UZS</span>
           </div>
         </div>
@@ -187,7 +188,7 @@ export const ReferralTab: React.FC<ReferralTabProps> = ({
                 : 'bg-slate-800 text-slate-500 cursor-not-allowed'
             }`}
           >
-            <span>{refStars} ⭐ Balansga yechish ({withdrawUzs.toLocaleString()} UZS)</span>
+            <span>{refStars} ⭐ Balansga yechish ({fmtUzs(withdrawUzs)} UZS)</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

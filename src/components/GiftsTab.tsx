@@ -24,6 +24,7 @@ import { User, GiftItem } from '../types';
 import { Gift, Star, Send, AlertCircle, ArrowRight, UserCheck } from 'lucide-react';
 import AEmoji from './AEmoji';
 import { telegramInitData } from '../lib/tgAuth';
+import { fmtUzs } from '../lib/format';
 
 interface GiftsTabProps {
   user: User | null;
@@ -69,7 +70,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
     }
 
     if (!isEnough) {
-      setError(`Balans yetarli emas. Narx: ${selectedGift.priceUzs.toLocaleString()} UZS, balansingiz: ${userBalance.toLocaleString()} UZS.`);
+      setError(`Balans yetarli emas. Narx: ${fmtUzs(selectedGift.priceUzs)} UZS, balansingiz: ${fmtUzs(userBalance)} UZS.`);
       return;
     }
 
@@ -213,7 +214,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                 <span>{item.stars} ⭐</span>
               </div>
               <div className="text-xs font-black text-cyan-400 mt-1">
-                {item.priceUzs.toLocaleString()} <span className="text-[10px] text-slate-400">UZS</span>
+                {fmtUzs(item.priceUzs)} <span className="text-[10px] text-slate-400">UZS</span>
               </div>
             </div>
           );
@@ -234,7 +235,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
         <div className="text-right">
           <div className="text-xs text-slate-400">Narxi:</div>
           <div className="text-xl font-black text-cyan-400">
-            {selectedGift.priceUzs.toLocaleString()} <span className="text-xs text-slate-400">UZS</span>
+            {fmtUzs(selectedGift.priceUzs)} <span className="text-xs text-slate-400">UZS</span>
           </div>
         </div>
       </div>
@@ -262,7 +263,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
                 <Send className="w-4 h-4" />
                 <span>
                   🔴 <AEmoji char={selectedGift.emoji} size={16} anim="none" label={selectedGift.name} />{' '}
-                  {selectedGift.name} yuborish ({selectedGift.priceUzs.toLocaleString()} UZS)
+                  {selectedGift.name} yuborish ({fmtUzs(selectedGift.priceUzs)} UZS)
                 </span>
               </>
             )}
@@ -277,7 +278,7 @@ export const GiftsTab: React.FC<GiftsTabProps> = ({
               <ArrowRight className="w-4 h-4" />
             </button>
             <p className="text-[11px] text-center text-slate-400">
-              Yetishmayotgan summa: {(selectedGift.priceUzs - userBalance).toLocaleString()} UZS
+              Yetishmayotgan summa: {fmtUzs((selectedGift.priceUzs - userBalance))} UZS
             </p>
           </div>
         )}

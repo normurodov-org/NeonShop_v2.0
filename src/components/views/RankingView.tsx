@@ -4,6 +4,7 @@ import { Lang, translations } from '../../i18n';
 import { Trophy, Crown, Sparkles, Clock, ShoppingBag } from 'lucide-react';
 import { telegramInitData } from '../../lib/tgAuth';
 import type { RankingSub } from '../../lib/routes';
+import { fmtUzs } from '../../lib/format';
 
 interface RankingViewProps {
   user: User | null;
@@ -279,7 +280,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
                     </div>
                   </div>
                   <div className={`shrink-0 text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                    {(Number(item.amount) || 0).toLocaleString()}{' '}
+                    {(fmtUzs(Number(item.amount) || 0))}{' '}
                     <span className="text-[9px] font-normal opacity-70">UZS</span>
                   </div>
                 </div>
@@ -336,7 +337,7 @@ export const RankingView: React.FC<RankingViewProps> = ({ user, contest, lang, i
               </div>
               {/* 📌 `shrink-0` — summa hech qachon siqilmasdi */}
               <div className={`shrink-0 text-xs font-mono font-bold ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                {myRanking.amount.toLocaleString()}{' '}
+                {fmtUzs(myRanking.amount)}{' '}
                 <span className="text-[9px] font-normal opacity-70">UZS</span>
               </div>
             </div>

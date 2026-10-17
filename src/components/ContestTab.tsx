@@ -23,6 +23,7 @@ import React, { useState } from 'react';
 import { User, Contest } from '../types';
 import { Trophy, Users, Clock, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
 import { telegramInitData } from '../lib/tgAuth';
+import { fmtUzs } from '../lib/format';
 
 interface ContestTabProps {
   user: User | null;
@@ -137,11 +138,11 @@ export const ContestTab: React.FC<ContestTabProps> = ({
           </div>
           <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/10">
             <div className="text-[10px] uppercase font-bold text-slate-400">Min. Xarid</div>
-            <div className="text-xl font-black text-purple-400 mt-1">{(contest.min || 0).toLocaleString()} UZS</div>
+            <div className="text-xl font-black text-purple-400 mt-1">{fmtUzs((contest.min || 0))} UZS</div>
           </div>
           <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/10">
             <div className="text-[10px] uppercase font-bold text-slate-400">Sizning xaridingiz</div>
-            <div className="text-xl font-black text-white mt-1">{userSpent.toLocaleString()} UZS</div>
+            <div className="text-xl font-black text-white mt-1">{fmtUzs(userSpent)} UZS</div>
           </div>
         </div>
 
@@ -171,8 +172,8 @@ export const ContestTab: React.FC<ContestTabProps> = ({
           ) : (
             <div className="space-y-3">
               <div className="text-xs text-slate-400 text-center">
-                Konkursda qatnashish uchun kamida <b>{(contest.min || 0).toLocaleString()} UZS</b> xarid qilishingiz kerak.
-                Hozirgi xaridingiz: <b>{userSpent.toLocaleString()} UZS</b>.
+                Konkursda qatnashish uchun kamida <b>{fmtUzs((contest.min || 0))} UZS</b> xarid qilishingiz kerak.
+                Hozirgi xaridingiz: <b>{fmtUzs(userSpent)} UZS</b>.
               </div>
               <button
                 onClick={onOpenTopup}

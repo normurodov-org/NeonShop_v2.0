@@ -2799,6 +2799,65 @@ async def cmd_start(
             db_user["invited_by"] = ref_id
             db.save()
 
+    # 🔴🔴🔴 SAYT → TELEGRAM ZAXIRA YO'LI (2026-10-17).
+    #
+    #    Muammo: saytda (brauzerda) «To'lovni tekshirish» ishlamasa,
+    #    mijozda QO'LDA tasdiqlash yo'li YO'Q edi — botdagi
+    #    «Bank xabarini yuboring» tugmasi faqat WebApp ichidan
+    #    ishga tushardi.
+    #
+    #    Yechim: saytdagi «Bank xabarini yuborish» tugmasi shu
+    #    deep linkni ochadi:  t.me/<bot>?start=topup_<id>
+    #    Bot esa mijozni darhol bank xabarini yuborish rejimiga
+    #    kiritadi (TopupStates.proof) — userbot bo'lishidan qat'i
+    #    nazar, bu YO'L DOIM ishlaydi.
+    proof_id = ""
+    m_proof = re.fullmatch(r"topup_([A-Za-z0-9_]{3,40})", arg)
+    if m_proof:
+        proof_id = m_proof.group(1)
+
+    if proof_id:
+        # 📌 Taklif bonusi bu yo'l bilan kelgan mijozlarga ham beriladi —
+        #    yo'q bo'lsa, saytdan kelgan yangi mijozga haq tegmasdi.
+        await reward_referrer_if_needed(bot, db_user)
+        db.reload_if_changed()
+        _t = db.data.get("topups", {}).get(proof_id)
+        if not _t:
+            await message.answer(
+                "⚠️ <b>To'lov so'rovi topilmadi.</b>\n\n"
+                "Saytdagi to'ldirish sahifasiga qaytib, yangi so'rov yarating.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        if int(_t.get("user_id", 0)) != int(db_user["id"]):
+            await message.answer(
+                "⚠️ <b>Bu so'rov sizniki emas.</b>\n\n"
+                "Faqat o'z to'lov so'rovingizni tasdiqlash mumkin.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        if _t.get("status") != "pending":
+            await message.answer(
+                "✅ <b>Bu so'rov allaqachon yopilgan.</b>\n\n"
+                "💰 Balansingiz to'ldirilgan. Bot menyusidan "
+                "«Balans to'ldirish» orqali yangisini yarata olasiz.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        await state.set_state(TopupStates.proof)
+        await state.update_data(proof_topup=proof_id)
+        await message.answer(
+            "📨 <b>Bank xabarini yuboring</b>\n\n"
+            "Bank ilovasidagi to'lov xabarini SHU YERGA qaytarib yuboring "
+            "(forward yoki ko'chirish). Bot uni o'zida o'qib, balansingizni "
+            "avtomatik to'ldiradi.\n\n"
+            f"Kutilayotgan summa: <b>{fmt(get_topup_amounts(_t)[1])} UZS</b>\n\n"
+            "<i>Rasm (screenshot) ham bo'ladi, lekin undan summa o'qilmaydi — "
+            "matnni yuborish afzal.</i>",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
     await reward_referrer_if_needed(bot, db_user)
 
     # Robot emasligi tekshiruvi (captcha) — faqat yangi foydalanuvchilar uchun
@@ -4956,9 +5015,6 @@ async def on_humo_message(client: UserbotClient, message) -> None:
         except Exception as e:
             log.warning("Topups reload xatosi: %s", e)
 
-        if msg_id in db.data["processed_bank_msgs"]:
-            return
-        db.data["processed_bank_msgs"].append(msg_id)
 
         # Muddati 2 soatdan ortiq o'tib ketgan eskirgan so'rovlarni expired qilamiz
         for t in list(db.data.get("topups", {}).values()):
@@ -4989,6 +5045,23 @@ async def on_humo_message(client: UserbotClient, message) -> None:
                 card_ok = any(card in d or d.endswith(card) for d in candidates)
             else:
                 card_ok = True
+
+        # 🛡️🛡️🛡️ IKKI MARTA TO'LDIRISHGA QARSHI QAT'IY QILISH
+        #
+        #    Bu ro'yxatga FAQAT balans HAQIQATAN qo'shilgan xabarlar
+        #    yoziladi (pastda, `if matches:` ichida). Aks holda —
+        #    ya'ni AVVAL ham kelgan paytdagi holdek — xabar kelgan
+        #    zahoti ro'yxatga yozilardi va keyin mijoz «Tekshirish»
+        #    bossa, rescan o'sha xabarni topib O'TKAZIB YUBORARDI:
+        #    «Tekshirish» hech qachon ishlameydi edi. Saytda bu
+        #    juda tez bo'ladi — mijoz avval boshqa urinish qilib
+        #    (yoki to'lov so'rovi yaratilgandan OLDIN) yuboradi.
+        #
+        # ✅ Endi ro'yxat = «pul berilgan xabarlar» = qayta
+        #    tekshirish har doim ishlaydi, lekin bir xil xabardan
+        #    ikki marta pul BERILMAYDI (bu qat'iy blok).
+        if msg_id in set(db.data["processed_bank_msgs"]):
+            return
 
         # Aniq moslik. DIQQAT: mijoz kartaga `amount_to_send`
         # (so'ralgan summa + ketma-ket buyurtma raqami) yuboradi:
@@ -5071,6 +5144,16 @@ async def on_humo_message(client: UserbotClient, message) -> None:
                     pass
             if not u:
                 db.save()
+
+            # ✅ Shu xabar orqali pul BERILDI — endi uni qayta
+            #    tekshirish hech qachon qayta to'ldirilmaydi
+            #    (yuqoridagi qat'iy blok).
+            if msg_id not in set(db.data["processed_bank_msgs"]):
+                # 🛡️ Ro'yxat CHEKSIZ o'sib ketmasin.
+                db.data["processed_bank_msgs"].append(msg_id)
+                del db.data["processed_bank_msgs"][:-2000]
+                db.save()
+
             await notify_admins(
                 f"💰 <b>To'lov avtomatik tasdiqlandi!</b>\n\n"
                 f"👤 User: <code>{t['user_id']}</code>\n"

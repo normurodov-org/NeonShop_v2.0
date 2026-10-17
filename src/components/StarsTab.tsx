@@ -23,6 +23,7 @@ import React, { useState } from 'react';
 import { User, StoreSettings } from '../types';
 import { Star, Send, ShieldCheck, Zap, UserCheck, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
 import { telegramInitData } from '../lib/tgAuth';
+import { fmtUzs } from '../lib/format';
 
 interface StarsTabProps {
   user: User | null;
@@ -64,7 +65,7 @@ export const StarsTab: React.FC<StarsTabProps> = ({
     }
 
     if (!isEnough) {
-      setError(`Balans yetarli emas. Narx: ${totalPrice.toLocaleString()} UZS, balansingiz: ${userBalance.toLocaleString()} UZS.`);
+      setError(`Balans yetarli emas. Narx: ${fmtUzs(totalPrice)} UZS, balansingiz: ${fmtUzs(userBalance)} UZS.`);
       return;
     }
 
@@ -163,7 +164,7 @@ export const StarsTab: React.FC<StarsTabProps> = ({
             </label>
             <div className="flex items-center gap-1 font-bold text-amber-300 text-sm">
               <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
-              <span>{amount.toLocaleString()} ⭐</span>
+              <span>{fmtUzs(amount)} ⭐</span>
             </div>
           </div>
 
@@ -180,7 +181,7 @@ export const StarsTab: React.FC<StarsTabProps> = ({
                     : 'bg-slate-950/60 border-white/10 text-slate-300 hover:border-white/20 hover:bg-slate-800'
                 }`}
               >
-                {preset.toLocaleString()}
+                {fmtUzs(preset)}
               </button>
             ))}
           </div>
@@ -223,7 +224,7 @@ export const StarsTab: React.FC<StarsTabProps> = ({
           </div>
           <div className="flex justify-between items-center text-xs text-slate-400">
             <span>Stars miqdori</span>
-            <span className="font-semibold text-amber-300">{amount.toLocaleString()} ⭐</span>
+            <span className="font-semibold text-amber-300">{fmtUzs(amount)} ⭐</span>
           </div>
           <div className="flex justify-between items-center text-xs text-slate-400">
             <span>0.1% Keshbek</span>
@@ -233,7 +234,7 @@ export const StarsTab: React.FC<StarsTabProps> = ({
             <span className="text-sm font-bold text-white">Jami to'lov:</span>
             <div className="text-right">
               <span className="text-lg font-black text-cyan-400 tracking-tight">
-                {totalPrice.toLocaleString()}
+                {fmtUzs(totalPrice)}
               </span>
               <span className="text-xs text-slate-400 ml-1 font-bold">UZS</span>
             </div>
@@ -261,7 +262,7 @@ export const StarsTab: React.FC<StarsTabProps> = ({
               ) : (
                 <>
                   <Send className="w-4 h-4" />
-                  <span>🟢 Xaridni tasdiqlash ({totalPrice.toLocaleString()} UZS)</span>
+                  <span>🟢 Xaridni tasdiqlash ({fmtUzs(totalPrice)} UZS)</span>
                 </>
               )}
             </button>
@@ -275,7 +276,7 @@ export const StarsTab: React.FC<StarsTabProps> = ({
                 <ArrowRight className="w-4 h-4" />
               </button>
               <p className="text-[11px] text-center text-slate-400">
-                Yetishmayotgan summa: {(totalPrice - userBalance).toLocaleString()} UZS
+                Yetishmayotgan summa: {fmtUzs((totalPrice - userBalance))} UZS
               </p>
             </div>
           )}

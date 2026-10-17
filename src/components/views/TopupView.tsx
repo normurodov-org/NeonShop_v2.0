@@ -3,6 +3,7 @@ import { User, StoreSettings, Topup } from '../../types';
 import { Lang, translations } from '../../i18n';
 import { CreditCard, Copy, Check, Clock, Plus, History, AlertCircle, RefreshCw, X } from 'lucide-react';
 import { tgHeaders, tgHeadersGet } from '../../lib/tgAuth';
+import { fmtUzs } from '../../lib/format';
 
 interface TopupViewProps {
   user: User | null;
@@ -10,6 +11,9 @@ interface TopupViewProps {
   lang: Lang;
   isDark: boolean;
   activeTopup: Topup | null;
+  /** 🔴 Bot nomi — «Bank xabarini yuborish» deep linki uchun
+   *  (`t.me/<bot>?start=topup_<id>`). App'dagi `BOT_USERNAME` dan keladi. */
+  botUsername?: string;
   onTopupCreated: (t: Topup) => void;
   onTopupSuccess: (newBalance: number, msg: string) => void;
   /** 🔴 To'lov muddati tugadi yoki bekor qilindi — ilova karta va
@@ -25,6 +29,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
   lang,
   isDark,
   activeTopup,
+  botUsername,
   onTopupCreated,
   onTopupSuccess,
   onTopupCancelled,
@@ -37,11 +42,20 @@ export const TopupView: React.FC<TopupViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
   const [simulating, setSimulating] = useState<boolean>(false);
+  /** 🔴 «Tekshirish» ishlamagan bo'lsa — qo'lda tasdiqlash yo'lini
+   *  ko'rsatamiz (Telegram orqali bank xabarini yuborish). */
+  const [rescanHelp, setRescanHelp] = useState<boolean>(false);
 
   /** 🔴 Oxirgi ko'rilgan `rescan_done_at` — takror xabarni chiqarmaslik uchun. */
   const lastRescanSeen = React.useRef<number>(0);
 
   const presets = [10000, 25000, 50000, 100000, 250000, 500000];
+
+  /** 🔴 Qo'lda tasdiqlash deep linki — Telegram'da ochiladi. */
+  const proofUrl =
+    botUsername && activeTopup?.id
+      ? `https://t.me/${String(botUsername).replace(/^@/, '')}?start=topup_${activeTopup.id}`
+      : '';
 
   /**
    * AVTO TO'LDIRISH (WebApp tomoni)
@@ -70,7 +84,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
         if (st === 'completed') {
           onTopupSuccess(
             Number(data.balance ?? user?.balance ?? 0),
-            `✅ ${activeTopup.amount.toLocaleString()} UZS avtomatik to'ldirildi!`
+            `✅ ${fmtUzs(activeTopup.amount)} UZS avtomatik to'ldirildi!`
           );
           return;
         }
@@ -103,13 +117,16 @@ export const TopupView: React.FC<TopupViewProps> = ({
           const r = String(data.topup?.rescan_result || '');
           if (r === 'found') {
             setError('');   // poller `completed` holatini ham kutadi
+            setRescanHelp(false);
           } else if (r === 'not_found') {
             setError(String(data.topup?.rescan_message || ''));
+            setRescanHelp(true);
           } else if (r === 'userbot_offline') {
             setError(
               'Bank xabari avtomatik tekshirilmaydi — userbot ulanmagan. '
               + 'Iltimos yordamchiga murojaat qiling: to\'lov qo\'lda tasdiqlanadi.'
             );
+            setRescanHelp(true);
           } else if (r === 'chat_empty') {
             // 🔴🔴🔴 Eng ko'p uchraydigan sabab: userbot kartani
             //   EGASINING akkaunti emas. Bank xabari faqat karta
@@ -118,10 +135,12 @@ export const TopupView: React.FC<TopupViewProps> = ({
               'Bank xabarida hech narsa topilmadi: bot karta egasi akkaunti '
               + 'bilan ulangan emas. Iltimos yordamchiga murojaat qiling.'
             );
+            setRescanHelp(true);
           } else if (r && r !== 'found' && r !== 'already') {
             // 🔴 Texnik xato — mijozga «nima qilish kerak» aytilmasin,
             //    ammo sabab ko'rinishi uchun maydon chiqariladi.
             setError(String(data.topup?.rescan_message || ''));
+            setRescanHelp(true);
           }
         }
       } catch (e) {
@@ -131,9 +150,33 @@ export const TopupView: React.FC<TopupViewProps> = ({
 
     poll();
     const timer = setInterval(poll, 4000);
+
+    // 🔴🔴🔴 FON REJIMI (2026-10-17) — «saytda ishlamaydi»ning ikkinchi sababi.
+    //
+    //    Brauzer yashirin (background) tab'da `setInterval` ni SEKINLASHTIRADI
+    //    (ko'p brauzerlarda 1 daqiqada BITTAGA). Saytda mijoz:
+    //      1) kartani ko'radi → 2) bank ilovasi/yangi tabga o'tadi →
+    //      3) to'lovni yuboradi → 4) sayt tab'iga QAYTADI
+    //    ...lekin 4-bosqichda poller sekinlashgan holatda — balans
+    //    1 daqiqaga (ba'zan ko'proq) KECH ko'rinadi yoki umuman
+    //    ko'rinmay qoladi. Telegram WebApp'da mini-app fon rejimiga
+    //    shunchalik sekinlamaydi — SHUNING UCHUN WebApp'da ishlagan.
+    //
+    // ✅ YECHIM: mijoz tab'ga qaytganda (`visibilitychange` / `focus`)
+    //    DARHOL bir marta tekshiramiz.
+    const onWake = () => {
+      if (document.visibilityState === 'visible') void poll();
+    };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('pageshow', onWake);
+
     return () => {
       alive = false;
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('pageshow', onWake);
     };
   }, [activeTopup?.id, activeTopup?.status, user?.id]);
 
@@ -146,6 +189,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
 
   const handleCreateTopup = async () => {
     setError(null);
+    setRescanHelp(false);   // yangi so'rov — eski xato endi tegishli emas
     const amount = customAmount ? parseInt(customAmount, 10) : selectedAmount;
     if (!amount || amount < 1000 || amount > 10000000) {
       setError("1 000 dan 10 000 000 so'mgacha summa kiriting.");
@@ -228,7 +272,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
         <div>
           <h2 className={`text-xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>{t.topup}</h2>
           <p className={`text-xs mt-0.5 ${isDark ? 'text-neutral-400' : 'text-neutral-500'}`}>
-            {t.balance}: <b className={`font-mono font-bold ${isDark ? 'text-white' : 'text-black'}`}>{Number(user?.balance ?? 0).toLocaleString()} UZS</b>
+            {t.balance}: <b className={`font-mono font-bold ${isDark ? 'text-white' : 'text-black'}`}>{fmtUzs(user?.balance ?? 0)} UZS</b>
           </p>
         </div>
         <button
@@ -269,13 +313,13 @@ export const TopupView: React.FC<TopupViewProps> = ({
               Kartaga yuborish uchun ANIQ summa:
             </div>
             <div className={`text-2xl font-bold font-mono tracking-tight ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-              {(activeTopup.amount_to_send ?? activeTopup.amount).toLocaleString()}{' '}
+              {fmtUzs(activeTopup.amount_to_send ?? activeTopup.amount)}{' '}
               <span className="text-xs font-normal opacity-70">UZS</span>
             </div>
             {activeTopup.amount_to_send != null
               && activeTopup.amount_to_send !== activeTopup.amount ? (
               <div className="text-[10px] text-amber-400/90">
-                ⚠️ Aynan shu {activeTopup.amount_to_send.toLocaleString()} so'mni
+                ⚠️ Aynan shu {fmtUzs(activeTopup.amount_to_send)} so'mni
                 yuboring — boshqa summa avtomatik topilmaydi.
               </div>
             ) : null}
@@ -288,9 +332,9 @@ export const TopupView: React.FC<TopupViewProps> = ({
             {activeTopup.amount_to_send != null
               && activeTopup.amount_to_send !== activeTopup.amount ? (
               <div className={`text-[10px] ${isDark ? 'text-neutral-400' : 'text-neutral-600'} mt-1`}>
-                So&apos;ragan: <b>{activeTopup.amount.toLocaleString()}</b> so&apos;m
+                So&apos;ragan: <b>{fmtUzs(activeTopup.amount)}</b> so&apos;m
                 {' · '}№<b>{(activeTopup as any).seq ?? activeTopup.amount_to_send - activeTopup.amount}</b>
-                {' · '}farqlash uchun +<b>{(activeTopup.amount_to_send - activeTopup.amount).toLocaleString()}</b>
+                {' · '}farqlash uchun +<b>{fmtUzs(activeTopup.amount_to_send - activeTopup.amount)}</b>
               </div>
             ) : null}
 
@@ -351,6 +395,34 @@ export const TopupView: React.FC<TopupViewProps> = ({
               <span>Bekor qilish</span>
             </button>
           </div>
+
+          {/* 🔴🔴🔴 ZAXIRA YO'L — «Tekshirish» ishlamaganda.
+              Saytda (brauzerda) mijozda qo'lda tasdiqlash yo'li YO'Q edi:
+              botdagi «Bank xabarini yuborish» tugmasi faqat WebApp
+              ichidan ishga tushardi. Endi saytdan ham to'g'ridan-to'g'ri
+              Telegram'ga o'tib, bank xabarini yuborish mumkin
+              (`?start=topup_<id>` — bot mijozni darhol «bank xabarini
+              yuboring» rejimiga kiritadi, userbot bo'lishidan qat'i nazar). */}
+          {rescanHelp && proofUrl && (
+            <a
+              href={proofUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`block rounded-[18px] px-4 py-3.5 font-semibold text-xs text-center apple-spring cursor-pointer border ${
+                isDark
+                  ? 'bg-white/5 text-white/85 hover:bg-white/10 border-white/15'
+                  : 'bg-black/[0.03] text-neutral-700 hover:bg-black/[0.07] border-black/10'
+              }`}
+            >
+              📨 Bank xabarini yuborish (Telegram orqali)
+            </a>
+          )}
+          {rescanHelp && !proofUrl && (
+            <p className={`text-[11px] text-center ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
+              📨 Avtomatik tekshirish ishlamadi. Bank xabarini Telegram
+              botga yuboring — yordamchi qo'lda tasdiqlaydi.
+            </p>
+          )}
         </div>
       )}
 
@@ -402,7 +474,7 @@ export const TopupView: React.FC<TopupViewProps> = ({
                     : 'liquid-glass-pill opacity-80 hover:opacity-100'
                 }`}
               >
-                {amt.toLocaleString()}
+                {fmtUzs(amt)}
               </button>
             );
           })}

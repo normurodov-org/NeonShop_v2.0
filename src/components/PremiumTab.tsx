@@ -23,6 +23,7 @@ import React, { useState } from 'react';
 import { User } from '../types';
 import { Sparkles, Check, Gift, Key, ShieldCheck, ArrowRight, AlertCircle, Zap } from 'lucide-react';
 import { telegramInitData } from '../lib/tgAuth';
+import { fmtUzs } from '../lib/format';
 
 interface PremiumTabProps {
   user: User | null;
@@ -67,7 +68,7 @@ export const PremiumTab: React.FC<PremiumTabProps> = ({
     }
 
     if (!isEnough) {
-      setError(`Balans yetarli emas. Narx: ${activePlan.price.toLocaleString()} UZS, balansingiz: ${userBalance.toLocaleString()} UZS.`);
+      setError(`Balans yetarli emas. Narx: ${fmtUzs(activePlan.price)} UZS, balansingiz: ${fmtUzs(userBalance)} UZS.`);
       return;
     }
 
@@ -200,7 +201,7 @@ export const PremiumTab: React.FC<PremiumTabProps> = ({
 
                 <div className="mt-3">
                   <div className="text-2xl font-black text-cyan-400 tracking-tight">
-                    {plan.price.toLocaleString()}
+                    {fmtUzs(plan.price)}
                     <span className="text-xs text-slate-400 font-normal ml-1">UZS</span>
                   </div>
                   <div className="text-[11px] text-slate-400 mt-0.5">{plan.monthly}</div>
@@ -278,7 +279,7 @@ export const PremiumTab: React.FC<PremiumTabProps> = ({
               <>
                 <Gift className="w-4 h-4" />
                 <span>
-                  🔵 Telegram Premium ({activePlan.label}) — {activePlan.price.toLocaleString()} UZS sotib olish
+                  🔵 Telegram Premium ({activePlan.label}) — {fmtUzs(activePlan.price)} UZS sotib olish
                 </span>
               </>
             )}
@@ -293,7 +294,7 @@ export const PremiumTab: React.FC<PremiumTabProps> = ({
               <ArrowRight className="w-4 h-4" />
             </button>
             <p className="text-[11px] text-center text-slate-400">
-              Yetishmayotgan summa: {(activePlan.price - userBalance).toLocaleString()} UZS
+              Yetishmayotgan summa: {fmtUzs((activePlan.price - userBalance))} UZS
             </p>
           </div>
         )}

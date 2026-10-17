@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StoreSettings, Contest } from '../types';
 import { Shield, Lock, Power, Users, ShoppingBag, DollarSign, CheckCircle2, AlertCircle, ArrowRight, RefreshCw, Trophy, TrendingUp, Wallet, Clock, Ban, ChevronUp, ChevronDown } from 'lucide-react';
 import type { AdminSub } from '../lib/routes';
+import { fmtUzs } from '../lib/format';
 
 interface AdminPanelProps {
   onSettingsUpdated: (newSettings: StoreSettings) => void;
@@ -179,7 +180,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
       });
       const data = await res.json();
       if (data.ok) {
-        setAdjMsg(`✅ Balans muvaffaqiyatli o'zgartirildi! Yangi balans: ${Number(data.user.balance ?? 0).toLocaleString()} UZS`);
+        setAdjMsg(`✅ Balans muvaffaqiyatli o'zgartirildi! Yangi balans: ${fmtUzs(Number(data.user.balance ?? 0))} UZS`);
         fetchAdminData();
       } else {
         setAdjMsg(`❌ Xatolik: ${data.error}`);
@@ -267,7 +268,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
               <Users className="w-3.5 h-3.5 text-cyan-400" /> Jami foydalanuvchilar
             </div>
             <div className="text-2xl font-black text-white mt-1">
-              {Number(stats?.totalUsers || 0).toLocaleString()}
+              {fmtUzs(Number(stats?.totalUsers || 0))}
             </div>
           </div>
 
@@ -276,7 +277,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
               <ShoppingBag className="w-3.5 h-3.5 text-purple-400" /> Jami buyurtmalar
             </div>
             <div className={`text-2xl font-black mt-1 ${accentText}`}>
-              {Number(stats?.totalOrders || 0).toLocaleString()}
+              {fmtUzs(Number(stats?.totalOrders || 0))}
             </div>
           </div>
 
@@ -285,10 +286,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
               <DollarSign className="w-3.5 h-3.5 text-emerald-400" /> Jami aylanma
             </div>
             <div className="text-xl font-black text-emerald-400 mt-1">
-              {Number(stats?.totalVolume || 0).toLocaleString()} <span className="text-xs">UZS</span>
+              {fmtUzs(Number(stats?.totalVolume || 0))} <span className="text-xs">UZS</span>
             </div>
             <div className="text-[9px] text-slate-500 mt-0.5">
-              Bugungi: {Number(stats?.todayVolume || 0).toLocaleString()} UZS
+              Bugungi: {fmtUzs(Number(stats?.todayVolume || 0))} UZS
             </div>
           </div>
 
@@ -297,11 +298,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
               <Wallet className="w-3.5 h-3.5 text-teal-400" /> Tushum (sotilgan)
             </div>
             <div className="text-xl font-black text-teal-300 mt-1">
-              {Number(stats?.totalRevenue || 0).toLocaleString()}{' '}
+              {fmtUzs(Number(stats?.totalRevenue || 0))}{' '}
               <span className="text-xs">UZS</span>
             </div>
             <div className="text-[9px] text-slate-500 mt-0.5">
-              Kutilmoqda: {Number(stats?.topupsPending || 0).toLocaleString()}
+              Kutilmoqda: {fmtUzs(Number(stats?.topupsPending || 0))}
             </div>
           </div>
 
@@ -310,10 +311,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
               <Clock className="w-3.5 h-3.5 text-amber-400" /> Kutayotgan buyurtma
             </div>
             <div className="text-xl font-black text-amber-300 mt-1">
-              {Number(stats?.pendingOrders || 0).toLocaleString()}
+              {fmtUzs(Number(stats?.pendingOrders || 0))}
             </div>
             <div className="text-[9px] text-slate-500 mt-0.5">
-              Bekor: {Number(stats?.cancelledOrders || 0).toLocaleString()}
+              Bekor: {fmtUzs(Number(stats?.cancelledOrders || 0))}
             </div>
           </div>
 
@@ -322,9 +323,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
               <TrendingUp className="w-3.5 h-3.5 text-sky-400" /> Bajarilgan xaridlar
             </div>
             <div className="text-xl font-black text-sky-300 mt-1">
-              {Number(stats?.completedOrders || 0).toLocaleString()}{' '}
+              {fmtUzs(Number(stats?.completedOrders || 0))}{' '}
               <span className="text-xs text-slate-500">
-                / {Number(stats?.totalOrders || 0).toLocaleString()}
+                / {fmtUzs(Number(stats?.totalOrders || 0))}
               </span>
             </div>
           </div>
@@ -501,7 +502,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
               </div>
               <div className={dimText}>
                 🏆 {contest.prize_stars} ⭐ · 🥇 {contest.winners} ta g'olib · 💰 min{' '}
-                {(contest.min || 0).toLocaleString()} UZS
+                {fmtUzs((contest.min || 0))} UZS
               </div>
               <div className={dimText}>
                 👥 {Array.isArray(contest.participants) ? contest.participants.length : 0} ishtirokchi
@@ -611,7 +612,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onSettingsUpdated, isDar
                 <span className="text-slate-400 ml-2">({ord.recipient ? `@${ord.recipient}` : 'NFT ijara'})</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="font-bold text-cyan-400">{ord.price?.toLocaleString()} UZS</span>
+                <span className="font-bold text-cyan-400">{fmtUzs(ord.price ?? 0)} UZS</span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300">
                   {ord.status}
                 </span>

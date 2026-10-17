@@ -22,6 +22,7 @@
 import React from 'react';
 import { Order } from '../types';
 import { Clock, CheckCircle2, AlertCircle, ShoppingBag, Star, Gift, Sparkles, Boxes, Clock3 } from 'lucide-react';
+import { fmtUzs } from '../lib/format';
 
 interface HistoryTabProps {
   orders: Order[];
@@ -110,7 +111,7 @@ export const HistoryTab: React.FC<HistoryTabProps> = ({ orders }) => {
               <div className="flex items-center justify-between sm:justify-end gap-4 border-t sm:border-t-0 pt-2 sm:pt-0 border-white/5">
                 <div className="text-left sm:text-right">
                   <div className="text-sm font-extrabold text-cyan-400">
-                    {order.price.toLocaleString()} <span className="text-[10px] text-slate-400">UZS</span>
+                    {fmtUzs(order.price)} <span className="text-[10px] text-slate-400">UZS</span>
                   </div>
                   <div className="text-[10px] font-mono text-slate-500">ID: {order.id}</div>
                 </div>

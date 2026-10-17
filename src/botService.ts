@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard, Keyboard } from 'grammy';
 import { store, syncAndSaveDb } from '../server';
+import { fmtUzs } from './lib/format';
 
 let currentBot: Bot | null = null;
 let isBotRunning = false;
@@ -121,7 +122,7 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
       const welcomeText =
         `👋 <b>Assalomu alaykum, @${user.username}</b>\n\n` +
         `🆔 User ID: <code>${user.id}</code>\n` +
-        `💳 Balans: <b>${user.balance.toLocaleString()} so'm</b>\n\n` +
+        `💳 Balans: <b>${fmtUzs(user.balance)} so'm</b>\n\n` +
         `🔗 Referral link: <code>t.me/${botInfo?.username || 'shop_neonbot'}?start=u${user.id}</code>`;
 
       // 7-row inline keyboard matching Image 1 with vibrant colors
@@ -259,7 +260,7 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
 
       const msg =
         `💳 <b>Balans va To'lov</b>\n\n` +
-        `Sizning balansingiz: <b>${user.balance.toLocaleString()} so'm</b>\n\n` +
+        `Sizning balansingiz: <b>${fmtUzs(user.balance)} so'm</b>\n\n` +
         `Qabul qiluvchi karta (HUMO):\n<code>${store.settings.card_number}</code>\n` +
         `Karta egasi: <b>${store.settings.card_holder}</b>\n\n` +
         `Tezkor to'ldirish summasini tanlang yoki Web App orqali to'lang:`;
@@ -287,8 +288,8 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
         `👤 <b>Foydalanuvchi profili</b>\n\n` +
         `🆔 ID: <code>${user.id}</code>\n` +
         `👤 Username: @${user.username}\n` +
-        `💳 Balans: <b>${user.balance.toLocaleString()} so'm</b>\n` +
-        `🛍 Jami xaridlar: <b>${user.total_spent.toLocaleString()} so'm</b>\n` +
+        `💳 Balans: <b>${fmtUzs(user.balance)} so'm</b>\n` +
+        `🛍 Jami xaridlar: <b>${fmtUzs(user.total_spent)} so'm</b>\n` +
         `👥 Taklif qilingan do'stlar: <b>${user.referrals_count} ta</b>\n` +
         `⭐ Referal Stars: <b>${user.ref_stars} ⭐</b>`;
 
@@ -316,7 +317,7 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
       } else {
         userOrders.forEach((o: any, idx: number) => {
           const statusIcon = o.status === 'completed' ? '✅' : o.status === 'pending_admin' ? '⏳' : '❌';
-          text += `${idx + 1}. ${statusIcon} <b>${o.title}</b> — ${o.price.toLocaleString()} UZS\n`;
+          text += `${idx + 1}. ${statusIcon} <b>${o.title}</b> — ${fmtUzs(o.price)} UZS\n`;
           text += `   Holat: ${o.status === 'completed' ? 'Yetkazildi' : 'Adminga yuborilgan'}\n`;
         });
       }
@@ -357,7 +358,7 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
         `🏆 <b>Faol Konkurs: Bahorgi Stars Sovrini</b>\n\n` +
         `${store.contest.text}\n\n` +
         `👥 Jami ishtirokchilar: <b>${store.contest.participants.length} ta</b>\n` +
-        `💰 Sizning xaridingiz: <b>${user.total_spent.toLocaleString()} UZS</b>\n` +
+        `💰 Sizning xaridingiz: <b>${fmtUzs(user.total_spent)} UZS</b>\n` +
         `📌 Holatingiz: <b>${isJoined ? "✅ Siz ishtirokchisiz!" : "❌ Hali qo'shilmagansiz"}</b>`;
 
       await ctx.reply(msg, {
@@ -414,8 +415,8 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
           await ctx.answerCallbackQuery({ text: '⚠️ Balans yetarli emas!', show_alert: true });
           await ctx.reply(
             `⚠️ <b>Balans yetarli emas!</b>\n\n` +
-            `Narx: <b>${price.toLocaleString()} UZS</b>\n` +
-            `Balansingiz: <b>${user.balance.toLocaleString()} so'm</b>\n\n` +
+            `Narx: <b>${fmtUzs(price)} UZS</b>\n` +
+            `Balansingiz: <b>${fmtUzs(user.balance)} so'm</b>\n\n` +
             `Iltimos, avval balansni to'ldiring:`,
             { parse_mode: 'HTML', reply_markup: inlineKb }
           );
@@ -456,7 +457,7 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
           `⭐ <b>Yangi Stars buyurtmasi (grammy)</b>\n\n` +
             `📦 <code>#${orderId}</code>\n` +
             `👤 @${user.username} (<code>${user.id}</code>) → @${user.username}: <b>${starCount} ⭐</b>\n` +
-            `💳 Yechilgan: <b>${price.toLocaleString()} UZS</b>\n` +
+            `💳 Yechilgan: <b>${fmtUzs(price)} UZS</b>\n` +
             `💎 Taxminiy sarf: <b>${usdtNeeded} USDT (TON)</b>\n\n` +
             `🤖 <i>bot.py worker orqali USDT bilan Fragment'da avtomatik xarid qilinadi.</i>`
         );
@@ -464,8 +465,8 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
         await ctx.answerCallbackQuery({ text: '⏳ Buyurtma yuborilmoqda...' });
         await ctx.reply(
           `⏳ <b>Buyurtmangiz qabul qilindi!</b>\n\n` +
-            `⭐ Miqdor: <b>${starCount.toLocaleString()} Stars</b>\n` +
-            `💳 Yechildi: <b>${price.toLocaleString()} UZS</b>\n` +
+            `⭐ Miqdor: <b>${fmtUzs(starCount)} Stars</b>\n` +
+            `💳 Yechildi: <b>${fmtUzs(price)} UZS</b>\n` +
             `💎 To'lov: <b>USDT (TON)</b> — Fragment orqali avtomatik\n` +
             `📌 Holat: <b>yuborilmoqda (10–60 soniya)</b>`,
           { parse_mode: 'HTML' }
@@ -493,7 +494,7 @@ export async function startTelegramBot(token?: string, webappUrl?: string) {
         await ctx.answerCallbackQuery();
         await ctx.reply(
           `💳 <b>To'lov so'rovi yaratildi</b>\n\n` +
-          `Summa: <b>${amount.toLocaleString()} UZS</b>\n` +
+          `Summa: <b>${fmtUzs(amount)} UZS</b>\n` +
           `Karta (HUMO): <code>${store.settings.card_number}</code>\n` +
           `Egasi: <b>${store.settings.card_holder}</b>\n\n` +
           `<i>Kartaga to'lov qilishingiz bilan bank orqali balans avtomatik to'ldiriladi (5 daqiqa ichida).</i>`,
