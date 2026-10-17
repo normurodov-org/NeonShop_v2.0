@@ -353,10 +353,14 @@ async def main():
     code2 = "\n".join(l for l in fn2.split("\n")
                        if not l.strip().startswith("#"))
     # `get_chat(...)` -> Chat obyekti; `get_chat_history` faqat int|str
-    uses_id = "get_chat_history(peer" in code2 and "getattr(chat, \"id\"" in code2
+    # 📘 2026-10-17 dagi keyingi oʸzgarish: endi `chat.id` alohida
+    #    olinmaydi — `_ub_humo_chat()` oʸzi chat_id (int) QAYTARADI.
+    uses_id = "get_chat_history(peer" in code2
     no_chat_obj = "get_chat_history(chat," not in code2
-    for nm, v in [("`chat.id` olinadi (Chat obyekti EMAS)", uses_id),
-                  ("`get_chat_history(chat, ...)` qolmagan", no_chat_obj)]:
+    ret_int = "return int(cid)" in src4
+    for nm, v in [("`get_chat_history(peer, ...)` — chat_id", uses_id),
+                  ("`get_chat_history(chat, ...)` qolmagan", no_chat_obj),
+                  ("`_ub_humo_chat` int qaytaradi", ret_int)]:
         ok.append(v)
         print(("  \u2705 " if v else "  \u274c ") + nm)
 

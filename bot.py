@@ -5142,17 +5142,141 @@ HUMO_RESCAN_LIMIT = 40          # nechta oxirgi xabar qayta o'qiladi
 HUMO_RESCAN_COOLDOWN = 120_000  # 2 daqiqa — ketma-ket urinishni to'sish
 
 
+def _amount_variants(n: int) -> set:
+    """🔴 Summa bank xabarida KO'P SHAKILLARDA bo'lishi mumkin.
+
+    MIJOZ (2026-10-17): «Kutililayotgan summani mana bunday formatda
+    qidirib ko'r: 1 025 so'm -> 1.025,00 UZS»
+
+    Ya'ni `1 025` (oddiy) va `1.025,00` (bank/HUMO formatida) — bitta
+    raqamning IKKALA yozilishi. Parser ikkalasini ham `1025` ga
+    keltiradi, LEKIN kelajakdagi bank o'zgarishi yoki parserga qo'shimcha
+    qat'iy qoidalar qo'shilsa, moslik bo'lishi to'xtashi mumkin.
+
+    ✅ Shuning uchun tekshiruv ikkita darajada:
+       1) SONLIQ: `parse_humo_payment` natijasi (asosiy, aniq)
+       2) MATNLI: xabarda shu summaning barcha yozilishlari
+          (`1.025,00` / `1.025` / `1 025,00` / `1025`) bor-yo'qligi
+    """
+    if n <= 0:
+        return set()
+    plain = str(n)
+    # 🔴 Minglik ajratuvchilar: vergul, nuqta, boʸshliq yoki yoʸq.
+    #    Kasr belgisi ham vergul yoki nuqta boʸlishi mumkin. Barcha
+    #    kombinatsiyalarni GENERATSIYA qilamiz — qoʸlda yozishda
+    #    biror bitta variant unutilib qoladi (muammo chiqdi).
+    chunks: list = []
+    digits = plain
+    while len(digits) > 3:
+        chunks.insert(0, digits[-3:])
+        digits = digits[:-3]
+    chunks.insert(0, digits)
+
+    out = {plain}
+    for sep in (",", ".", " ", ""):
+        grouped = sep.join(chunks)
+        out.add(grouped)
+        for frac in ("00", "50", "99", "0"):
+            out.add(f"{grouped},{frac}")
+            out.add(f"{grouped}.{frac}")
+    return {v for v in out if v}
+
+
+def _text_has_amount(text: str, n: int) -> bool:
+    """Bank xabarida `n` summasi bor-yo'qmi (barcha formatlarda)."""
+    if n <= 0:
+        return False
+    raw = str(text or "")
+    # 🔴🔴🔴 DIQQAT: oddiy `v in raw` XATO — substring mosligi
+    #    yolg'on moslik keltiradi:
+    #        "1.025"  ->  "1.025.000,00" ichida BOR   (1 025 000!)
+    #        "1025"   ->  "10250" ichida BOR
+    #    Ya'ni mijozga 1 025 so'm o'rniga 1 025 000 so'm yozib
+    #    to'ldirish mumkin bo'lardi. Bu QAT'IY xato.
+    #
+    # ✅ Shuning uchun REGEX bilan: oldidan raqam/ajratuvchi kelmasin,
+    #    keyin raqam yoki ajratuvchi ketmasin.
+    # 📌 Oldidan BO'SHLIQ kelishi normal (`➕ 1.025,00`) — shuning uchun
+    #    lookbehind da bo'shlik YO'Q (faqat raqam/nuqta/vergul).
+    for v in _amount_variants(n):
+        pat = r"(?<![\d.,])" + re.escape(v) + r"(?![\d.,])"
+        try:
+            if re.search(pat, raw):
+                return True
+        except re.error:  # noqa: PERF203 — regex tuzilishi nazorat qilinadi
+            continue
+    return False
+
+
 async def _ub_humo_chat():
-    """Userbot orqali @humocardbot chatini topadi (nom variantlari bilan)."""
+    """Userbot orqali @humocardbot chatini topadi (chat_id qaytaradi).
+
+    🔴🔴🔴 MIJOZ (2026-10-17): «@humocardbot chati topilmadi».
+       Avval faqat `get_chat` sinanardi va u ishlamasa darhol
+       `None` qaytarilardi. Endi `_ub_resolve_chat` dagi uch usul
+       qo'llanadi (`get_chat` → `resolve_peer` → `t.me/<username>`)
+       va oxirida dialoglar ro'yxati ham tekshiriladi — biri ishlamasa
+       keyingisi sinab ko'riladi.
+
+    📌 TOPUP_SOURCE_CHAT nomi KATALIK kichik harfda (`humocardbot`),
+       lekin bank o'zini `@HUMOcardbot` deb yozadi. `get_chat` odatda
+       registrga sezgir, lekin ba'zi versiyalarda qat'iy — shuning
+       uchun KATALIK va KATTA harfli variantlar ham sinanadi.
+    """
     ub = userbot
     if ub is None or not getattr(ub, "is_connected", False):
         return None
+
     source = str(TOPUP_SOURCE_CHAT or "@humocardbot").strip()
-    for target in (source, source.lstrip("@"), "humocardbot", "@humocardbot"):
+    uname = source.lstrip("@").strip()
+    seen, targets = set(), []
+    for v in (uname, uname.lower(), uname.upper(), uname.capitalize()):
+        if v and v not in seen:
+            seen.add(v)
+            targets.append(v)
+
+    # 1) To'g'ridan-to'g'ri `get_chat`
+    for t in targets:
         try:
-            return await ub.get_chat(target)
-        except Exception:  # noqa: BLE001 — keyingi variantni sinaymiz
+            chat = await ub.get_chat(t)
+            cid = getattr(chat, "id", None)
+            if cid:
+                log.info("🔎 Bank chati topildi (get_chat): %s -> %s", t, cid)
+                return int(cid)
+        except Exception:  # noqa: BLE001 — keyingi variantga o'tamiz
             continue
+
+    # 2) MTProto darajasida resolve (`_ub_resolve_chat` usuli)
+    for t in targets:
+        for probe in (t, f"https://t.me/{t}"):
+            try:
+                peer = await ub.resolve_peer(probe)
+                pid = getattr(peer, "user_id", None) or getattr(peer, "channel_id", None)
+                if pid:
+                    log.info("🔎 Bank chati topildi (resolve_peer): %s -> %s", t, pid)
+                    return int(pid)
+            except Exception:  # noqa: BLE001
+                continue
+
+    # 3) 🔴 ZAXIRA: userbotning dialoglarini qidirib topamiz.
+    #    `get_chat`/`resolve_peer` ishlamasa ham, agar chat allaqach
+    #    mavjud bo'lsa, dialoglar ro'yxatidan topib olamiz.
+    try:
+        async for d in ub.get_dialogs():
+            un = str(getattr(d, "username", "") or "")
+            first = str(getattr(d, "first_name", "") or "")
+            low = uname.lower()
+            if low in un.lower() or low in first.lower():
+                cid = getattr(d, "id", None)
+                if cid:
+                    log.info("🔎 Bank chati topildi (dialoglar orqali): %s -> %s",
+                             un or first, cid)
+                    return int(cid)
+    except Exception:  # noqa: BLE001
+        pass
+
+    log.warning("🔎 Bank chati topilmadi (%s). Sinab ko'rilgan: %s",
+                uname, ", ".join(targets))
     return None
 
 
@@ -5179,8 +5303,8 @@ async def rescan_humo_for_topup(topup_id: str) -> dict:
                 "message": "Userbot ulanmagan — bank xabarini o'qib bo'lmaydi",
                 "credited": 0}
 
-    chat = await _ub_humo_chat()
-    if chat is None:
+    peer = await _ub_humo_chat()
+    if peer is None:
         return {"status": "userbot_offline",
                 "message": f"{TOPUP_SOURCE_CHAT} chati topilmadi", "credited": 0}
 
@@ -5212,17 +5336,14 @@ async def rescan_humo_for_topup(topup_id: str) -> dict:
         #
         # 🛡️ `__aiter__` bormi-yo'qmi tekshiramiz — kelajakdagi versiya
         #    oddiy ro'yxat qaytarsa ham asosiy oqim buzilmaydi.
-        peer = getattr(chat, "id", None)
-        if peer is None:
-            peer = str(TOPUP_SOURCE_CHAT or "@humocardbot")
+        # 📌 `peer` allaqach chat_id (int) — `_ub_humo_chat` QAYTARADI.
         raw = ub.get_chat_history(peer, limit=HUMO_RESCAN_LIMIT)
         if hasattr(raw, "__aiter__"):
             history = [m async for m in raw]
         else:
             history = list(await raw)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Rescan: chat tarixi o'qilmadi (peer=%s): %s",
-                    type(peer).__name__, exc)
+        log.warning("Rescan: chat tarixi o'qilmadi (peer=%s): %s", peer, exc)
         return {"status": "error",
                 "message": f"Xabar tarixi o'qilmadi: {exc}", "credited": 0}
 
@@ -5246,9 +5367,23 @@ async def rescan_humo_for_topup(topup_id: str) -> dict:
         text = getattr(msg, "text", None) or getattr(msg, "caption", None) or ""
         if not text:
             continue
-        # Faqat bizning summalarimizga qaraymiz — tezroq va xavfsiz
+        # 🔴🔴🔴 IKKI DARAJALI MOSLIK (mijoz so'rovi bo'yicha):
+        #
+        #   1) SONLIQ — `parse_humo_payment` natijasi. Bu ASOSIY usul:
+        #      `1.025,00 UZS` -> 1025 (testlarda tasdiqlangan).
+        #   2) MATNLI — agar parser ishlamasa yoki bank formatini
+        #      o'zgartirsa, xabarda summaning barcha yozilishlari
+        #      (`1.025,00` / `1 025,00` / `1025`) bor-yo'q ekanini
+        #      tekshiramiz.
+        #
+        #      MIJOZ: «1 025 so'm -> 1.025,00 UZS» — ikkalasi ham
+        #      qabul qilinadi.
         parsed = parse_humo_payment(text)
-        if parsed and parsed[0] in (to_send, req):
+        matched = bool(parsed) and parsed[0] in (to_send, req)
+        if not matched:
+            matched = (_text_has_amount(text, to_send)
+                       or _text_has_amount(text, req))
+        if matched:
             try:
                 await on_humo_message(ub, msg)
             except Exception as exc:  # noqa: BLE001
