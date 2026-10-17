@@ -1458,25 +1458,43 @@ app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
     userbot_online: ubOnline,
     message: ubOnline
       ? `🔎 Bank xabari qayta tekshirilmoqda (${toSend.toLocaleString()} UZS). 5-15 soniya kutib turing…`
-      : `⚠️ Bank xabari avtomatik tekshirilmaydi — userbot ulanmagan. `
-        + `Iltimos yordamchiga murojaat qiling: ${toSend.toLocaleString()} UZS to'lov qo'lda tasdiqlanadi.`,
+      : `⚠️ Bank xabari avtomatik tekshirilmaydi. `
+        + `Iltimos yordamchiga murojaat qiling: ${toSend.toLocaleString()} UZS `
+        + `to'lovni qo'lda tasdiqlaydi.`,
     topup,
   });
 });
 
 /**
- * 🔴 Userbot ulanganmi?
+ * 🔴 Userbot haqiqatan ulanganmi?
  *
- * `bot.py` `set_runtime_status(userbot="connected"|"starting"|...)` orqali
- * `settings.runtime` ga yozadi (kalit — `runtime`, `userbot_runtime` emas).
- * `userbot` maydoni `connected` bo'lmasa — ulanmagan deb hisoblaymiz va
- * mijozga «avtomatik tekshirilmaydi» deb aniq aytamiz.
+ * `bot.py` `set_runtime_status(userbot=...)` orqali `settings.runtime`
+ * ga yozadi. Qiymatlar:
+ *   • `connected`      — ishlayapti
+ *   • `starting`       — hozir ulanmoqda (bir necha sekund)
+ *   • `reconnecting`   — uzilib qoldi, qayta ulanmoqda
+ *   • `missing_env`    — API_ID/API_HASH/SESSION_STRING yo'q
+ *   • `invalid_session`— session bekor qilingan
+ *
+ * 🔴🔴🔴 NIMA UCHUN FAQAT `connected` EMAS?
+ *   Railway logida mijozga «userbot ulanmagan» ko'rsatilgan, lekin
+ *   rescan ISHLADI (worker xatoni yozdi). Sabab: `reconnecting` yoki
+ *   `starting` holatida `connected` emas — ya'ni userbot BIR NECHA
+ *   SEKUNDga uzilgan, lekin o'zi qayta ulanmoqda. Mijozga shunda
+ *   «ulanmagan» deyish noto'g'ri va xavotli.
+ *
+ *   ✅ Endi: faqat `missing_env` / `invalid_session` — haqiqatan
+ *      ishlay olmaydigan holatlar. Qolganlari «tekshirilmoqda» degan
+ *      ma'noda.
  */
 function isUserbotOnline(): boolean {
   try {
     const rt = (store.settings as any)?.runtime;
     if (!rt || typeof rt !== 'object') return false;
-    return String(rt.userbot || '') === 'connected';
+    const st = String(rt.userbot || '').trim();
+    if (!st) return false;
+    // 🔴 Faqat shu ikkitasi — haqiqiy ravishda ishlamaydi
+    return st !== 'missing_env' && st !== 'invalid_session';
   } catch {
     return false;
   }

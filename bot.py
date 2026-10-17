@@ -5194,27 +5194,35 @@ async def rescan_humo_for_topup(topup_id: str) -> dict:
     scanned = 0
 
     try:
-        # 🔴🔴🔴 XATO TUZATILDI (2026-10-17, Railway logida aniqlangan):
-        #        history = list(await ub.get_chat_history(...))
-        #    -> "object async_generator can't be used in 'await' expression"
+        # 🔴🔴🔴 IKKINCHI XATO (2026-10-17, Railway logida):
+        #        "Error binding parameter 1: type 'Chat' is not supported"
         #
-        #    SABAB: pyrofork `get_chat_history` — **async generator**
-        #    (`Optional[AsyncGenerator[Message, None]]` qaytaradi), uni
-        #    `await` qilish mumkin EMAS.
+        #    `get_chat(...)` obyekti (`pyrogram.types.Chat`) qaytaradi,
+        #    lekin `get_chat_history` FAQAT `Union[int, str]` qabul qiladi.
+        #    Shu sabab `Chat` obyektini bevosita berish kerak emas —
+        #    `chat.id` (raqam) yoki username.
+        #
+        # 🔴🔴🔴 UCHINCHI XATO: `get_chat_history` — **async generator**,
+        #    uni `await` qilish mumkin EMAS:
+        #        list(await ub.get_chat_history(...))
+        #    -> "object async_generator can't be used in 'await' expression"
         #
         # 📌 API ESKI -> YANGI qaytaradi, biz YANGI -> ESKI yo'nalishda
         #    yuramiz (so'nggi xabar birinchi bo'lsin).
         #
-        # 🛡️ QAT'IY: `__aiter__` bormi-yo'qmi tekshiramiz. Kelajakdagi
-        #    versiya oddiy ro'yxat qaytarsa ham (bugungi kabi buzilmaydi)
-        #    — asosiy oqim bir xil ishlaydi.
-        raw = ub.get_chat_history(chat, limit=HUMO_RESCAN_LIMIT)
+        # 🛡️ `__aiter__` bormi-yo'qmi tekshiramiz — kelajakdagi versiya
+        #    oddiy ro'yxat qaytarsa ham asosiy oqim buzilmaydi.
+        peer = getattr(chat, "id", None)
+        if peer is None:
+            peer = str(TOPUP_SOURCE_CHAT or "@humocardbot")
+        raw = ub.get_chat_history(peer, limit=HUMO_RESCAN_LIMIT)
         if hasattr(raw, "__aiter__"):
             history = [m async for m in raw]
         else:
             history = list(await raw)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Rescan: chat tarixi o'qilmadi: %s", exc)
+        log.warning("Rescan: chat tarixi o'qilmadi (peer=%s): %s",
+                    type(peer).__name__, exc)
         return {"status": "error",
                 "message": f"Xabar tarixi o'qilmadi: {exc}", "credited": 0}
 

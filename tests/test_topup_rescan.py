@@ -346,6 +346,31 @@ async def main():
         print("      %-16s -> %-8s balans=%d  %s"
               % (nm, r.get("status"), bal, "\u2705" if v else "\u274c"))
 
+    # ---------------------------------------------------------------- 13
+    print("\n13) \U0001F41E `get_chat_history` CHAT OBYEKTINI QABUL QILMAYDI")
+    src4 = open("bot.py", encoding="utf-8").read()
+    fn2 = src4.split("async def rescan_humo_for_topup")[1].split("\nasync def ")[0]
+    code2 = "\n".join(l for l in fn2.split("\n")
+                       if not l.strip().startswith("#"))
+    # `get_chat(...)` -> Chat obyekti; `get_chat_history` faqat int|str
+    uses_id = "get_chat_history(peer" in code2 and "getattr(chat, \"id\"" in code2
+    no_chat_obj = "get_chat_history(chat," not in code2
+    for nm, v in [("`chat.id` olinadi (Chat obyekti EMAS)", uses_id),
+                  ("`get_chat_history(chat, ...)` qolmagan", no_chat_obj)]:
+        ok.append(v)
+        print(("  \u2705 " if v else "  \u274c ") + nm)
+
+    # ---------------------------------------------------------------- 14
+    print("\n14) \U0001F4E3 `reconnecting`/`starting` = MIJOZGA \u00abULANMAGAN\u00bb DEMAS")
+    srv = open("server.ts", encoding="utf-8").read()
+    fnu = srv.split("function isUserbotOnline")[1].split("\n}")[0]
+    treats_transient = ("missing_env" in fnu and "invalid_session" in fnu
+                        and "reconnecting" not in fnu.split("!== ")[0])
+    print("      faqat `connected` deb hisoblamasligi kerak EMAS")
+    ok.append(treats_transient)
+    print(("  \u2705 " if treats_transient else "  \u274c ")
+          + "faqat missing_env/invalid_session -> haqiqiy \u00abulanmagan\u00bb")
+
     print()
     bad = [i + 1 for i, o in enumerate(ok) if not o]
     if bad:
