@@ -93,6 +93,10 @@ import re
 import shutil
 import threading
 import time
+# 🔴 `_ProofMessage` shimi `SimpleNamespace` ishlatadi — «Tekshirish»
+#    zaxira yo'li uchun (userbot yo'q bo'lsa mijoz bank xabarini
+#    shu yerga yuboradi, bot uni o'zi o'qiydi).
+from types import SimpleNamespace
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -2100,6 +2104,12 @@ class NftStates(StatesGroup):
 
 class TopupStates(StatesGroup):
     amount = State()
+    # 🔴🔴🔴 ZAXIRA YO'L: userbot ulanmagan bo'lsa mijoz bank
+    #    xabarini SHU YERGA yuboradi. Bot uni o'zi o'qiydi —
+    #    userbot umuman kerak bo'lmaydi.
+    proof = State()
+
+
 
 
 class ServiceStates(StatesGroup):
@@ -5097,6 +5107,213 @@ async def on_humo_message(client: UserbotClient, message) -> None:
         await notify_admins(f"❌ Avto-to'lov tekshiruvi xatosi: {exc}")
 
 
+# =============================================================================
+# 🔎🔴 «ТЕКШIRISH» — @humocardbot ЧАТ ТАРИХИНИ ҚАЙТА ЎҚИШ
+# -----------------------------------------------------------------------------
+# MIJOZ (2026-10-17): «Pasdagi tekshirish tugmasini bosganimda adminga
+#   tashlayapti. Shu tekshirish tugmasini bosganda @humocardbot dan
+#   xabarni 2-chi marta tekshirib korsin.»
+#
+# 🔴 NIMA UCHUN BU KERAK?
+#   Bank xabari @humocardbot da BOR, lekin userbot uni real vaqtda
+#   TUTMADI:
+#     • filtr mos kelmagan (nom/ID farqi),
+#     • `update` kelganda xabar "tayyor" emas,
+#     • userbot kech / umuman ulanmagan.
+#   Natijada mijoz «Tekshirish» bossa, server darhol ADMINGA
+#   yuborardi — hech qanday urinish qilinmasdi.
+#
+# ✅ ENDI nima qilinadi:
+#   1) server.ts / bot tugmasi topup'ga `rescan_requested_at` qo'yadi
+#   2) `topup_rescan_worker()` shuni ko'radi va USERBOT orqali
+#      @humocardbot ning so'nggi xabarlarini `get_chat_history` orqali
+#      QAYTA o'qiydi
+#   3) topilgan xabar BUTUNLAY `on_humo_message` ga beriladi — ya'ni
+#      ikki nusxa moslashtirish kodi yo'q, natija bir xil
+#   4) topilsa -> avtomatik balansga qo'shiladi
+#      topilmasa -> sabab yoziladi va mijozga aniq aytiladi
+#
+# 📌 Bu ARQALASH usuli emas: `data/users_db.json` orqali bot.py va
+#    server.ts o'zaro gaplashadi (shu loyihada allaqach shunday:
+#    masalan `nft_notified`, `nft_notify_wait_ub`).
+# =============================================================================
+
+HUMO_RESCAN_LIMIT = 40          # nechta oxirgi xabar qayta o'qiladi
+HUMO_RESCAN_COOLDOWN = 120_000  # 2 daqiqa — ketma-ket urinishni to'sish
+
+
+async def _ub_humo_chat():
+    """Userbot orqali @humocardbot chatini topadi (nom variantlari bilan)."""
+    ub = userbot
+    if ub is None or not getattr(ub, "is_connected", False):
+        return None
+    source = str(TOPUP_SOURCE_CHAT or "@humocardbot").strip()
+    for target in (source, source.lstrip("@"), "humocardbot", "@humocardbot"):
+        try:
+            return await ub.get_chat(target)
+        except Exception:  # noqa: BLE001 — keyingi variantni sinaymiz
+            continue
+    return None
+
+
+async def rescan_humo_for_topup(topup_id: str) -> dict:
+    """🔴 Bitta so'rov uchun @humocardbot ni QAYTA tekshiradi.
+
+    🔴 `on_humo_message` DAN FARQ QILMAYDI: topilgan xabar butunlab
+       o'sha funksiyaga beriladi. Shuning uchun natija bir xil —
+       chalkash so'rov yoki ikki marta balans qo'shish bo'lmaydi.
+
+    Qaytaradi: `{"status": str, "message": str, "credited": int}`
+    """
+    db.reload_if_changed()
+    t = db.data.get("topups", {}).get(topup_id)
+    if not t:
+        return {"status": "error", "message": "So'rov topilmadi", "credited": 0}
+    if t.get("status") != "pending":
+        return {"status": "already", "message": "So'rov allaqachon yopilgan",
+                "credited": 0}
+
+    ub = userbot
+    if ub is None or not getattr(ub, "is_connected", False):
+        return {"status": "userbot_offline",
+                "message": "Userbot ulanmagan — bank xabarini o'qib bo'lmaydi",
+                "credited": 0}
+
+    chat = await _ub_humo_chat()
+    if chat is None:
+        return {"status": "userbot_offline",
+                "message": f"{TOPUP_SOURCE_CHAT} chati topilmadi", "credited": 0}
+
+    req, to_send = get_topup_amounts(t)
+    uid = int(t["user_id"])
+
+    def _balance() -> int:
+        return int((db.data.get("users", {}).get(str(uid)) or {}).get("balance", 0))
+
+    before = _balance()
+    scanned = 0
+
+    try:
+        # 🔴 `get_chat_history` ESKI -> YANGI qaytaradi; biz YANGI ->
+        #    ESKI yo'nalishda yuramiz (so'nggi xabar birinchi bo'lsin).
+        history = list(await ub.get_chat_history(chat, limit=HUMO_RESCAN_LIMIT))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Rescan: chat tarixi o'qilmadi: %s", exc)
+        return {"status": "error",
+                "message": f"Xabar tarixi o'qilmadi: {exc}", "credited": 0}
+
+    for msg in reversed(history):
+        scanned += 1
+        text = getattr(msg, "text", None) or getattr(msg, "caption", None) or ""
+        if not text:
+            continue
+        # Faqat bizning summalarimizga qaraymiz — tezroq va xavfsiz
+        parsed = parse_humo_payment(text)
+        if parsed and parsed[0] in (to_send, req):
+            try:
+                await on_humo_message(ub, msg)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Rescan: xabarni ishlashda xato")
+                return {"status": "error",
+                        "message": f"Xabarni ishlashda xato: {exc}", "credited": 0}
+            break
+
+    db.reload_if_changed()
+    t2 = db.data.get("topups", {}).get(topup_id) or {}
+    after = _balance()
+
+    if t2.get("status") == "completed" or after > before:
+        return {"status": "found",
+                "message": f"Topildi! Balansga {fmt(after - before)} UZS qo'shildi.",
+                "credited": after - before}
+
+    return {"status": "not_found",
+            "message": (f"{scanned} ta xabar ko'rib chiqildi, lekin "
+                        f"{fmt(to_send)} yoki {fmt(req)} UZS topilmadi."),
+            "credited": 0}
+
+
+async def topup_rescan_worker() -> None:
+    """🔴 «Tekshirish» so'rovlarini kutadi va userbot bilan qayta o'qiydi."""
+    log.info("🔎 To'lov qayta tekshirish worker'i ishga tushdi")
+    await asyncio.sleep(8)
+    while True:
+        try:
+            await asyncio.sleep(3)
+            db.reload_if_changed()
+            waiting = [
+                (tid, t) for tid, t in db.data.get("topups", {}).items()
+                if t.get("status") == "pending" and t.get("rescan_requested_at")
+                and not t.get("rescan_done_at")
+            ]
+            if not waiting:
+                continue
+            # Faqat BITTA so'rovni ko'rib chiqamiz — userbot
+            # ketma-ket so'rovlarga javob bermasligi kerak
+            tid, t = waiting[0]
+            last = to_ms(t.get("rescan_asked_at"), 0)
+            if last and (now_ms() - last) < HUMO_RESCAN_COOLDOWN:
+                continue
+            t["rescan_asked_at"] = now_ms()
+            db.save()
+            log.info("🔎 Qayta tekshirilmoqda: %s (kartaga: %s UZS)",
+                     tid, fmt(get_topup_amounts(t)[1]))
+            res = await rescan_humo_for_topup(tid)
+            db.reload_if_changed()
+            t2 = db.data.get("topups", {}).get(tid)
+            if t2 is not None:
+                t2["rescan_done_at"] = now_ms()
+                t2["rescan_result"] = res.get("status")
+                t2["rescan_message"] = res.get("message")
+                db.save()
+            if res.get("status") == "found":
+                log.info("✅ Qayta tekshiruvda topildi: %s (+%s)",
+                         tid, fmt(res.get("credited", 0)))
+            else:
+                log.info("⚠️ Qayta tekshiruv: %s (%s)", tid, res.get("status"))
+                # 🔴🔴🔴 MIJOZ JIM QOLMASIN. Avval faqat admin
+                #   xabardor qilinardi — mijoz «Tekshirish» bosganini
+                #   ko'rib, natijani umuman bilmasdi va kutishda
+                #   qolardi. Endi MIJOZGA ham aniq javob yuboriladi.
+                try:
+                    to_send_txt = fmt(get_topup_amounts(t)[1])
+                    if res.get("status") == "userbot_offline":
+                        tip = ("Bank xabari avtomatik tekshirilmaydi — userbot "
+                               "ulanmagan. Iltimos yordamchiga murojaat qiling, "
+                               "to'lov qo'lda tasdiqlanadi.")
+                    elif res.get("status") == "not_found":
+                        tip = (f"Bank xabarida {to_send_txt} UZS topilmadi. "
+                               "Ehtimol boshqa summa yuborilgan. Iltimos "
+                               "yordamchiga murojaat qiling.")
+                    else:
+                        tip = (f"{res.get('message') or res.get('status')}. "
+                               "Iltimos yordamchiga murojaat qiling.")
+                    await bot.send_message(
+                        int(t.get("user_id", 0)),
+                        "🔎 <b>Qayta tekshiruv</b>\n\n"
+                        f"Kartaga yuborilgan summa: <b>{to_send_txt} UZS</b>\n"
+                        f"📌 {esc(tip)}\n\n"
+                        "<i>Iltimos bank ilovasidan to'lovni tekshirib, "
+                        "miqdor to'g'ri ekanini tasdiqlang.</i>",
+                    )
+                except Exception:  # noqa: BLE001
+                    log.debug("Mijozga rescan xabarini yuborib bo'lmadi",
+                              exc_info=True)
+                await notify_admins(
+                    "🔎 <b>Qayta tekshiruv natijasi</b>\n\n"
+                    f"🆔 <code>{esc(tid)}</code>\n"
+                    f"💵 Kartaga yuborilishi kerak: "
+                    f"<b>{fmt(get_topup_amounts(t)[1])} UZS</b>\n"
+                    f"📌 Natija: <i>{esc(res.get('message') or res.get('status', ''))}</i>"
+                )
+        except Exception:  # noqa: BLE001 — worker O'LMASIN
+            log.exception("Rescan worker xatosi")
+            await asyncio.sleep(5)
+
+
+
+
+
 async def resolve_recipient_profile(username: str) -> Optional[dict]:
     """Berilgan username egasi haqida ism va profil rasmini oladi.
 
@@ -6218,6 +6435,10 @@ async def topup_amount(message: Message, state: FSMContext, db_user: dict):
     db.data["topups"][topup_id] = topup
     db.save()
 
+    # 🔴🔴🔴 «Tekshirish» tugmasi — mijoz WebApp'ni ochmasdan ham
+    #    @humocardbot dagi xabarni QAYTA tekshirishi mumkin.
+    #    server.ts ham xuddi shu belgini qo'yadi (WebApp uchun) —
+    #    ikkalasi bitta worker orqali ishlaydi.
     await message.answer(
         f"💳 <b>To'lov ma'lumotlari</b>\n\n"
         f"Karta: <code>{CARD_NUMBER}</code>\n"
@@ -6227,7 +6448,85 @@ async def topup_amount(message: Message, state: FSMContext, db_user: dict):
         f"⏱ <b>{TOPUP_TIMEOUT_SEC // 60} daqiqa</b> ichida o'tkazing.\n"
         f"⚠️ <i>Aynan {fmt(amount_to_send)} so'm yuboring — boshqa summa "
         f"avtomatik tanib bo'lmaydi.</i>",
-        reply_markup=cancel_inline_kb(f"topup_cancel:{topup_id}"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔎 To'lovni tekshirish",
+                callback_data=f"topup_rescan:{topup_id}",
+                style="primary",
+            )],
+            [InlineKeyboardButton(
+                text="❌ Bekor qilish",
+                callback_data=f"topup_cancel:{topup_id}",
+                style="danger",
+            )],
+        ]),
+    )
+
+
+@router.callback_query(F.data.startswith("topup_rescan:"))
+async def cb_topup_rescan(call: CallbackQuery, db_user: dict):
+    """🔴🔴🔴 «Tekshirish» — @humocardbot dan xabarni QAYTA o'qish.
+
+    MIJOZ: «tekshirish tugmasini bosganda @humocardbot dan xabarni
+    2-chi marta tekshirib korsin.»
+
+    🔴 BU YERDA DARHOL tekshirilmaydi — `rescan_requested_at` qo'yiladi
+       va `topup_rescan_worker()` (3 soniyada bir tekshiradi) userbot
+       orqali tarixni QAYTA o'qiadi. Sababi: `get_chat_history` sekund
+       bo'lishi mumkin, `call.answer()` esa ~10 soniyada timeout oladi —
+       mijoz tugma bosgan zahoti «Tekshirilmoqda...» ko'radi, natija
+       keyin keladi.
+    """
+    await call.answer("🔎 Bank xabari qayta tekshirilmoqda...")
+    topup_id = call.data.split(":", 1)[1]
+    db.reload_if_changed()
+    t = db.data.get("topups", {}).get(topup_id)
+    if not t:
+        return await call.message.answer("⚠️ So'rov topilmadi.")
+    if int(t.get("user_id", 0)) != int(db_user["id"]):
+        return await call.message.answer("⚠️ Bu so'rov sizniki emas.")
+    if t.get("status") != "pending":
+        return await call.message.answer("ℹ️ So'rov allaqachon yopilgan.")
+
+    t["rescan_requested_at"] = now_ms()
+    t["rescan_done_at"] = 0
+    t["rescan_result"] = ""
+    t["rescan_message"] = ""
+    db.save()
+
+    ub = userbot
+    online = ub is not None and getattr(ub, "is_connected", False)
+    # 🔴🔴🔴 USERBOT YO'Q BO'LSA — zaxira tugma. Mijoz bank xabarini
+    #    shu yerga qaytarib yuboradi, bot uni o'zi o'qiydi.
+    #    (Boshqa botning xabarini Bot API orqali o'qib bo'lmaydi —
+    #     cheklov Telegram'ning o'zida, hech qanday paket uni buzmaydi.)
+    kb = []
+    if online:
+        kb.append([InlineKeyboardButton(
+            text="🔎 Yana tekshirish",
+            callback_data=f"topup_rescan:{topup_id}",
+            style="primary",
+        )])
+    else:
+        kb.append([InlineKeyboardButton(
+            text="📨 Bank xabarini yuboring",
+            callback_data=f"topup_proof:{topup_id}",
+            style="primary",
+        )])
+    kb.append([InlineKeyboardButton(
+        text="❌ Bekor qilish",
+        callback_data=f"topup_cancel:{topup_id}",
+        style="danger",
+    )])
+    await call.message.answer(
+        "🔎 <b>Qayta tekshirilmoqda…</b>\n\n"
+        f"Kartaga yuborilgan summa: <b>{fmt(get_topup_amounts(t)[1])} UZS</b>\n"
+        + ("✅ Userbot ulangan — bank xabari qayta o'qilmoqda (5-15 soniya)."
+           if online else
+           "⚠️ <b>Userbot ulanmagan</b> — bank xabarini o'qib bo'lmaydi.\n"
+           "   <b>Zaxira:</b> bank ilovasidan xabarni shu yerga qaytarib "
+           "yuboring (forward) — bot uni o'zi o'qib to'ldiradi."),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
     )
 
 
@@ -8213,6 +8512,134 @@ def contest_user_kb(c: dict, user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+
+
+# =============================================================================
+# 🔴🔴🔴 ZAXIRA YO'L — USRBOT YO'Q BO'LSA
+# -----------------------------------------------------------------------------
+# MIJOZ: «Userbot bolmasa boshqa package bilan ishlatib ber».
+#
+# 🔴 ACHCHIQ HAQIQAT: boshqa botning (masalan @humocardbot) SHAXSIY
+#    xabarlarini Telegram BOT API orqali o'qib bo'lMAYDI — Bot API
+#    faqat sizga YUBORILGAN xabarlarni beradi. Bu Telegram API
+#    cheklovi, hech qanday paket uni buzmaydi (telethon, pyrogram,
+#    mtproto — hammasi shu cheklov bilan).
+#
+# ✅ LEKIN ikkita YO'L bor:
+#   1) «Tekshirish» — userbot bilan qayta o'qish (yuqorida)
+#   2) 🔴 ZAXIRA: MIJOZ bank xabarini O'ZIGA qaytarib yuboradi —
+#      bot uni o'zi o'qiydi. Userbot umuman kerak bo'lmaydi.
+#
+# 📌 Qanday ishlaydi:
+#   «Tekshirish» bosilganda userbot ulangan bo'lsa -> avtomatik rescan.
+#   Ulanmagan bo'lsa -> bot so'raydi:
+#       "Bank ilovasidan xabarni bu yerga QAYTARIB yuboring
+#        (forward yoki nusxa). Bo'lsa, bo'lsa, 30 so'rov shu yerga
+#        to'g'ri avtomatik to'ldiriladi."
+#   Kelgan xabar `parse_humo_payment` bilan o'qiladi va ASOSIY oqimga
+#   beriladi — ya'ni xuddi shu natija.
+# =============================================================================
+
+
+@router.callback_query(F.data.startswith("topup_proof:"))
+async def cb_topup_proof(call: CallbackQuery, state: FSMContext, db_user: dict):
+    """🔴 Userbot yo'q bo'lsa — mijoz xabarni shu yerga yuboradi."""
+    await call.answer("Bank xabarini yuboring")
+    topup_id = call.data.split(":", 1)[1]
+    db.reload_if_changed()
+    t = db.data.get("topups", {}).get(topup_id)
+    if not t:
+        return await call.message.answer("⚠️ So'rov topilmadi.")
+    if int(t.get("user_id", 0)) != int(db_user["id"]):
+        return await call.message.answer("⚠️ Bu so'rov sizniki emas.")
+    if t.get("status") != "pending":
+        return await call.message.answer("ℹ️ So'rov allaqachon yopilgan.")
+
+    await state.set_state(TopupStates.proof)
+    await state.update_data(proof_topup=topup_id)
+    await call.message.answer(
+        "📨 <b>Bank xabarini yuboring</b>\n\n"
+        "Bank ilovasidagi to'lov xabarini SHU YERGA qaytarib yuboring "
+        "(forward yoki ko'chirish). Bot uni o'zida o'qib, balansingizni "
+        "avtomatik to'ldiradi.\n\n"
+        f"Kutilayotgan summa: <b>{fmt(get_topup_amounts(t)[1])} UZS</b>\n\n"
+        "<i>Rasm (screenshot) ham bo'ladi, lekin undan summa o'qilmaydi — "
+        "matnni yuborish afzal.</i>"
+    )
+
+
+@router.message(StateFilter(TopupStates.proof), F.text | F.forwarded_message)
+async def topup_proof_received(message: Message, state: FSMContext, db_user: dict):
+    """🔴🔴🔴 Mijoz yuborgan bank xabarini o'qib, balansni to'ldiramiz."""
+    text = message.text or getattr(message, "caption", None) or ""
+    if not text.strip():
+        await message.answer(
+            "📷 Faqat rasm keldi. Iltimos bank xabarining MATNINI "
+            "yuboring (forward qiling yoki ko'chirib yuboring)."
+        )
+        return
+
+    data = await state.get_data()
+    topup_id = str(data.get("proof_topup") or "")
+    if not topup_id:
+        await state.clear()
+        return await message.answer(
+            "⚠️ Faol to'lov so'rovi yo'q. Avval «Balans to'ldirish» "
+            "tugmasini bosing."
+        )
+
+    parsed = parse_humo_payment(text)
+    if not parsed:
+        await message.answer(
+            "⚠️ Bu bank xabari emas yoki format boshqa.\n\n"
+            "<i>Kutilgan ko'rinish:</i>\n"
+            "<code>➕ 1 022,00 UZS (Mijoz tolagan summa)</code>\n"
+            "<code>💳 HUMOCARD *3682</code>\n"
+            "Bank ilovasidan aynan shu xabarni yuboring."
+        )
+        return
+
+    amount, _card = parsed
+    db.reload_if_changed()
+    t = db.data.get("topups", {}).get(topup_id)
+    if not t or t.get("status") != "pending":
+        await state.clear()
+        return await message.answer("ℹ️ So'rov allaqachon yopilgan.")
+
+    req, to_send = get_topup_amounts(t)
+    if amount not in (to_send, req):
+        await message.answer(
+            f"⚠️ Xabardagi summa <b>{fmt(amount)} UZS</b>, lekin sizning "
+            f"so'rovingiz <b>{fmt(to_send)} UZS</b> edi.\n\n"
+            "<i>Ikkalasi mos kelmadi — xabar noto'g'ri yuborilgan "
+            "bo'lishi mumkin. Yordamchiga murojaat qiling.</i>"
+        )
+        return
+
+    # 🔴 ASOSIY OQIMGA beramiz — u topupni yopadi, balansni qo'shadi
+    #    va mijozga «✅ ... avtomatik to'ldirildi» xabarini yuboradi.
+    #    `on_humo_message` faqat `message` ni ishlatadi (`client`
+    #    parametri qolgan), shuning uchun shim yetarli.
+    await state.clear()
+    shim = _ProofMessage(message.chat.id, message.message_id, text)
+    await on_humo_message(userbot, shim)
+
+
+class _ProofMessage:
+    """`on_humo_message` uchun minimal shim.
+
+    Faqat `text`/`caption`, `chat.id` va `id` kerak — asosiy funksiya
+    shundan boshqa narsani o'qimaydi.
+    """
+
+    def __init__(self, chat_id: int, msg_id: int, text: str):
+        self.text = text
+        self.caption = None
+        self.id = msg_id
+        self.chat = SimpleNamespace(id=chat_id)
+
+
+
 @router.callback_query(F.data == "m:contest")
 async def contest_start(call: CallbackQuery, state: FSMContext, db_user: dict):
     """Mijoz konkursni ko'radi."""
@@ -9550,6 +9977,11 @@ async def main() -> None:
                 ("Stars worker", star_order_worker()),
                 ("NFT xabar worker", nft_notify_worker()),
                 ("Premium worker", premium_order_worker()),
+                # 🔴🔴🔴 «Tekshirish» tugmasi — qayta tekshirish worker'i.
+                #    server.ts yoki bot tugmasi `rescan_requested_at`
+                #    qo'yadi, bu worker userbot orqali @humocardbot
+                #    tarixini QAYTA o'qiydi.
+                ("Topup rescan worker", topup_rescan_worker()),
                 ("USDT kursi", get_usdt_uzs_rate()),
                 ("Heartbeat", update_heartbeat()),
                 ("Userbot supervisor", userbot_supervisor()),

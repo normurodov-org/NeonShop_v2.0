@@ -32,6 +32,18 @@ export interface Topup {
    */
   amount_to_send?: number;
   status: 'pending' | 'completed' | 'cancelled' | 'expired';
+  /**
+   * 🔴🔴🔴 «Tekshirish» tugmasi bosilgan vaqti (ms).
+   * server.ts shuni qo'yadi; bot.py dagi `topup_rescan_worker()`
+   * @humocardbot tarixini QAYTA o'qib, topilsa avtomatik to'ldiradi.
+   */
+  rescan_requested_at?: number;
+  /** Qayta tekshiruv tugagan vaqti. */
+  rescan_done_at?: number;
+  /** `found` | `not_found` | `userbot_offline` | `already` | `error` */
+  rescan_result?: string;
+  /** Mijozga ko'rsatiladigan tushunarli natija. */
+  rescan_message?: string;
   /** Bot yaratgan to'lovlarda bo'lmasligi mumkin — ixtiyoriy */
   card?: string;
   /** Bot yaratgan to'lovlarda bo'lmasligi mumkin — ixtiyoriy */

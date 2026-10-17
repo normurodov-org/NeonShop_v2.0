@@ -38,6 +38,9 @@ export const TopupView: React.FC<TopupViewProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [simulating, setSimulating] = useState<boolean>(false);
 
+  /** 🔴 Oxirgi ko'rilgan `rescan_done_at` — takror xabarni chiqarmaslik uchun. */
+  const lastRescanSeen = React.useRef<number>(0);
+
   const presets = [10000, 25000, 50000, 100000, 250000, 500000];
 
   /**
@@ -50,7 +53,6 @@ export const TopupView: React.FC<TopupViewProps> = ({
   useEffect(() => {
     if (!activeTopup || activeTopup.status !== 'pending') return;
     let alive = true;
-
     const poll = async () => {
       try {
         // 🔴 IMZO MUHIM. Server endi `x-telegram-user-id` ni
@@ -88,6 +90,27 @@ export const TopupView: React.FC<TopupViewProps> = ({
               : "To'lov bekor qilindi."
           );
           onTopupCancelled?.(st);
+          return;
+        }
+
+        // 🔴🔴🔴 «Tekshirish» natijasi — server `rescan_*` maydonlarini
+        //   yozadi, bot.py dagi worker esa @humocardbot tarixini QAYTA
+        //   o'qib, topilsa balansni avtomatik to'ldiradi. Bu yerda
+        //   mijozga NIMA bo'ganini aniq ko'rsatamiz.
+        const done = Number(data.topup?.rescan_done_at) || 0;
+        if (done && done !== lastRescanSeen.current) {
+          lastRescanSeen.current = done;
+          const r = String(data.topup?.rescan_result || '');
+          if (r === 'found') {
+            setError('');   // poller `completed` holatini ham kutadi
+          } else if (r === 'not_found') {
+            setError(String(data.topup?.rescan_message || ''));
+          } else if (r === 'userbot_offline') {
+            setError(
+              'Bank xabari avtomatik tekshirilmaydi — userbot ulanmagan. '
+              + 'Iltimos yordamchiga murojaat qiling: to\'lov qo\'lda tasdiqlanadi.'
+            );
+          }
         }
       } catch (e) {
         /* tarmoq uzilishi — keyingi urinishda tekshiramiz */

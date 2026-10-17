@@ -1422,41 +1422,65 @@ app.post('/api/topup/simulate-pay', async (req: Request, res: Response) => {
     return res.status(400).json({ ok: false, error: "Bu to'lov allaqachon yakunlangan yoki bekor qilingan." });
   }
 
-  // Avto-to'lov hali qayd etilmagan — admini so'rov bilan xabardor qilamiz
-  const adminId = store.settings.admin_id || 8307046273;
-  const token = process.env.BOT_TOKEN;
-  if (token) {
-    try {
-      const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: adminId,
-          text: `🧾 <b>To'lovni tasdiqlash so'rovi</b>\n\n👤 User ID: <code>${topup.user_id}</code>\n💰 Summa: <b>${topup.amount.toLocaleString()} UZS</b>\n🆔 <code>${topup.id}</code>\n\n@humocardbot da mos xabar topilmadi. Tasdiqlaysizmi?`,
-          parse_mode: 'HTML',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Tasdiqlash', callback_data: `adm_topup_ok:${topup.id}` },
-                { text: '❌ Rad etish', callback_data: `adm_topup_no:${topup.id}` },
-              ],
-            ],
-          },
-        }),
-      });
-      if (!tgRes.ok) console.error('Admin xabarini yuborishda xato:', await tgRes.text());
-    } catch (e) {
-      console.error('Admin xabarini yuborishda xato:', e);
-    }
-  }
+  // ==========================================================================
+  // 🔴🔴🔴 «ТЕКШIRISH» — endi ADMINGA emas, QAYTA TEKSHIRISHGA
+  // -----------------------------------------------------------------------------
+  // MIJOZ (2026-10-17): «Pasdagi tekshirish tugmasini bosganimda
+  //   adminga tashlayapti. Shu tekshirish tugmasini bosganda
+  //   @humocardbot dan xabarni 2-chi marta tekshirib korsin.»
+  //
+  // 🔴 AVVAL: shu yerda to'g'ridan-to'g'ri `notify_admins` chaqirilardi —
+  //    hech qanday urinish qilinmasdi.
+  //
+  // ✅ ENDI:
+  //   1) topup'ga `rescan_requested_at` qo'yamiz
+  //   2) bot.py dagi `topup_rescan_worker()` buni ko'radi va USERBOT
+  //      orqali @humocardbot ning so'nggi xabarlarini QAYTA o'qiydi
+  //   3) topilsa -> balans AVTOMATIK to'ldiriladi (mijoz kutadi)
+  //   4) topilmasa yoki userbot yo'q bo'lsa -> aniq sabab qaytariladi
+  //
+  // 📌 ARQALASH: `data/users_db.json` orqali bot.py ⇄ server.ts
+  //    (shu loyihada allaqach shunday qilinadi: `nft_notified`).
+  // ==========================================================================
+  const toSend = Number((topup as any).amount_to_send) || Number(topup.amount);
+  const ubOnline = isUserbotOnline();
+
+  (topup as any).rescan_requested_at = Date.now();
+  (topup as any).rescan_done_at = 0;
+  (topup as any).rescan_result = '';
+  (topup as any).rescan_message = '';
+  syncAndSaveDb();
 
   res.json({
     ok: true,
     pending: true,
-    message: "⏳ To'lov tekshirilmoqda. Admin tasdiqlashi kerak, iltimos kuting...",
+    rescan: true,
+    userbot_online: ubOnline,
+    message: ubOnline
+      ? `🔎 Bank xabari qayta tekshirilmoqda (${toSend.toLocaleString()} UZS). 5-15 soniya kutib turing…`
+      : `⚠️ Bank xabari avtomatik tekshirilmaydi — userbot ulanmagan. `
+        + `Iltimos yordamchiga murojaat qiling: ${toSend.toLocaleString()} UZS to'lov qo'lda tasdiqlanadi.`,
     topup,
   });
 });
+
+/**
+ * 🔴 Userbot ulanganmi?
+ *
+ * `bot.py` `set_runtime_status(userbot="connected"|"starting"|...)` orqali
+ * `settings.runtime` ga yozadi (kalit — `runtime`, `userbot_runtime` emas).
+ * `userbot` maydoni `connected` bo'lmasa — ulanmagan deb hisoblaymiz va
+ * mijozga «avtomatik tekshirilmaydi» deb aniq aytamiz.
+ */
+function isUserbotOnline(): boolean {
+  try {
+    const rt = (store.settings as any)?.runtime;
+    if (!rt || typeof rt !== 'object') return false;
+    return String(rt.userbot || '') === 'connected';
+  } catch {
+    return false;
+  }
+}
 
 app.post('/api/order', async (req: Request, res: Response) => {
   const user = getUser(req);
